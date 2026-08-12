@@ -93,6 +93,20 @@ autocorrelation, posterior predictive checks, and policy equity/drawdown. The
 policy is a separate consumer of the model posterior. Completed daily signals
 execute at the first continuous-trading bar of the next session.
 
+## Test console
+
+The no-auth console exposes the same walk-forward parameters without requiring
+terminal commands. It keeps one GPU worker active at a time and persists each
+job, log, checkpoint, and report under the external storage tree.
+
+```bash
+BNHMM_WEB_JOB_ROOT=/home/wujianfeng/private/bnhmm-storage/ui-runs \
+python -m bnhmm.web.app
+```
+
+Open `http://SERVER_IP:8765`. The console is intended for the trusted local
+network and must not be exposed directly to the public internet.
+
 ## Storage
 
 The initial PostgreSQL migration stores immutable model versions, compressed

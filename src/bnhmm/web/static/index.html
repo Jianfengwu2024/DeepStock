@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BNHMM Lab</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="config-panel" id="config-panel">
+      <div class="brand-row">
+        <div>
+          <div class="brand">BNHMM Lab</div>
+          <div class="brand-sub">Bayesian Transformer</div>
+        </div>
+        <button class="icon-button mobile-only" type="button" id="close-config" title="关闭配置">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <form id="experiment-form">
+        <section class="form-section">
+          <h2>实验</h2>
+          <label>名称<input name="name" required maxlength="64"></label>
+          <label>数据文件<input name="database_path" required></label>
+          <div class="field-head"><span>股票</span><button class="mini-button" type="button" id="choose-symbols"><i data-lucide="list-filter"></i>选择</button></div>
+          <textarea name="symbols" rows="3" required spellcheck="false"></textarea>
+          <div class="two-columns">
+            <label>开始日期<input name="start" type="date" required></label>
+            <label>结束日期<input name="end" type="date" required></label>
+          </div>
+          <label>计算设备<select name="device" id="device-select"></select></label>
+          <div id="device-note" class="device-note"></div>
+        </section>
+
+        <details class="form-section" open>
+          <summary>训练</summary>
+          <div class="three-columns">
+            <label>轮数<input name="epochs" type="number" min="1"></label>
+            <label>批量<input name="batch_size" type="number" min="1"></label>
+            <label>随机种子<input name="seed" type="number" min="0"></label>
+          </div>
+          <label>学习率<input name="learning_rate" type="number" min="0" step="0.00001"></label>
+        </details>
+
+        <details class="form-section" open>
+          <summary>Walk-forward</summary>
+          <div class="two-columns">
+            <label>最少训练日<input name="minimum_train_sessions" type="number"></label>
+            <label>调参日<input name="tuning_sessions" type="number"></label>
+            <label>测试日<input name="test_sessions" type="number"></label>
+            <label>步长<input name="step_sessions" type="number"></label>
+            <label>最大折数<input name="max_folds" type="number" placeholder="不限"></label>
+            <label>前瞻日<input name="forward_sessions" type="number"></label>
+          </div>
+        </details>
+
+        <details class="form-section">
+          <summary>序列与模型</summary>
+          <div class="two-columns">
+            <label>直方图柱<input name="profile_bins" type="number"></label>
+            <label>序列长度<input name="sequence_length" type="number"></label>
+            <label>序列步长<input name="sequence_stride" type="number"></label>
+            <label>最短序列<input name="minimum_sequence_length" type="number"></label>
+            <label>模型宽度<input name="d_model" type="number"></label>
+            <label>形态维度<input name="motif_dim" type="number"></label>
+            <label>注意力头<input name="heads" type="number"></label>
+            <label>网络层数<input name="layers" type="number"></label>
+            <label>前馈维度<input name="feedforward_dim" type="number"></label>
+            <label>Dropout<input name="dropout" type="number" min="0" max="0.99" step="0.01"></label>
+            <label>MC 采样<input name="mc_samples" type="number"></label>
+          </div>
+        </details>
+
+        <details class="form-section">
+          <summary>仓位策略</summary>
+          <div class="two-columns">
+            <label>不确定性惩罚<input name="uncertainty_aversion" type="number" min="0" step="0.1"></label>
+            <label>交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
+          </div>
+          <label class="toggle-row"><span>允许做空</span><input name="allow_short" type="checkbox" role="switch"></label>
+        </details>
+
+        <div class="form-actions">
+          <button class="primary-button" type="submit" id="run-button"><i data-lucide="play"></i>开始测试</button>
+          <div id="form-error" class="form-error" role="alert"></div>
+        </div>
+      </form>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-header">
+        <div class="header-title">
+          <button class="icon-button mobile-only" type="button" id="open-config" title="打开配置"><i data-lucide="sliders-horizontal"></i></button>
+          <div><h1>样本外测试</h1><p id="job-subtitle">选择历史任务或开始新实验</p></div>
+        </div>
+        <div class="header-actions">
+          <span class="status-badge neutral" id="global-status">空闲</span>
+          <button class="icon-button" type="button" id="refresh-button" title="刷新"><i data-lucide="refresh-cw"></i></button>
+        </div>
+      </header>
+
+      <div class="workspace-grid">
+        <nav class="run-history" aria-label="历史测试">
+          <div class="section-title"><h2>历史测试</h2><span id="run-count">0</span></div>
+          <div id="job-list" class="job-list"></div>
+        </nav>
+
+        <section class="result-area" id="result-area">
+          <div class="empty-state" id="empty-state">
+            <i data-lucide="scan-line"></i>
+            <strong>尚未选择测试</strong>
+          </div>
+
+          <div id="job-view" class="job-view hidden">
+            <div class="run-toolbar">
+              <div>
+                <div class="run-title-row"><h2 id="run-title"></h2><span id="run-status" class="status-badge neutral"></span></div>
+                <div id="run-meta" class="run-meta"></div>
+              </div>
+              <button class="danger-button hidden" id="cancel-button" type="button"><i data-lucide="square"></i>停止</button>
+            </div>
+
+            <div class="progress-band hidden" id="progress-band">
+              <div class="progress-track"><span></span></div>
+              <div><strong id="progress-label">任务运行中</strong><span id="elapsed-time"></span></div>
+            </div>
+
+            <div class="metrics-grid" id="metrics-grid"></div>
+
+            <div class="tabs" role="tablist">
+              <button class="tab active" data-tab="overview" type="button"><i data-lucide="chart-no-axes-combined"></i>概览</button>
+              <button class="tab" data-tab="diagnostics" type="button"><i data-lucide="activity"></i>诊断</button>
+              <button class="tab" data-tab="folds" type="button"><i data-lucide="rows-3"></i>窗口</button>
+              <button class="tab" data-tab="logs" type="button"><i data-lucide="terminal"></i>日志</button>
+            </div>
+
+            <div class="tab-panel" data-panel="overview">
+              <div class="report-image-wrap"><img id="equity-image" alt="净值和回撤报告"></div>
+              <div class="download-row" id="download-row"></div>
+            </div>
+            <div class="tab-panel hidden" data-panel="diagnostics">
+              <div class="report-image-wrap"><img id="residual-image" alt="残差报告"></div>
+              <div class="report-image-wrap"><img id="calibration-image" alt="校准和残差自相关报告"></div>
+            </div>
+            <div class="tab-panel hidden" data-panel="folds">
+              <div class="table-scroll"><table><thead><tr><th>窗口</th><th>调参开始</th><th>测试区间</th><th>Epoch</th><th>训练序列</th><th>OOS 预测</th><th>验证损失</th></tr></thead><tbody id="fold-table"></tbody></table></div>
+            </div>
+            <div class="tab-panel hidden" data-panel="logs"><pre id="job-log"></pre></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="symbol-dialog">
+    <form method="dialog" class="dialog-shell">
+      <div class="dialog-header"><div><h2>选择股票</h2><span id="selected-count"></span></div><button class="icon-button" value="cancel" title="关闭"><i data-lucide="x"></i></button></div>
+      <div class="symbol-tools"><div class="search-box"><i data-lucide="search"></i><input id="symbol-search" placeholder="搜索代码"></div><button class="mini-button" type="button" id="select-all">全选</button><button class="mini-button" type="button" id="clear-symbols">清空</button></div>
+      <div id="symbol-list" class="symbol-list"></div>
+      <div class="dialog-actions"><button class="secondary-button" value="cancel">取消</button><button class="primary-button" type="button" id="apply-symbols"><i data-lucide="check"></i>应用</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

@@ -18,16 +18,19 @@ storage = ["psycopg[binary]>=3.2"]
 model = ["torch>=2.5"]
 training = ["duckdb>=1.4", "torch>=2.5"]
 evaluation = ["matplotlib>=3.8"]
+web = ["fastapi>=0.109", "uvicorn>=0.27"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
 bnhmm = "bnhmm.cli:main"
+bnhmm-web = "bnhmm.web.app:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bnhmm"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/bnhmm/storage/migrations" = "bnhmm/storage/migrations"
+"src/bnhmm/web/static" = "bnhmm/web/static"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
