@@ -47,3 +47,10 @@ must never load model weights.
 The server deployment uses a dedicated PostgreSQL 15 container bound to
 `127.0.0.1:15454`. Its credentials and persistent data live in the sibling
 `bnhmm-storage` directory and are never committed to Git.
+
+Start it with the external environment file so the host data path is resolved:
+
+```bash
+cd deploy
+docker compose --env-file ../../bnhmm-storage/postgres.env up -d
+```
