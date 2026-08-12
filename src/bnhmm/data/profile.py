@@ -62,13 +62,14 @@ class PriceVolumeProfileBuilder:
 
             states.extend(self._build_hour_states(day, day_relative, anchor, scale))
             if len(day) >= self.config.minimum_day_bars:
+                session_date = day.timestamp[0].astype("datetime64[D]")
                 states.append(
                     self._build_state(
                         day,
                         day_relative,
                         "1d",
-                        day.timestamp[0].astype("datetime64[D]"),
-                        day.timestamp[0].astype("datetime64[D]") + np.timedelta64(1, "D"),
+                        session_date + np.timedelta64(9 * 60 + 30, "m"),
+                        session_date + np.timedelta64(15 * 60, "m"),
                         anchor,
                         scale,
                     )
@@ -164,6 +165,7 @@ class PriceVolumeProfileBuilder:
             timeframe=timeframe,
             period_start=period_start.astype("datetime64[ns]"),
             period_end=period_end.astype("datetime64[ns]"),
+            end_price=float(bars.close[-1]),
             anchor_price=anchor,
             log_price_scale=scale,
             price_edges=edges,

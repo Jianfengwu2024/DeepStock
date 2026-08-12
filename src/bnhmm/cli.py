@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import Sequence
 
-from .config import ProfileConfig
+import numpy as np
+
+from .config import LabelConfig, ProfileConfig, SequenceConfig
+from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
 from .data.profile import PriceVolumeProfileBuilder
-from .data.source import BrokerBarSource
+from .data.source import BrokerBarSource, DuckDBBarSource
 from .storage import apply_migrations
 
 
@@ -39,6 +43,124 @@ def _migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _train(args: argparse.Namespace) -> int:
+    import torch
+
+    from .training import (
+        BNHMMTrainer,
+        ModelConfig,
+        TrainerConfig,
+        collate_profile_sequences,
+        save_checkpoint,
+    )
+
+    profile_config = ProfileConfig(bins=args.profile_bins)
+    sequence_config = SequenceConfig(
+        length=args.sequence_length,
+        stride=args.sequence_stride,
+        minimum_length=args.minimum_sequence_length,
+    )
+    source = DuckDBBarSource(args.duckdb_path)
+    bars = source.fetch(args.symbol, "1m", args.start, args.end)
+    states = PriceVolumeProfileBuilder(profile_config).build(bars)
+    observations = ProfileLabelBuilder(
+        LabelConfig(forward_sessions=args.forward_sessions)
+    ).build(states)
+    sessions = np.unique(observations.signal_times.astype("datetime64[D]"))
+    if len(sessions) < 10:
+        raise ValueError("training requires at least ten complete sessions")
+    cutoff_index = int(np.clip(len(sessions) * args.train_fraction, 1, len(sessions) - 1))
+    cutoff = sessions[cutoff_index]
+    train_observations, validation_observations = observations.temporal_split(cutoff)
+    window_builder = SequenceWindowBuilder(sequence_config)
+    train_sequences = window_builder.build(train_observations)
+    validation_sequences = window_builder.build(validation_observations)
+    if not train_sequences or not validation_sequences:
+        raise ValueError("date range is too short for the configured sequence windows")
+
+    model_config = ModelConfig(
+        profile_bins=args.profile_bins,
+        d_model=args.d_model,
+        motif_dim=args.motif_dim,
+        heads=args.heads,
+        layers=args.layers,
+        feedforward_dim=args.feedforward_dim,
+        dropout=args.dropout,
+        max_sequence_length=args.sequence_length,
+    )
+    trainer_config = TrainerConfig(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        seed=args.seed,
+    )
+    device = args.device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model_config.build()
+    trainer = BNHMMTrainer(model, trainer_config, device=device)
+    result = trainer.fit(train_sequences, validation_sequences)
+
+    output_dir = Path(args.output_dir)
+    checkpoint_path = output_dir / "model.pt"
+    metadata = {
+        "symbol": args.symbol,
+        "source": str(Path(args.duckdb_path).resolve()),
+        "start": args.start,
+        "end": args.end,
+        "cutoff": str(cutoff),
+        "training_cutoff": str(cutoff),
+        "profile_states": len(states),
+        "train_observations": len(train_observations),
+        "validation_observations": len(validation_observations),
+    }
+    save_checkpoint(
+        checkpoint_path,
+        model,
+        model_config,
+        trainer_config,
+        result,
+        metadata,
+    )
+
+    posterior_batch = collate_profile_sequences([validation_sequences[-1]])
+    posterior = model.predict_posterior(
+        posterior_batch["profiles"].to(device),
+        posterior_batch["timeframe_ids"].to(device),
+        valid_mask=posterior_batch["valid_mask"].to(device),
+        mc_samples=args.mc_samples,
+    )
+    last = len(validation_sequences[-1]) - 1
+    summary = {
+        **metadata,
+        "device": str(device),
+        "bars": len(bars),
+        "train_sequences": len(train_sequences),
+        "validation_sequences": len(validation_sequences),
+        "class_counts": np.bincount(observations.targets, minlength=5).tolist(),
+        "best_epoch": result.best_epoch,
+        "best_validation_loss": result.best_validation_loss,
+        "history": list(result.history),
+        "latest_signal_time": str(validation_sequences[-1].signal_times[last]),
+        "latest_probability_mean": posterior.probability_mean[0, last]
+        .cpu()
+        .tolist(),
+        "latest_aleatoric_variance": posterior.aleatoric_variance[0, last]
+        .cpu()
+        .tolist(),
+        "latest_epistemic_variance": posterior.epistemic_variance[0, last]
+        .cpu()
+        .tolist(),
+        "checkpoint": str(checkpoint_path),
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "metrics.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bnhmm")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -54,6 +176,32 @@ def build_parser() -> argparse.ArgumentParser:
     migrate = subparsers.add_parser("migrate")
     migrate.add_argument("--dsn", required=True)
     migrate.set_defaults(handler=_migrate)
+
+    train = subparsers.add_parser("train")
+    train.add_argument("--duckdb-path", required=True)
+    train.add_argument("--symbol", required=True)
+    train.add_argument("--start", required=True)
+    train.add_argument("--end", required=True)
+    train.add_argument("--output-dir", required=True)
+    train.add_argument("--device", default="auto")
+    train.add_argument("--epochs", type=int, default=10)
+    train.add_argument("--batch-size", type=int, default=8)
+    train.add_argument("--learning-rate", type=float, default=3e-4)
+    train.add_argument("--train-fraction", type=float, default=0.8)
+    train.add_argument("--forward-sessions", type=int, default=1)
+    train.add_argument("--profile-bins", type=int, default=48)
+    train.add_argument("--sequence-length", type=int, default=128)
+    train.add_argument("--sequence-stride", type=int, default=64)
+    train.add_argument("--minimum-sequence-length", type=int, default=32)
+    train.add_argument("--d-model", type=int, default=96)
+    train.add_argument("--motif-dim", type=int, default=32)
+    train.add_argument("--heads", type=int, default=4)
+    train.add_argument("--layers", type=int, default=3)
+    train.add_argument("--feedforward-dim", type=int, default=192)
+    train.add_argument("--dropout", type=float, default=0.1)
+    train.add_argument("--mc-samples", type=int, default=8)
+    train.add_argument("--seed", type=int, default=7)
+    train.set_defaults(handler=_train)
     return parser
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from bnhmm import BNHMMConfig, ProfileConfig
+from bnhmm import BNHMMConfig, LabelConfig, ProfileConfig
 
 
 class ConfigTests(unittest.TestCase):
@@ -14,6 +14,10 @@ class ConfigTests(unittest.TestCase):
     def test_invalid_profile_bins_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             ProfileConfig(bins=4)
+
+    def test_label_thresholds_must_be_ordered(self) -> None:
+        with self.assertRaises(ValueError):
+            LabelConfig(weak_bear_threshold=0.03)
 
 
 if __name__ == "__main__":

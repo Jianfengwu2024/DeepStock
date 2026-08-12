@@ -44,6 +44,7 @@ class ProfileBuilderTests(unittest.TestCase):
             self.assertEqual(state.adjacent_pairs.shape, (31, 2))
             self.assertEqual(state.adjacent_triples.shape, (30, 3))
             self.assertAlmostEqual(float(state.distribution.sum()), 1.0)
+            self.assertGreater(state.end_price, 0)
 
     def test_histogram_deposit_conserves_weight(self) -> None:
         histogram = np.zeros(8, dtype=np.float64)

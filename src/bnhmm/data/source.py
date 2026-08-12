@@ -1,4 +1,4 @@
-"""Bounded market-bar access through the shared DuckDB HTTP broker."""
+"""Bounded market-bar access through DuckDB or its HTTP broker."""
 
 from __future__ import annotations
 
@@ -84,4 +84,44 @@ class BrokerBarSource:
     @staticmethod
     def _iso(value: str | date | datetime) -> str:
         return value if isinstance(value, str) else value.isoformat()
+
+
+class DuckDBBarSource:
+    """Read bounded batches from a static DuckDB replica in read-only mode."""
+
+    def __init__(self, database_path: str) -> None:
+        if not database_path:
+            raise ValueError("database_path cannot be empty")
+        self.database_path = database_path
+
+    def fetch(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: str | date | datetime,
+        end: str | date | datetime,
+    ) -> BarBatch:
+        table = _TABLES.get(timeframe)
+        if table is None:
+            raise ValueError(f"unsupported timeframe: {timeframe}")
+        if not symbol:
+            raise ValueError("symbol cannot be empty")
+        try:
+            import duckdb
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("DuckDBBarSource requires the 'data' extra") from exc
+
+        query = (
+            f"SELECT timestamp, open, high, low, close, volume FROM {table} "
+            "WHERE symbol = ? AND timestamp >= ? AND timestamp < ? "
+            "AND COALESCE(paused, false) = false "
+            "AND COALESCE(suspicious, false) = false ORDER BY timestamp"
+        )
+        with duckdb.connect(self.database_path, read_only=True) as connection:
+            rows = connection.execute(
+                query,
+                [symbol, BrokerBarSource._iso(start), BrokerBarSource._iso(end)],
+            ).fetchall()
+        columns = ("timestamp", "open", "high", "low", "close", "volume")
+        return BarBatch.from_records(symbol, (dict(zip(columns, row)) for row in rows))
 

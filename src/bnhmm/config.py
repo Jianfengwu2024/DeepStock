@@ -47,6 +47,48 @@ class ProfileConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class LabelConfig:
+    """Forward-return definition for the canonical five regimes."""
+
+    forward_sessions: int = 1
+    strong_bear_threshold: float = -0.02
+    weak_bear_threshold: float = -0.005
+    weak_bull_threshold: float = 0.005
+    strong_bull_threshold: float = 0.02
+
+    def __post_init__(self) -> None:
+        if self.forward_sessions < 1:
+            raise ValueError("forward_sessions must be positive")
+        thresholds = self.thresholds
+        if any(left >= right for left, right in zip(thresholds, thresholds[1:])):
+            raise ValueError("regime thresholds must be strictly increasing")
+
+    @property
+    def thresholds(self) -> tuple[float, float, float, float]:
+        return (
+            self.strong_bear_threshold,
+            self.weak_bear_threshold,
+            self.weak_bull_threshold,
+            self.strong_bull_threshold,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SequenceConfig:
+    length: int = 128
+    stride: int = 64
+    minimum_length: int = 32
+
+    def __post_init__(self) -> None:
+        if self.length < 2:
+            raise ValueError("sequence length must be at least two")
+        if self.stride < 1:
+            raise ValueError("sequence stride must be positive")
+        if not 2 <= self.minimum_length <= self.length:
+            raise ValueError("minimum_length must be between two and length")
+
+
+@dataclass(frozen=True, slots=True)
 class BNHMMConfig:
     latent_states: int = 10
     output_states: tuple[RegimeState, ...] = field(
@@ -59,6 +101,8 @@ class BNHMMConfig:
         )
     )
     profile: ProfileConfig = field(default_factory=ProfileConfig)
+    labels: LabelConfig = field(default_factory=LabelConfig)
+    sequences: SequenceConfig = field(default_factory=SequenceConfig)
 
     def __post_init__(self) -> None:
         if self.latent_states != 10:

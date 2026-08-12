@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import unittest
+from dataclasses import replace
+
+import numpy as np
+
+from bnhmm import LabelConfig, PriceVolumeProfileBuilder, SequenceConfig
+from bnhmm.data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
+from test_profile import synthetic_sessions
+
+
+class ProfileDatasetTests(unittest.TestCase):
+    def test_labels_use_state_end_price_and_future_session_close(self) -> None:
+        states = PriceVolumeProfileBuilder().build(synthetic_sessions(4))
+        dates = sorted({state.period_start.astype("datetime64[D]") for state in states})
+        closes = dict(zip(dates, (100.0, 101.0, 97.0, 100.0), strict=True))
+        states = [
+            replace(state, end_price=closes[state.period_start.astype("datetime64[D]")])
+            for state in states
+        ]
+
+        observations = ProfileLabelBuilder(LabelConfig(forward_sessions=1)).build(states)
+
+        self.assertEqual(len(observations), 15)
+        np.testing.assert_array_equal(observations.targets[:5], np.full(5, 3))
+        np.testing.assert_array_equal(observations.targets[5:10], np.full(5, 0))
+        np.testing.assert_array_equal(observations.targets[10:], np.full(5, 4))
+
+    def test_temporal_split_purges_labels_crossing_cutoff(self) -> None:
+        states = PriceVolumeProfileBuilder().build(synthetic_sessions(4))
+        observations = ProfileLabelBuilder().build(states)
+        dates = np.unique(observations.signal_times.astype("datetime64[D]"))
+
+        train, validation = observations.temporal_split(dates[2])
+
+        self.assertEqual(len(train), 5)
+        self.assertEqual(len(validation), 5)
+        self.assertTrue(np.all(train.target_times < dates[2]))
+        self.assertTrue(np.all(validation.signal_times >= dates[2]))
+
+    def test_sequence_windows_include_the_tail_once(self) -> None:
+        states = PriceVolumeProfileBuilder().build(synthetic_sessions(5))
+        observations = ProfileLabelBuilder().build(states)
+        windows = SequenceWindowBuilder(
+            SequenceConfig(length=7, stride=5, minimum_length=4)
+        ).build(observations)
+
+        self.assertTrue(windows)
+        self.assertLessEqual(max(map(len, windows)), 7)
+        self.assertEqual(windows[-1].signal_times[-1], observations.signal_times[-1])
+
+
+if __name__ == "__main__":
+    unittest.main()
