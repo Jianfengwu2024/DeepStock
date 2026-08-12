@@ -1,0 +1,18 @@
+[Unit]
+Description=BNHMM local test console
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wujianfeng/private/bnhmm-engine
+Environment=PYTHONPATH=/home/wujianfeng/private/bnhmm-engine/src:/home/wujianfeng/private/bnhmm-engine/.venv/lib/python3.12/site-packages
+Environment=PYTHONUNBUFFERED=1
+Environment=BNHMM_WEB_HOST=0.0.0.0
+Environment=BNHMM_WEB_PORT=8765
+Environment=BNHMM_WEB_JOB_ROOT=/home/wujianfeng/private/bnhmm-storage/ui-runs
+ExecStart=/home/wujianfeng/miniconda3/envs/rheos/bin/python -m bnhmm.web.app
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
