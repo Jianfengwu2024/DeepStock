@@ -8,6 +8,11 @@ The first implemented vertical slice reads bounded OHLCV batches from the shared
 DuckDB broker, computes a historical-only relative-volume baseline, and converts
 one-minute bars into hourly and daily price/relative-volume profile states.
 
+The model core now includes adjacent two/three-bin motif tokenization, causal
+Bayesian multi-head attention, a conditional ten-state latent transition filter,
+and a five-regime Dirichlet evidence head. `predict_posterior()` separates
+aleatoric and epistemic variance through Monte Carlo weight sampling.
+
 ## Data contract
 
 Required input columns are `symbol`, `timestamp`, `open`, `high`, `low`, `close`,
@@ -27,6 +32,13 @@ from bnhmm import BNHMMConfig, BrokerBarSource, PriceVolumeProfileBuilder
 source = BrokerBarSource("http://127.0.0.1:9000/api/v1/db")
 bars = source.fetch("000001", "1m", "2026-07-01", "2026-08-01")
 states = PriceVolumeProfileBuilder(BNHMMConfig().profile).build(bars)
+```
+
+```python
+from bnhmm.model import BNHMMNetwork
+
+model = BNHMMNetwork(profile_bins=48)
+posterior = model.predict_posterior(profiles, timeframe_ids, mc_samples=16)
 ```
 
 ## Server smoke check

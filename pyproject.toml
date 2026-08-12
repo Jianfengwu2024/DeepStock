@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 storage = ["psycopg[binary]>=3.2"]
+model = ["torch>=2.5"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
@@ -28,4 +29,3 @@ packages = ["src/bnhmm"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-
