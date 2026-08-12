@@ -162,10 +162,42 @@ function renderJob(job) {
   document.querySelector("#progress-label").textContent = job.status === "queued" ? "等待 GPU 任务" : "Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
+  renderInsight(job.summary);
   renderMetrics(job.summary);
   renderFolds(job.summary?.folds || []);
   renderArtifacts(job);
   icons();
+}
+
+function renderInsight(summary) {
+  const panel = document.querySelector("#result-insight");
+  if (!summary) {
+    panel.classList.add("hidden");
+    return;
+  }
+  const accuracy = Number(summary.accuracy);
+  const brier = Number(summary.brier_score);
+  const logLoss = Number(summary.log_loss);
+  let level = "weak";
+  let title = "只有微弱信号，暂不足以用于实盘";
+  let detail = `五分类随机命中率是 20%。本次命中率 ${formatPercent(accuracy)}，虽略高于随机，但概率误差仍较大。`;
+  if (brier >= 0.79 || logLoss >= 1.59 || accuracy <= 0.21) {
+    level = "poor";
+    title = "模型输出接近随机猜测";
+    detail = `五分类随机基准为：命中率 20%、Brier 约 0.80、Log Loss 约 1.61。本次结果与随机基准非常接近，当前模型尚未学到稳定规律。`;
+  } else if (accuracy >= 0.28 && brier <= 0.74 && logLoss <= 1.50) {
+    level = "promising";
+    title = "模型出现初步区分能力，仍需扩大样本验证";
+    detail = `本次三个分类指标均明显优于随机基准，但仍需更多股票和更多滚动窗口确认稳定性。`;
+  }
+  const backtest = summary.backtest || {};
+  const inactive = Number.isFinite(Number(backtest.average_abs_position))
+    ? Number(backtest.average_abs_position) < 0.02
+    : Math.abs(Number(backtest.total_return || 0)) < 0.001 && Math.abs(Number(backtest.max_drawdown || 0)) < 0.002;
+  if (inactive) detail += " 蓝色净值几乎不动，表示不确定性过滤后仓位接近零。";
+  panel.className = `result-insight ${level}`;
+  document.querySelector("#insight-title").textContent = title;
+  document.querySelector("#insight-detail").textContent = detail;
 }
 
 function renderMetrics(summary) {
@@ -175,14 +207,14 @@ function renderMetrics(summary) {
     return;
   }
   const values = [
-    ["OOS 预测", formatInteger(summary.oos_predictions)],
-    ["准确率", formatPercent(summary.accuracy)],
-    ["Brier", formatNumber(summary.brier_score, 4)],
-    ["Log Loss", formatNumber(summary.log_loss, 4)],
-    ["策略收益", formatPercent(summary.backtest?.total_return)],
-    ["最大回撤", formatPercent(summary.backtest?.max_drawdown)],
+    ["样本外信号", formatInteger(summary.oos_predictions), "未参与训练的预测数量"],
+    ["五状态命中率", formatPercent(summary.accuracy), "随机约 20%，越高越好"],
+    ["概率误差 Brier", formatNumber(summary.brier_score, 4), "0 最好，随机约 0.80"],
+    ["概率损失 Log Loss", formatNumber(summary.log_loss, 4), "0 最好，随机约 1.61"],
+    ["模型策略收益", formatPercent(summary.backtest?.total_return), "已扣除设定的交易成本"],
+    ["最大回撤", formatPercent(Math.abs(Number(summary.backtest?.max_drawdown))), "历史峰值后的最大跌幅"],
   ];
-  grid.innerHTML = values.map(([label, value]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong></div>`).join("");
+  grid.innerHTML = values.map(([label, value, help]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong><small>${help}</small></div>`).join("");
 }
 
 function renderFolds(folds) {

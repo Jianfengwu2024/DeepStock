@@ -48,6 +48,8 @@ class EvaluationTests(unittest.TestCase):
         self.assertLess(report["log_loss"], 1.0)
         self.assertEqual(len(report["residual_autocorrelation"]), 20)
         self.assertIn("max_drawdown", report["backtest"])
+        self.assertIn("average_abs_position", report["backtest"])
+        self.assertGreaterEqual(report["backtest"]["active_position_ratio"], 0.0)
         self.assertEqual(report["observation_count"], 15)
 
     def test_uncertainty_reduces_position(self) -> None:

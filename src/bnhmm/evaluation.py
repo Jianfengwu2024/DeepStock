@@ -281,11 +281,15 @@ def _backtest(
     )
     prior_position: dict[str, float] = {}
     grouped: dict[str, list[tuple[float, float]]] = {}
+    positions: list[float] = []
+    turnovers: list[float] = []
     cost_rate = policy.config.transaction_cost_bps / 10_000.0
     for item in daily:
         position = policy.target_position(item)
         turnover = abs(position - prior_position.get(item.symbol, 0.0))
         net_return = position * item.forward_return - turnover * cost_rate
+        positions.append(position)
+        turnovers.append(turnover)
         date = str(item.execution_time.astype("datetime64[D]"))
         grouped.setdefault(date, []).append((net_return, item.forward_return))
         prior_position[item.symbol] = position
@@ -307,6 +311,9 @@ def _backtest(
         "total_return": float(equity[-1] - 1.0) if len(equity) else 0.0,
         "benchmark_return": float(benchmark[-1] - 1.0) if len(benchmark) else 0.0,
         "max_drawdown": float(drawdown.min()) if len(drawdown) else 0.0,
+        "average_abs_position": float(np.mean(np.abs(positions))) if positions else 0.0,
+        "active_position_ratio": float(np.mean(np.abs(positions) >= 0.01)) if positions else 0.0,
+        "average_turnover": float(np.mean(turnovers)) if turnovers else 0.0,
     }
 
 

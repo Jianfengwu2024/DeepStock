@@ -129,20 +129,27 @@
               <div><strong id="progress-label">任务运行中</strong><span id="elapsed-time"></span></div>
             </div>
 
+            <div class="result-insight hidden" id="result-insight">
+              <div class="insight-mark"><i data-lucide="badge-alert"></i></div>
+              <div><span id="insight-label">本次结论</span><strong id="insight-title"></strong><p id="insight-detail"></p></div>
+            </div>
+
             <div class="metrics-grid" id="metrics-grid"></div>
 
             <div class="tabs" role="tablist">
-              <button class="tab active" data-tab="overview" type="button"><i data-lucide="chart-no-axes-combined"></i>概览</button>
-              <button class="tab" data-tab="diagnostics" type="button"><i data-lucide="activity"></i>诊断</button>
-              <button class="tab" data-tab="folds" type="button"><i data-lucide="rows-3"></i>窗口</button>
+              <button class="tab active" data-tab="overview" type="button"><i data-lucide="chart-no-axes-combined"></i>收益</button>
+              <button class="tab" data-tab="diagnostics" type="button"><i data-lucide="activity"></i>模型诊断</button>
+              <button class="tab" data-tab="folds" type="button"><i data-lucide="rows-3"></i>滚动验证</button>
               <button class="tab" data-tab="logs" type="button"><i data-lucide="terminal"></i>日志</button>
             </div>
 
             <div class="tab-panel" data-panel="overview">
+              <div class="chart-explanation"><span><b class="line-key strategy"></b>蓝线：模型仓位策略</span><span><b class="line-key benchmark"></b>橙线：等权持有基准</span><span><b class="area-key"></b>下图：从历史高点的回撤</span></div>
               <div class="report-image-wrap"><img id="equity-image" alt="净值和回撤报告"></div>
               <div class="download-row" id="download-row"></div>
             </div>
             <div class="tab-panel hidden" data-panel="diagnostics">
+              <div class="diagnostic-note">残差越集中在 0 附近越好；校准线越接近对角线，模型给出的概率越可信。</div>
               <div class="report-image-wrap"><img id="residual-image" alt="残差报告"></div>
               <div class="report-image-wrap"><img id="calibration-image" alt="校准和残差自相关报告"></div>
             </div>

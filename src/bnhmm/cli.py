@@ -267,6 +267,9 @@ def _walk_forward(args: argparse.Namespace) -> int:
                 "total_return",
                 "benchmark_return",
                 "max_drawdown",
+                "average_abs_position",
+                "active_position_ratio",
+                "average_turnover",
             )
         },
         "output_dir": args.output_dir,
