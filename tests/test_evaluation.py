@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import unittest
+
+import numpy as np
+
+from bnhmm.evaluation import (
+    DecisionPolicy,
+    DecisionPolicyConfig,
+    PredictionRecord,
+    evaluate_predictions,
+)
+
+
+def prediction(day: int, target: int, probability: tuple[float, ...]) -> PredictionRecord:
+    signal = np.datetime64("2026-01-01") + np.timedelta64(day, "D")
+    scores = np.linspace(-2.0, 2.0, 5)
+    return PredictionRecord(
+        symbol="000001",
+        timeframe_id=1,
+        signal_time=signal.astype("datetime64[ns]"),
+        execution_time=(signal + np.timedelta64(1, "D")).astype("datetime64[ns]"),
+        target_time=(signal + np.timedelta64(1, "D") + np.timedelta64(6, "h")).astype(
+            "datetime64[ns]"
+        ),
+        target=target,
+        forward_return=(-0.02, -0.008, 0.0, 0.008, 0.02)[target],
+        probability_mean=probability,
+        aleatoric_variance=(0.01,) * 5,
+        epistemic_variance=(0.001,) * 5,
+        expected_score=float(np.asarray(probability) @ scores),
+        context_length=8,
+    )
+
+
+class EvaluationTests(unittest.TestCase):
+    def test_report_contains_probabilistic_and_strategy_diagnostics(self) -> None:
+        predictions = [
+            prediction(index, index % 5, tuple(np.eye(5)[index % 5] * 0.6 + 0.08))
+            for index in range(15)
+        ]
+        report = evaluate_predictions(
+            predictions,
+            np.asarray([-0.03, -0.01, 0.0, 0.01, 0.03]),
+            np.full(5, 0.0001),
+        )
+
+        self.assertLess(report["log_loss"], 1.0)
+        self.assertEqual(len(report["residual_autocorrelation"]), 20)
+        self.assertIn("max_drawdown", report["backtest"])
+        self.assertEqual(report["observation_count"], 15)
+
+    def test_uncertainty_reduces_position(self) -> None:
+        item = prediction(1, 4, (0.02, 0.03, 0.05, 0.2, 0.7))
+        cautious = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=4.0))
+        relaxed = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=0.0))
+        self.assertLess(cautious.target_position(item), relaxed.target_position(item))
+
+
+if __name__ == "__main__":
+    unittest.main()

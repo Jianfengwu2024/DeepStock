@@ -125,3 +125,18 @@ class DuckDBBarSource:
         columns = ("timestamp", "open", "high", "low", "close", "volume")
         return BarBatch.from_records(symbol, (dict(zip(columns, row)) for row in rows))
 
+    def list_symbols(self, limit: int | None = None) -> list[str]:
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be positive")
+        try:
+            import duckdb
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("DuckDBBarSource requires the 'data' extra") from exc
+        query = "SELECT DISTINCT symbol FROM kline_1m ORDER BY symbol"
+        params: list[int] = []
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with duckdb.connect(self.database_path, read_only=True) as connection:
+            return [str(row[0]) for row in connection.execute(query, params).fetchall()]
+

@@ -16,16 +16,23 @@ class ProfileDatasetTests(unittest.TestCase):
         dates = sorted({state.period_start.astype("datetime64[D]") for state in states})
         closes = dict(zip(dates, (100.0, 101.0, 97.0, 100.0), strict=True))
         states = [
-            replace(state, end_price=closes[state.period_start.astype("datetime64[D]")])
+            replace(
+                state,
+                start_price=closes[state.period_start.astype("datetime64[D]")],
+                end_price=closes[state.period_start.astype("datetime64[D]")],
+            )
             for state in states
         ]
 
         observations = ProfileLabelBuilder(LabelConfig(forward_sessions=1)).build(states)
 
         self.assertEqual(len(observations), 15)
-        np.testing.assert_array_equal(observations.targets[:5], np.full(5, 3))
-        np.testing.assert_array_equal(observations.targets[5:10], np.full(5, 0))
-        np.testing.assert_array_equal(observations.targets[10:], np.full(5, 4))
+        np.testing.assert_array_equal(observations.targets[:5], [3, 3, 3, 2, 2])
+        np.testing.assert_array_equal(observations.targets[5:10], [0, 0, 0, 2, 2])
+        np.testing.assert_array_equal(observations.targets[10:], [4, 4, 4, 2, 2])
+        self.assertTrue(
+            np.all(observations.execution_times > observations.signal_times)
+        )
 
     def test_temporal_split_purges_labels_crossing_cutoff(self) -> None:
         states = PriceVolumeProfileBuilder().build(synthetic_sessions(4))

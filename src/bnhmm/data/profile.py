@@ -165,6 +165,8 @@ class PriceVolumeProfileBuilder:
             timeframe=timeframe,
             period_start=period_start.astype("datetime64[ns]"),
             period_end=period_end.astype("datetime64[ns]"),
+            first_bar_time=bars.timestamp[0].astype("datetime64[ns]"),
+            start_price=float(bars.open[0]),
             end_price=float(bars.close[-1]),
             anchor_price=anchor,
             log_price_scale=scale,

@@ -161,6 +161,123 @@ def _train(args: argparse.Namespace) -> int:
     return 0
 
 
+def _walk_forward(args: argparse.Namespace) -> int:
+    import torch
+
+    from .evaluation import (
+        DecisionPolicy,
+        DecisionPolicyConfig,
+        evaluate_predictions,
+        save_evaluation_report,
+    )
+    from .training import ModelConfig, TrainerConfig
+    from .walk_forward import WalkForwardConfig, run_walk_forward
+
+    source = DuckDBBarSource(args.duckdb_path)
+    symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
+    if not symbols:
+        symbols = source.list_symbols(args.symbol_limit)
+    observations = []
+    data_summary: dict[str, dict[str, int]] = {}
+    profile_config = ProfileConfig(bins=args.profile_bins)
+    label_config = LabelConfig(forward_sessions=args.forward_sessions)
+    for symbol in symbols:
+        bars = source.fetch(symbol, "1m", args.start, args.end)
+        states = PriceVolumeProfileBuilder(profile_config).build(bars)
+        if not states:
+            continue
+        labeled = ProfileLabelBuilder(label_config).build(states)
+        observations.append(labeled)
+        data_summary[symbol] = {
+            "bars": len(bars),
+            "profile_states": len(states),
+            "observations": len(labeled),
+        }
+    if not observations:
+        raise ValueError("none of the requested symbols produced observations")
+
+    sequence_config = SequenceConfig(
+        length=args.sequence_length,
+        stride=args.sequence_stride,
+        minimum_length=args.minimum_sequence_length,
+    )
+    model_config = ModelConfig(
+        profile_bins=args.profile_bins,
+        d_model=args.d_model,
+        motif_dim=args.motif_dim,
+        heads=args.heads,
+        layers=args.layers,
+        feedforward_dim=args.feedforward_dim,
+        dropout=args.dropout,
+        max_sequence_length=args.sequence_length,
+    )
+    trainer_config = TrainerConfig(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        seed=args.seed,
+    )
+    walk_config = WalkForwardConfig(
+        minimum_train_sessions=args.minimum_train_sessions,
+        tuning_sessions=args.tuning_sessions,
+        test_sessions=args.test_sessions,
+        step_sessions=args.step_sessions,
+        max_folds=args.max_folds,
+    )
+    device = args.device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    result = run_walk_forward(
+        observations,
+        model_config,
+        trainer_config,
+        sequence_config,
+        walk_config,
+        device=device,
+        output_dir=args.output_dir,
+        mc_samples=args.mc_samples,
+    )
+    policy = DecisionPolicy(
+        DecisionPolicyConfig(
+            allow_short=args.allow_short,
+            uncertainty_aversion=args.uncertainty_aversion,
+            transaction_cost_bps=args.transaction_cost_bps,
+        )
+    )
+    report = evaluate_predictions(
+        result.predictions,
+        np.asarray(result.regime_return_means),
+        np.asarray(result.regime_return_variances),
+        policy=policy,
+    )
+    save_evaluation_report(args.output_dir, report)
+    summary = {
+        "symbols": list(data_summary),
+        "data": data_summary,
+        "folds": list(result.folds),
+        "oos_predictions": len(result.predictions),
+        "accuracy": report["accuracy"],
+        "brier_score": report["brier_score"],
+        "log_loss": report["log_loss"],
+        "return_residual": report["return_residual"],
+        "standardized_residual": report["standardized_residual"],
+        "backtest": {
+            key: report["backtest"][key]
+            for key in (
+                "total_return",
+                "benchmark_return",
+                "max_drawdown",
+            )
+        },
+        "output_dir": args.output_dir,
+    }
+    Path(args.output_dir, "run-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bnhmm")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -202,6 +319,40 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--mc-samples", type=int, default=8)
     train.add_argument("--seed", type=int, default=7)
     train.set_defaults(handler=_train)
+
+    walk = subparsers.add_parser("walk-forward")
+    walk.add_argument("--duckdb-path", required=True)
+    walk.add_argument("--symbols", default="")
+    walk.add_argument("--symbol-limit", type=int, default=10)
+    walk.add_argument("--start", required=True)
+    walk.add_argument("--end", required=True)
+    walk.add_argument("--output-dir", required=True)
+    walk.add_argument("--device", default="auto")
+    walk.add_argument("--epochs", type=int, default=10)
+    walk.add_argument("--batch-size", type=int, default=8)
+    walk.add_argument("--learning-rate", type=float, default=3e-4)
+    walk.add_argument("--forward-sessions", type=int, default=1)
+    walk.add_argument("--minimum-train-sessions", type=int, default=252)
+    walk.add_argument("--tuning-sessions", type=int, default=60)
+    walk.add_argument("--test-sessions", type=int, default=60)
+    walk.add_argument("--step-sessions", type=int, default=60)
+    walk.add_argument("--max-folds", type=int)
+    walk.add_argument("--profile-bins", type=int, default=48)
+    walk.add_argument("--sequence-length", type=int, default=128)
+    walk.add_argument("--sequence-stride", type=int, default=64)
+    walk.add_argument("--minimum-sequence-length", type=int, default=32)
+    walk.add_argument("--d-model", type=int, default=96)
+    walk.add_argument("--motif-dim", type=int, default=32)
+    walk.add_argument("--heads", type=int, default=4)
+    walk.add_argument("--layers", type=int, default=3)
+    walk.add_argument("--feedforward-dim", type=int, default=192)
+    walk.add_argument("--dropout", type=float, default=0.1)
+    walk.add_argument("--mc-samples", type=int, default=16)
+    walk.add_argument("--uncertainty-aversion", type=float, default=2.0)
+    walk.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    walk.add_argument("--allow-short", action="store_true")
+    walk.add_argument("--seed", type=int, default=7)
+    walk.set_defaults(handler=_walk_forward)
     return parser
 
 

@@ -72,6 +72,27 @@ records the data range, temporal cutoff, architecture, training configuration,
 and best validation epoch. It is an unpublished training artifact and is never
 read directly by Quant Platform.
 
+## Walk-forward evaluation
+
+`walk-forward` trains several symbols together. Every fold uses an inner tuning
+period to select the epoch count, retrains on all data available before the
+outer test, and then predicts the untouched outer period:
+
+```bash
+python -m bnhmm.cli walk-forward \
+  --duckdb-path /home/share/data/market.duckdb \
+  --symbols 000090,000099,000488 \
+  --start 2024-01-01 --end 2026-08-05 \
+  --output-dir /home/wujianfeng/private/bnhmm-storage/artifacts/walk-forward \
+  --device cuda:0
+```
+
+Reports include out-of-sample five-state predictions, Brier score, log loss,
+calibration, probability/return/standardized residuals, residual
+autocorrelation, posterior predictive checks, and policy equity/drawdown. The
+policy is a separate consumer of the model posterior. Completed daily signals
+execute at the first continuous-trading bar of the next session.
+
 ## Storage
 
 The initial PostgreSQL migration stores immutable model versions, compressed

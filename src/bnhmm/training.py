@@ -159,6 +159,33 @@ class BNHMMTrainer:
             self.model.load_state_dict(best_state)
         return TrainingResult(tuple(history), best_epoch, best_loss)
 
+    def fit_fixed(self, train_sequences: Sequence[ProfileSequence]) -> TrainingResult:
+        """Train for an already selected epoch count without touching outer test data."""
+        if not train_sequences:
+            raise ValueError("training sequences cannot be empty")
+        torch.manual_seed(self.config.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(self.config.seed)
+        loader = DataLoader(
+            _SequenceDataset(train_sequences),
+            batch_size=self.config.batch_size,
+            shuffle=True,
+            collate_fn=collate_profile_sequences,
+            generator=torch.Generator().manual_seed(self.config.seed),
+        )
+        optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+        )
+        history: list[dict[str, float]] = []
+        for epoch in range(1, self.config.epochs + 1):
+            metrics = self._run_epoch(loader, optimizer)
+            row = {"epoch": float(epoch)}
+            row.update({f"train_{key}": value for key, value in metrics.items()})
+            history.append(row)
+        return TrainingResult(tuple(history), self.config.epochs, float("nan"))
+
     def _run_epoch(
         self,
         loader: DataLoader[dict[str, Tensor]],

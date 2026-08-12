@@ -20,6 +20,13 @@ at or before `t`. A signal becomes executable at `available_at`, which must be
 strictly later than the final input bar. Historical backtests select a model
 whose `training_cutoff` is no later than its signal time.
 
+Labels use the first bar strictly after the completed profile as their entry
+price. A 15:00 hourly or daily state therefore enters on the first continuous
+bar of the next trading session. Walk-forward folds contain an inner tuning
+window; after choosing the epoch count, the model is rebuilt on all information
+whose labels mature before the outer-test cutoff. The outer window never
+participates in model selection or fitting.
+
 ## Deployment boundary
 
 The engine source, Python environment, weights, reports, and PostgreSQL database

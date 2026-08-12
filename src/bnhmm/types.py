@@ -100,6 +100,8 @@ class ProfileState:
     timeframe: str
     period_start: np.datetime64
     period_end: np.datetime64
+    first_bar_time: np.datetime64
+    start_price: float
     end_price: float
     anchor_price: float
     log_price_scale: float
@@ -124,6 +126,13 @@ class ProfileState:
             raise ValueError("profile distribution must sum to one")
         if self.period_end <= self.period_start:
             raise ValueError("profile period must have positive duration")
-        if not np.isfinite(self.end_price) or self.end_price <= 0:
-            raise ValueError("profile end_price must be finite and positive")
+        if not self.period_start < self.first_bar_time <= self.period_end:
+            raise ValueError("first_bar_time must fall inside the profile period")
+        if (
+            not np.isfinite(self.start_price)
+            or not np.isfinite(self.end_price)
+            or self.start_price <= 0
+            or self.end_price <= 0
+        ):
+            raise ValueError("profile start/end prices must be finite and positive")
 
