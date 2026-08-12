@@ -137,7 +137,10 @@ async function refreshAll() {
   if (state.polling) return;
   state.polling = true;
   try {
-    const [jobs, gpuPayload] = await Promise.all([api("/api/jobs"), api("/api/gpus")]);
+    const [jobs, gpuPayload] = await Promise.all([
+      api("/api/jobs"),
+      api("/api/gpus").catch(() => ({ devices: state.devices })),
+    ]);
     state.jobs = jobs;
     updateDevices(gpuPayload.devices);
     if (!state.selectedId && state.jobs.length) state.selectedId = state.jobs[0].id;
