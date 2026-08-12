@@ -89,12 +89,17 @@ function renderGpuMonitor() {
   const monitor = document.querySelector("#gpu-monitor");
   const gpus = state.devices.filter(item => item.id.startsWith("cuda:"));
   monitor.innerHTML = gpus.map(gpu => {
-    const percent = Number(gpu.memory_percent || 0);
+    const percent = Number.isFinite(Number(gpu.memory_percent))
+      ? Number(gpu.memory_percent)
+      : Number(gpu.memory_used_mib) / Math.max(Number(gpu.memory_total_mib), 1) * 100;
     const level = percent >= 90 ? "critical" : percent >= 75 ? "high" : "";
     const used = (gpu.memory_used_mib / 1024).toFixed(1);
     const total = (gpu.memory_total_mib / 1024).toFixed(0);
     const index = gpu.id.split(":")[1];
-    return `<div class="gpu-chip ${level}" title="${escapeHtml(gpu.name)} · 剩余 ${(gpu.memory_free_mib / 1024).toFixed(1)} GB"><div class="gpu-chip-head"><span>GPU ${index}</span><strong>${used} / ${total} GB</strong></div><div class="gpu-memory-track"><span style="width:${Math.min(percent, 100)}%"></span></div></div>`;
+    const free = Number.isFinite(Number(gpu.memory_free_mib))
+      ? Number(gpu.memory_free_mib)
+      : Number(gpu.memory_total_mib) - Number(gpu.memory_used_mib);
+    return `<div class="gpu-chip ${level}" title="${escapeHtml(gpu.name)} · 剩余 ${(free / 1024).toFixed(1)} GB"><div class="gpu-chip-head"><span>GPU ${index}</span><strong>${used} / ${total} GB</strong></div><div class="gpu-memory-track"><span style="width:${Math.min(percent, 100)}%"></span></div></div>`;
   }).join("");
 }
 
@@ -139,7 +144,7 @@ async function refreshAll() {
   try {
     const [jobs, gpuPayload] = await Promise.all([
       api("/api/jobs"),
-      api("/api/gpus").catch(() => ({ devices: state.devices })),
+      api("/api/gpus").catch(() => api("/api/config").then(config => ({ devices: config.devices }))),
     ]);
     state.jobs = jobs;
     updateDevices(gpuPayload.devices);
