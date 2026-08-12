@@ -208,6 +208,12 @@ function renderJob(job) {
 function renderJobGpuMemory(job) {
   const element = document.querySelector("#run-gpu-memory");
   const isGpu = String(job.request.device).startsWith("cuda:");
+  const trackingAvailable = Object.prototype.hasOwnProperty.call(job, "peak_gpu_memory_mib");
+  if (isGpu && job.status === "running" && !trackingAvailable) {
+    element.classList.remove("hidden");
+    element.textContent = "本任务显存：该任务启动早于监控启用，下一任务开始记录";
+    return;
+  }
   const hasSample = Number(job.peak_gpu_memory_mib) > 0;
   if (!isGpu || (!hasSample && job.status !== "running")) {
     element.classList.add("hidden");
