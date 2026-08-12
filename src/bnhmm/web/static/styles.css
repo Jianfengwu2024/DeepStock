@@ -20,7 +20,7 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font-size: 13px; }
+body { margin: 0; overflow-x: hidden; background: var(--bg); color: var(--text); font-size: 13px; }
 button, input, textarea, select { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
 svg { width: 16px; height: 16px; stroke-width: 1.8; flex: 0 0 auto; }
@@ -115,7 +115,7 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); }
 .tab { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; font-weight: 700; }
 .tab.active { color: var(--green); border-bottom-color: var(--green); }
-.tab-panel { padding-top: 16px; }
+.tab-panel { min-width: 0; padding-top: 16px; }
 .report-image-wrap { width: 100%; margin-bottom: 14px; background: white; border: 1px solid var(--line); overflow: auto; }
 .report-image-wrap img { display: block; width: 100%; min-width: 620px; height: auto; }
 .report-image-wrap img:not([src]) { display: none; }
@@ -144,8 +144,11 @@ dialog::backdrop { background: rgba(20,30,35,.35); }
 .symbol-option input { width: 14px; height: 14px; margin: 0; }
 .dialog-actions { justify-content: flex-end; border-top: 1px solid var(--line); border-bottom: 0; }
 
-@media (max-width: 1180px) {
+@media (max-width: 1550px) {
   .metrics-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 1180px) {
   .workspace-grid { grid-template-columns: 190px minmax(0, 1fr); }
 }
 
