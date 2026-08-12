@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bnhmm-engine"
+version = "0.1.0"
+description = "Offline Bayesian neural hidden-state market model engine"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+storage = ["psycopg[binary]>=3.2"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+bnhmm = "bnhmm.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bnhmm"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/bnhmm/storage/migrations" = "bnhmm/storage/migrations"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
