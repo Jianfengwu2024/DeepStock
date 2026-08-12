@@ -13,6 +13,11 @@ Bayesian multi-head attention, a conditional ten-state latent transition filter,
 and a five-regime Dirichlet evidence head. `predict_posterior()` separates
 aleatoric and epistemic variance through Monte Carlo weight sampling.
 
+The offline trainer reads bounded symbol/date slices from a static DuckDB
+replica, constructs labels from future trading-session returns, and purges any
+training observation whose label matures on or after the validation cutoff.
+Model checkpoints and metrics belong in the external `bnhmm-storage` tree.
+
 ## Data contract
 
 Required input columns are `symbol`, `timestamp`, `open`, `high`, `low`, `close`,
@@ -48,6 +53,24 @@ python -m bnhmm.cli profile-smoke \
   --broker-url http://127.0.0.1:9000/api/v1/db \
   --symbol 000001 --start 2026-07-01 --end 2026-08-01
 ```
+
+## Real-data training
+
+Install the `training` extra in the engine environment, then run a bounded
+single-symbol experiment:
+
+```bash
+python -m bnhmm.cli train \
+  --duckdb-path /home/share/data/market.duckdb \
+  --symbol 000090 --start 2025-01-01 --end 2026-08-05 \
+  --output-dir /home/wujianfeng/private/bnhmm-storage/artifacts/000090 \
+  --device cuda:0 --epochs 10
+```
+
+The output directory contains `model.pt` and `metrics.json`. The checkpoint
+records the data range, temporal cutoff, architecture, training configuration,
+and best validation epoch. It is an unpublished training artifact and is never
+read directly by Quant Platform.
 
 ## Storage
 
