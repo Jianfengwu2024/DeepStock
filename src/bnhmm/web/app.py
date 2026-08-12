@@ -62,6 +62,11 @@ def config(request: Request) -> dict[str, Any]:
     }
 
 
+@app.get("/api/gpus")
+def gpus() -> dict[str, Any]:
+    return {"devices": _devices()}
+
+
 @app.get("/api/symbols")
 def symbols(
     database_path: str = Query("/home/share/data/market.duckdb"),
@@ -111,6 +116,7 @@ def artifact(identifier: str, name: str, request: Request) -> FileResponse:
 
 def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[str, Any]:
     payload = record.model_dump(mode="json")
+    payload.pop("process_id", None)
     payload["summary"] = store.summary(record.id)
     payload["artifacts"] = {
         name: f"/api/jobs/{record.id}/artifacts/{name}"
@@ -151,6 +157,8 @@ def _devices() -> list[dict[str, Any]]:
                     "name": name,
                     "memory_used_mib": int(used),
                     "memory_total_mib": int(total),
+                    "memory_free_mib": int(total) - int(used),
+                    "memory_percent": round(int(used) / max(int(total), 1) * 100, 1),
                     "temperature_c": int(temperature),
                 }
             )

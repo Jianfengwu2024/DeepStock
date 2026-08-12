@@ -6,11 +6,17 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from bnhmm.web.jobs import JobManager, WalkForwardJobRequest, build_command
+from bnhmm.web.jobs import (
+    JobManager,
+    WalkForwardJobRequest,
+    build_command,
+    gpu_memory_for_pid,
+)
 
 
 class WebJobTests(unittest.TestCase):
@@ -29,6 +35,14 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--max-folds", command)
         self.assertIn("--allow-short", command)
         self.assertNotIn("shell=True", command)
+
+    def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
+        output = "123, 512\n456, 900\n123, 256\n"
+        with patch(
+            "bnhmm.web.jobs.subprocess.run",
+            return_value=SimpleNamespace(stdout=output),
+        ):
+            self.assertEqual(gpu_memory_for_pid(123), 768)
 
     def test_worker_persists_completed_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

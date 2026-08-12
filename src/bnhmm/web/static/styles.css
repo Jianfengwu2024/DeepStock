@@ -74,6 +74,14 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .header-title, .header-actions { display: flex; align-items: center; gap: 11px; }
 .header-title h1 { margin: 0; font-size: 17px; }
 .header-title p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+.gpu-monitor { display: flex; align-items: center; gap: 6px; }
+.gpu-chip { width: 126px; padding: 5px 7px; background: var(--panel-muted); border: 1px solid var(--line); border-radius: 4px; }
+.gpu-chip-head { display: flex; align-items: center; justify-content: space-between; gap: 5px; color: var(--muted); font-size: 9px; }
+.gpu-chip-head strong { color: var(--text); font-size: 9px; font-weight: 700; }
+.gpu-memory-track { height: 3px; margin-top: 4px; overflow: hidden; background: #dfe4e6; }
+.gpu-memory-track span { display: block; height: 100%; background: var(--green); }
+.gpu-chip.high .gpu-memory-track span { background: var(--amber); }
+.gpu-chip.critical .gpu-memory-track span { background: var(--red); }
 .workspace-grid { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: calc(100vh - 68px); }
 .run-history { background: #f9fafb; border-right: 1px solid var(--line); padding: 14px 10px; }
 .section-title { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 9px; }
@@ -102,6 +110,7 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .run-title-row { display: flex; align-items: center; gap: 10px; }
 .run-title-row h2 { margin: 0; font-size: 18px; }
 .run-meta { margin-top: 6px; color: var(--muted); font-size: 11px; }
+.run-gpu-memory { display: inline-flex; margin-top: 7px; padding: 4px 7px; color: var(--blue); background: #eaf3f9; border-radius: 3px; font-size: 10px; font-weight: 700; }
 .progress-band { margin: 15px 0; padding: 12px; background: var(--amber-soft); border-left: 3px solid #d78a1c; }
 .progress-track { height: 3px; margin-bottom: 9px; overflow: hidden; background: #f0d6ad; }
 .progress-track span { display: block; width: 35%; height: 100%; background: var(--amber); animation: progress 1.2s infinite ease-in-out; }
@@ -166,6 +175,7 @@ dialog::backdrop { background: rgba(20,30,35,.35); }
 }
 
 @media (max-width: 1180px) {
+  .gpu-monitor { display: none; }
   .workspace-grid { grid-template-columns: 190px minmax(0, 1fr); }
 }
 

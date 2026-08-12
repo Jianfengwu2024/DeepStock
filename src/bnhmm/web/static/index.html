@@ -98,6 +98,7 @@
           <div><h1>样本外测试</h1><p id="job-subtitle">选择历史任务或开始新实验</p></div>
         </div>
         <div class="header-actions">
+          <div class="gpu-monitor" id="gpu-monitor" aria-label="GPU 显存占用"></div>
           <span class="status-badge neutral" id="global-status">空闲</span>
           <button class="icon-button" type="button" id="refresh-button" title="刷新"><i data-lucide="refresh-cw"></i></button>
         </div>
@@ -120,6 +121,7 @@
               <div>
                 <div class="run-title-row"><h2 id="run-title"></h2><span id="run-status" class="status-badge neutral"></span></div>
                 <div id="run-meta" class="run-meta"></div>
+                <div id="run-gpu-memory" class="run-gpu-memory hidden"></div>
               </div>
               <button class="danger-button hidden" id="cancel-button" type="button"><i data-lucide="square"></i>停止</button>
             </div>

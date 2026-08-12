@@ -1,5 +1,6 @@
 const state = {
   config: null,
+  devices: [],
   jobs: [],
   selectedId: null,
   symbols: [],
@@ -52,6 +53,7 @@ function fillForm(defaults) {
 }
 
 function setupDevices(devices) {
+  state.devices = devices;
   const select = document.querySelector("#device-select");
   select.replaceChildren(...devices.map(device => {
     const option = document.createElement("option");
@@ -62,15 +64,38 @@ function setupDevices(devices) {
   }));
   if (devices.some(item => item.id === "cuda:0")) select.value = "cuda:0";
   updateDeviceNote();
+  renderGpuMonitor();
 }
 
 function updateDeviceNote() {
   const select = document.querySelector("#device-select");
-  const option = select.selectedOptions[0];
   const note = document.querySelector("#device-note");
-  if (!option?.dataset.device) return;
-  const device = JSON.parse(option.dataset.device);
+  const device = state.devices.find(item => item.id === select.value);
+  if (!device) return;
   note.textContent = device.id === "cpu" ? "" : `${device.memory_used_mib} / ${device.memory_total_mib} MiB · ${device.temperature_c}°C`;
+}
+
+function updateDevices(devices) {
+  state.devices = devices;
+  for (const option of document.querySelectorAll("#device-select option")) {
+    const device = devices.find(item => item.id === option.value);
+    if (device) option.dataset.device = JSON.stringify(device);
+  }
+  updateDeviceNote();
+  renderGpuMonitor();
+}
+
+function renderGpuMonitor() {
+  const monitor = document.querySelector("#gpu-monitor");
+  const gpus = state.devices.filter(item => item.id.startsWith("cuda:"));
+  monitor.innerHTML = gpus.map(gpu => {
+    const percent = Number(gpu.memory_percent || 0);
+    const level = percent >= 90 ? "critical" : percent >= 75 ? "high" : "";
+    const used = (gpu.memory_used_mib / 1024).toFixed(1);
+    const total = (gpu.memory_total_mib / 1024).toFixed(0);
+    const index = gpu.id.split(":")[1];
+    return `<div class="gpu-chip ${level}" title="${escapeHtml(gpu.name)} · 剩余 ${(gpu.memory_free_mib / 1024).toFixed(1)} GB"><div class="gpu-chip-head"><span>GPU ${index}</span><strong>${used} / ${total} GB</strong></div><div class="gpu-memory-track"><span style="width:${Math.min(percent, 100)}%"></span></div></div>`;
+  }).join("");
 }
 
 function formPayload() {
@@ -112,7 +137,9 @@ async function refreshAll() {
   if (state.polling) return;
   state.polling = true;
   try {
-    state.jobs = await api("/api/jobs");
+    const [jobs, gpuPayload] = await Promise.all([api("/api/jobs"), api("/api/gpus")]);
+    state.jobs = jobs;
+    updateDevices(gpuPayload.devices);
     if (!state.selectedId && state.jobs.length) state.selectedId = state.jobs[0].id;
     renderJobList();
     if (state.selectedId) {
@@ -156,6 +183,7 @@ function renderJob(job) {
   badge.className = `status-badge ${job.status}`;
   badge.textContent = statusText[job.status];
   document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${job.request.device}`;
+  renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
@@ -167,6 +195,20 @@ function renderJob(job) {
   renderFolds(job.summary?.folds || []);
   renderArtifacts(job);
   icons();
+}
+
+function renderJobGpuMemory(job) {
+  const element = document.querySelector("#run-gpu-memory");
+  const isGpu = String(job.request.device).startsWith("cuda:");
+  const hasSample = Number(job.peak_gpu_memory_mib) > 0;
+  if (!isGpu || (!hasSample && job.status !== "running")) {
+    element.classList.add("hidden");
+    return;
+  }
+  element.classList.remove("hidden");
+  element.textContent = job.status === "running"
+    ? `本任务显存：当前 ${formatMemory(job.current_gpu_memory_mib)} · 峰值 ${formatMemory(job.peak_gpu_memory_mib)}`
+    : `本任务峰值显存：${formatMemory(job.peak_gpu_memory_mib)}`;
 }
 
 function renderInsight(summary) {
@@ -311,6 +353,7 @@ function formatDate(value) { return new Date(value).toLocaleString("zh-CN", { mo
 function formatNumber(value, digits = 2) { return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—"; }
 function formatInteger(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString("zh-CN") : "—"; }
 function formatPercent(value) { return Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(2)}%` : "—"; }
+function formatMemory(value) { const mib = Number(value || 0); return mib >= 1024 ? `${(mib / 1024).toFixed(2)} GB` : `${Math.round(mib)} MiB`; }
 function elapsed(start, end) { const seconds = Math.max(0, (new Date(end || Date.now()) - new Date(start)) / 1000); return seconds < 60 ? `${Math.floor(seconds)} 秒` : `${Math.floor(seconds / 60)} 分 ${Math.floor(seconds % 60)} 秒`; }
 function escapeHtml(value) { return String(value).replace(/[&<>"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[character])); }
 

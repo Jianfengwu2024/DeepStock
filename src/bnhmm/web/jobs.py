@@ -96,6 +96,9 @@ class JobRecord(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     return_code: int | None = None
+    process_id: int | None = None
+    current_gpu_memory_mib: int = 0
+    peak_gpu_memory_mib: int = 0
     error: str | None = None
     output_dir: str
     request: WalkForwardJobRequest
@@ -103,6 +106,35 @@ class JobRecord(BaseModel):
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def gpu_memory_for_pid(process_id: int) -> int:
+    """Return aggregate dedicated GPU memory for one host process."""
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,used_gpu_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    total = 0
+    for line in result.stdout.splitlines():
+        columns = [item.strip() for item in line.split(",")]
+        if len(columns) != 2:
+            continue
+        try:
+            if int(columns[0]) == process_id:
+                total += int(columns[1])
+        except ValueError:
+            continue
+    return total
 
 
 def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]:
@@ -280,6 +312,8 @@ class JobManager:
             log_path = output_dir / "job.log"
             return_code = -1
             error: str | None = None
+            monitor_stop: threading.Event | None = None
+            monitor: threading.Thread | None = None
             try:
                 environment = os.environ.copy()
                 process = subprocess.Popen(
@@ -294,6 +328,18 @@ class JobManager:
                 )
                 with self._lock:
                     self._current_process = process
+                    current = self._jobs[identifier]
+                    current.process_id = process.pid
+                    current.current_gpu_memory_mib = 0
+                    self._persist(current)
+                monitor_stop = threading.Event()
+                monitor = threading.Thread(
+                    target=self._monitor_gpu,
+                    args=(identifier, process.pid, monitor_stop),
+                    name=f"bnhmm-gpu-{identifier}",
+                    daemon=True,
+                )
+                monitor.start()
                 assert process.stdout is not None
                 with log_path.open("a", encoding="utf-8") as log:
                     log.write("command: " + " ".join(command) + "\n")
@@ -303,6 +349,11 @@ class JobManager:
                 return_code = process.wait()
             except Exception as exc:  # pragma: no cover - operating-system failure
                 error = str(exc)
+            finally:
+                if monitor_stop is not None:
+                    monitor_stop.set()
+                if monitor is not None:
+                    monitor.join(timeout=2)
             with self._lock:
                 current = self._jobs[identifier]
                 if current.status != "cancelled":
@@ -316,9 +367,27 @@ class JobManager:
                         None if current.status == "completed" else f"process exited {return_code}"
                     )
                     current.finished_at = utcnow()
+                current.current_gpu_memory_mib = 0
                 self._current_id = None
                 self._current_process = None
                 self._persist(current)
+
+    def _monitor_gpu(
+        self, identifier: str, process_id: int, stop: threading.Event
+    ) -> None:
+        while not stop.wait(0.5):
+            memory = gpu_memory_for_pid(process_id)
+            with self._lock:
+                record = self._jobs.get(identifier)
+                if record is None or record.status != "running":
+                    return
+                changed = memory != record.current_gpu_memory_mib
+                record.current_gpu_memory_mib = memory
+                if memory > record.peak_gpu_memory_mib:
+                    record.peak_gpu_memory_mib = memory
+                    changed = True
+                if changed:
+                    self._persist(record)
 
     def _persist(self, record: JobRecord) -> None:
         path = Path(record.output_dir) / "job.json"
@@ -336,5 +405,6 @@ class JobManager:
                 record.status = "interrupted"
                 record.finished_at = utcnow()
                 record.error = "web service restarted before the job completed"
+                record.current_gpu_memory_mib = 0
                 self._persist(record)
             self._jobs[record.id] = record
