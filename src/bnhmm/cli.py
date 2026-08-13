@@ -142,6 +142,10 @@ def _train(args: argparse.Namespace) -> int:
         metadata,
     )
 
+    inference_seed = args.seed + 100_000
+    torch.manual_seed(inference_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(inference_seed)
     posterior_batch = collate_profile_sequences([validation_sequences[-1]])
     posterior = model.predict_posterior(
         posterior_batch["profiles"].to(device),

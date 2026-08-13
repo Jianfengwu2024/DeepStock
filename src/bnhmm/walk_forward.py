@@ -147,6 +147,10 @@ def run_walk_forward(
         final_model = model_config.build(seed=trainer_config.seed + fold.index * 2 + 1)
         final_trainer = BNHMMTrainer(final_model, final_config, device=device)
         final_result = final_trainer.fit_fixed(pretest_sequences)
+        inference_seed = trainer_config.seed + 100_000 + fold.index
+        torch.manual_seed(inference_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(inference_seed)
         predictions = infer_sequences(
             final_model,
             test_sequences,
