@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -74,6 +75,29 @@ class WebJobTests(unittest.TestCase):
             self.assertEqual(current.status, "completed")
             stored = json.loads((Path(current.output_dir) / "job.json").read_text())
             self.assertEqual(stored["status"], "completed")
+
+    def test_jobs_without_state_mode_are_loaded_as_legacy_mixed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job_dir = root / "legacy-job"
+            job_dir.mkdir()
+            request = WalkForwardJobRequest().model_dump(mode="json")
+            request.pop("state_timeframe")
+            payload = {
+                "id": "legacy-job",
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "output_dir": str(job_dir),
+                "request": request,
+            }
+            (job_dir / "job.json").write_text(json.dumps(payload), encoding="utf-8")
+
+            manager = JobManager(root, Path.cwd())
+            loaded = manager.get("legacy-job")
+            manager.close()
+
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.request.state_timeframe, "mixed")
 
 
 if __name__ == "__main__":

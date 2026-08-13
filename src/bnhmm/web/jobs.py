@@ -401,7 +401,15 @@ class JobManager:
     def _load_existing(self) -> None:
         for path in self.root.glob("*/job.json"):
             try:
-                record = JobRecord.model_validate_json(path.read_text(encoding="utf-8"))
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                request_payload = payload.get("request")
+                if (
+                    isinstance(request_payload, dict)
+                    and "state_timeframe" not in request_payload
+                ):
+                    # Jobs created before daily-only mode always used mixed states.
+                    request_payload["state_timeframe"] = "mixed"
+                record = JobRecord.model_validate(payload)
             except Exception:
                 continue
             if record.status in {"running", "queued"}:
