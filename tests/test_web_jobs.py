@@ -41,6 +41,7 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--bin-width-bps", command)
         self.assertIn("--max-profile-bins", command)
         self.assertIn("--kl-weight", command)
+        self.assertIn("--ordinal-weight", command)
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
 

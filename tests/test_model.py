@@ -4,7 +4,7 @@ import unittest
 
 import torch
 
-from bnhmm.model import BNHMMNetwork, evidential_classification_loss
+from bnhmm.model import BNHMMNetwork, SinglePassOutput, evidential_classification_loss
 
 
 def profiles(
@@ -50,6 +50,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         loss.total.backward()
         self.assertTrue(torch.isfinite(loss.total))
         self.assertLess(float(loss.kl.detach()), 10.0)
+        self.assertGreaterEqual(float(loss.ordinal.detach()), 0.0)
         self.assertTrue(any(parameter.grad is not None for parameter in self.model.parameters()))
 
     def test_posterior_separates_uncertainty(self) -> None:
@@ -68,6 +69,25 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(torch.all(posterior.epistemic_variance >= 0))
         self.assertTrue(torch.all(posterior.expected_score <= 2.0))
         self.assertTrue(torch.all(posterior.expected_score >= -2.0))
+
+    def test_ordinal_loss_penalizes_distant_state_errors(self) -> None:
+        common = {
+            "latent_probabilities": torch.full((1, 1, 10), 0.1),
+            "context": torch.zeros(1, 1, 4),
+            "kl_divergence": torch.tensor(0.0),
+        }
+        near = SinglePassOutput(
+            alpha=torch.tensor([[[2.0, 9.0, 2.0, 2.0, 2.0]]]), **common
+        )
+        far = SinglePassOutput(
+            alpha=torch.tensor([[[2.0, 2.0, 2.0, 2.0, 9.0]]]), **common
+        )
+        target = torch.zeros((1, 1), dtype=torch.long)
+
+        near_loss = evidential_classification_loss(near, target).ordinal
+        far_loss = evidential_classification_loss(far, target).ordinal
+
+        self.assertGreater(float(far_loss), float(near_loss))
 
     def test_future_profile_does_not_change_past_output(self) -> None:
         self.model.eval()

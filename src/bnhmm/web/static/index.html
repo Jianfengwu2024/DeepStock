@@ -46,6 +46,7 @@
           <div class="two-columns">
             <label>学习率<input name="learning_rate" type="number" min="0" step="0.00001"></label>
             <label>KL 权重<input name="kl_weight" type="number" min="0" max="1" step="0.0001"></label>
+            <label>有序损失权重<input name="ordinal_weight" type="number" min="0" max="10" step="0.1"></label>
           </div>
           <label class="toggle-row"><span>确定性训练（消融）</span><input name="deterministic_training" type="checkbox" role="switch"></label>
         </details>

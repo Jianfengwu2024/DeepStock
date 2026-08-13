@@ -144,6 +144,9 @@ def evaluate_predictions(
     returns = np.asarray([item.forward_return for item in predictions])
     one_hot = np.eye(5)[targets]
     probability_residuals = one_hot - probability
+    ranked_probability_score = np.square(
+        probability.cumsum(axis=1)[:, :-1] - one_hot.cumsum(axis=1)[:, :-1]
+    ).mean(axis=1)
     predicted_returns = probability @ regime_return_means
     mixture_second_moment = probability @ (
         regime_return_variances + regime_return_means**2
@@ -202,6 +205,7 @@ def evaluate_predictions(
         "confusion_matrix": confusion.tolist(),
         "brier_score": float(np.square(probability_residuals).sum(axis=1).mean()),
         "log_loss": float(-np.log(np.clip(probability[np.arange(len(targets)), targets], 1e-12, 1.0)).mean()),
+        "ranked_probability_score": float(ranked_probability_score.mean()),
         "probability_residual_mean": probability_residuals.mean(axis=0).tolist(),
         "probability_residual_rmse": np.sqrt(
             np.square(probability_residuals).mean(axis=0)

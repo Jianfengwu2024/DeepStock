@@ -16,6 +16,7 @@ class LossBreakdown:
     total: Tensor
     evidential_nll: Tensor
     brier: Tensor
+    ordinal: Tensor
     kl: Tensor
     latent_balance: Tensor
 
@@ -27,6 +28,7 @@ def evidential_classification_loss(
     valid_mask: Tensor | None = None,
     kl_weight: float = 1e-6,
     brier_weight: float = 0.25,
+    ordinal_weight: float = 0.0,
     latent_balance_weight: float = 0.05,
 ) -> LossBreakdown:
     if targets.shape != output.alpha.shape[:2]:
@@ -44,11 +46,17 @@ def evidential_classification_loss(
         probability.dtype
     )
     brier_per_item = (probability - one_hot).square().sum(dim=-1)
+    cumulative_probability = probability.cumsum(dim=-1)[..., :-1]
+    cumulative_target = one_hot.cumsum(dim=-1)[..., :-1]
+    ordinal_per_item = (
+        cumulative_probability - cumulative_target
+    ).square().mean(dim=-1)
 
     mask = valid_mask.to(probability.dtype)
     denominator = mask.sum().clamp_min(1.0)
     nll = (expected_nll * mask).sum() / denominator
     brier = (brier_per_item * mask).sum() / denominator
+    ordinal = (ordinal_per_item * mask).sum() / denominator
 
     latent_mask = mask.unsqueeze(-1)
     usage = (output.latent_probabilities * latent_mask).sum(dim=(0, 1))
@@ -59,8 +67,9 @@ def evidential_classification_loss(
     total = (
         nll
         + brier_weight * brier
+        + ordinal_weight * ordinal
         + kl_weight * kl
         + latent_balance_weight * latent_balance
     )
-    return LossBreakdown(total, nll, brier, kl, latent_balance)
+    return LossBreakdown(total, nll, brier, ordinal, kl, latent_balance)
 

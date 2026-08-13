@@ -55,6 +55,7 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(report["macro_f1"], 1.0)
         self.assertEqual(report["class_support"], [3, 3, 3, 3, 3])
         self.assertEqual(report["confusion_matrix"], (np.eye(5, dtype=int) * 3).tolist())
+        self.assertLess(report["ranked_probability_score"], 0.1)
 
     def test_uncertainty_reduces_position(self) -> None:
         item = prediction(1, 4, (0.02, 0.03, 0.05, 0.2, 0.7))

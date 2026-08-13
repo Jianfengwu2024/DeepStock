@@ -102,6 +102,7 @@ def _train(args: argparse.Namespace) -> int:
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         kl_weight=args.kl_weight,
+        ordinal_weight=args.ordinal_weight,
         sample_during_training=not args.deterministic_training,
         seed=args.seed,
     )
@@ -240,6 +241,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         kl_weight=args.kl_weight,
+        ordinal_weight=args.ordinal_weight,
         sample_during_training=not args.deterministic_training,
         seed=args.seed,
     )
@@ -298,6 +300,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "confusion_matrix": report["confusion_matrix"],
         "brier_score": report["brier_score"],
         "log_loss": report["log_loss"],
+        "ranked_probability_score": report["ranked_probability_score"],
         "return_residual": report["return_residual"],
         "standardized_residual": report["standardized_residual"],
         "backtest": {
@@ -347,6 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--batch-size", type=int, default=8)
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--kl-weight", type=float, default=1e-3)
+    train.add_argument("--ordinal-weight", type=float, default=0.0)
     train.add_argument("--deterministic-training", action="store_true")
     train.add_argument("--train-fraction", type=float, default=0.8)
     train.add_argument("--forward-sessions", type=int, default=1)
@@ -383,6 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--batch-size", type=int, default=8)
     walk.add_argument("--learning-rate", type=float, default=3e-4)
     walk.add_argument("--kl-weight", type=float, default=1e-3)
+    walk.add_argument("--ordinal-weight", type=float, default=0.0)
     walk.add_argument("--deterministic-training", action="store_true")
     walk.add_argument("--forward-sessions", type=int, default=1)
     walk.add_argument("--minimum-train-sessions", type=int, default=252)

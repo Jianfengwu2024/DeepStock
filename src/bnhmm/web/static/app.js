@@ -9,7 +9,7 @@ const state = {
 };
 
 const numberFields = new Set([
-  "epochs", "batch_size", "learning_rate", "kl_weight", "forward_sessions",
+  "epochs", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
   "max_folds", "bin_width_bps", "max_profile_bins", "sequence_length", "sequence_stride",
   "minimum_sequence_length", "d_model", "motif_dim", "heads", "layers",
@@ -276,6 +276,7 @@ function renderMetrics(summary) {
     ["多数类基线", formatPercent(summary.majority_baseline), "始终猜样本最多状态的命中率"],
     ["概率误差 Brier", formatNumber(summary.brier_score, 4), "0 最好，随机约 0.80"],
     ["概率损失 Log Loss", formatNumber(summary.log_loss, 4), "0 最好，随机约 1.61"],
+    ["有序概率误差 RPS", formatNumber(summary.ranked_probability_score, 4), "越低越好，距离更远的错判惩罚更大"],
     ["模型策略收益", formatPercent(summary.backtest?.total_return), "已扣除设定的交易成本"],
     ["最大回撤", formatPercent(Math.abs(Number(summary.backtest?.max_drawdown))), "历史峰值后的最大跌幅"],
   ];

@@ -42,6 +42,7 @@ class TrainerConfig:
     kl_weight: float = 1e-3
     kl_anneal_epochs: int = 10
     brier_weight: float = 0.25
+    ordinal_weight: float = 0.0
     latent_balance_weight: float = 0.05
     sample_during_training: bool = True
     gradient_clip: float = 1.0
@@ -231,6 +232,7 @@ class BNHMMTrainer:
             "predictive_loss": 0.0,
             "nll": 0.0,
             "brier": 0.0,
+            "ordinal": 0.0,
             "kl": 0.0,
             "latent_balance": 0.0,
             "accuracy": 0.0,
@@ -256,6 +258,7 @@ class BNHMMTrainer:
                     valid_mask=batch["valid_mask"],
                     kl_weight=self.config.kl_weight * kl_scale,
                     brier_weight=self.config.brier_weight,
+                    ordinal_weight=self.config.ordinal_weight,
                     latent_balance_weight=self.config.latent_balance_weight,
                 )
                 if optimizer is not None:
@@ -272,10 +275,12 @@ class BNHMMTrainer:
             totals["loss"] += float(loss.total.detach()) * tokens
             predictive_loss = (
                 loss.evidential_nll + self.config.brier_weight * loss.brier
+                + self.config.ordinal_weight * loss.ordinal
             )
             totals["predictive_loss"] += float(predictive_loss.detach()) * tokens
             totals["nll"] += float(loss.evidential_nll.detach()) * tokens
             totals["brier"] += float(loss.brier.detach()) * tokens
+            totals["ordinal"] += float(loss.ordinal.detach()) * tokens
             totals["kl"] += float(loss.kl.detach()) * tokens
             totals["latent_balance"] += float(loss.latent_balance.detach()) * tokens
             totals["accuracy"] += float(correct.detach())

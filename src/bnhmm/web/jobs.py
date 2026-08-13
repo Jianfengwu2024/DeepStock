@@ -33,6 +33,7 @@ class WalkForwardJobRequest(BaseModel):
     batch_size: int = Field(8, ge=1, le=512)
     learning_rate: float = Field(3e-4, gt=0, le=1.0)
     kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
+    ordinal_weight: float = Field(0.0, ge=0.0, le=10.0)
     deterministic_training: bool = False
     forward_sessions: int = Field(1, ge=1, le=60)
     minimum_train_sessions: int = Field(252, ge=10)
@@ -170,6 +171,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.learning_rate),
         "--kl-weight",
         str(request.kl_weight),
+        "--ordinal-weight",
+        str(request.ordinal_weight),
         "--forward-sessions",
         str(request.forward_sessions),
         "--minimum-train-sessions",
