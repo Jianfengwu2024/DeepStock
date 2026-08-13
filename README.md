@@ -13,13 +13,13 @@ comparison mode only.
 
 The model core now includes adjacent two/three-bin motif tokenization, causal
 Bayesian multi-head attention, a conditional ten-state latent transition filter,
-and a five-regime Dirichlet evidence head. `predict_posterior()` separates
+and a four-regime Dirichlet evidence head. `predict_posterior()` separates
 aleatoric and epistemic variance through Monte Carlo weight sampling.
 
 Optional self-supervised pretraining uses only states available before each
 walk-forward cutoff. It reconstructs randomly masked daily state features and
 predicts the next daily state features from causal context before the noisy
-five-regime target is introduced. Pretraining and supervised fine-tuning use
+four-regime target is introduced. Pretraining and supervised fine-tuning use
 separate deterministic random streams so controlled ablations are reproducible.
 
 The offline trainer reads bounded symbol/date slices from a static DuckDB
@@ -115,6 +115,16 @@ python -m bnhmm.web.app
 
 Open `http://SERVER_IP:8765`. The console is intended for the trusted local
 network and must not be exposed directly to the public internet.
+
+The server installation includes convenience scripts in the repository root:
+
+```bash
+./start.sh
+./stop.sh
+```
+
+`stop.sh` refuses to interrupt active training. Use `./stop.sh --force` only
+when the active jobs should be cancelled before the service stops.
 
 ## Storage
 
