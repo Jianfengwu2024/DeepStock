@@ -8,6 +8,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from ..config import REGIME_COUNT, REGIME_SCORES
 from .bayesian import BayesianLinear, module_kl_divergence
 from .transformer import BayesianTransformerBlock
 
@@ -165,7 +166,7 @@ class BNHMMNetwork(nn.Module):
         profile_channels: int = 3,
         state_feature_dim: int = 9,
         latent_states: int = 10,
-        output_states: int = 5,
+        output_states: int = REGIME_COUNT,
         d_model: int = 96,
         motif_dim: int = 32,
         heads: int = 4,
@@ -177,8 +178,8 @@ class BNHMMNetwork(nn.Module):
         super().__init__()
         if latent_states != 10:
             raise ValueError("BNHMM v2 requires ten unnamed latent states")
-        if output_states != 5:
-            raise ValueError("BNHMM v2 requires five output regimes")
+        if output_states != REGIME_COUNT:
+            raise ValueError("BNHMM v2 requires four output regimes")
         if max_sequence_length < 2:
             raise ValueError("max_sequence_length must be at least two")
         self.max_profile_bins = max_profile_bins
@@ -224,7 +225,7 @@ class BNHMMNetwork(nn.Module):
             pretraining_dim, state_feature_dim
         )
         self.register_buffer(
-            "regime_scores", torch.linspace(-2.0, 2.0, output_states), persistent=False
+            "regime_scores", torch.tensor(REGIME_SCORES), persistent=False
         )
         self.kl_distribution_count = sum(
             module.weight_mu.numel()

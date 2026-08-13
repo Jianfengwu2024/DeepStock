@@ -9,9 +9,15 @@ from enum import IntEnum
 class RegimeState(IntEnum):
     STRONG_BEAR = -2
     WEAK_BEAR = -1
-    NEUTRAL = 0
     WEAK_BULL = 1
     STRONG_BULL = 2
+
+
+REGIME_STATES = tuple(RegimeState)
+REGIME_COUNT = len(REGIME_STATES)
+REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
+REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
+REGIME_PROTOCOL = "directional-four-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,12 +54,11 @@ class ProfileConfig:
 
 @dataclass(frozen=True, slots=True)
 class LabelConfig:
-    """Forward-return definition for the canonical five regimes."""
+    """Forward-return definition for four directional regimes."""
 
     forward_sessions: int = 1
     strong_bear_threshold: float = -0.02
-    weak_bear_threshold: float = -0.005
-    weak_bull_threshold: float = 0.005
+    direction_threshold: float = 0.0
     strong_bull_threshold: float = 0.02
 
     def __post_init__(self) -> None:
@@ -64,11 +69,10 @@ class LabelConfig:
             raise ValueError("regime thresholds must be strictly increasing")
 
     @property
-    def thresholds(self) -> tuple[float, float, float, float]:
+    def thresholds(self) -> tuple[float, float, float]:
         return (
             self.strong_bear_threshold,
-            self.weak_bear_threshold,
-            self.weak_bull_threshold,
+            self.direction_threshold,
             self.strong_bull_threshold,
         )
 
@@ -91,15 +95,7 @@ class SequenceConfig:
 @dataclass(frozen=True, slots=True)
 class BNHMMConfig:
     latent_states: int = 10
-    output_states: tuple[RegimeState, ...] = field(
-        default=(
-            RegimeState.STRONG_BEAR,
-            RegimeState.WEAK_BEAR,
-            RegimeState.NEUTRAL,
-            RegimeState.WEAK_BULL,
-            RegimeState.STRONG_BULL,
-        )
-    )
+    output_states: tuple[RegimeState, ...] = field(default=REGIME_STATES)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     labels: LabelConfig = field(default_factory=LabelConfig)
     sequences: SequenceConfig = field(default_factory=SequenceConfig)
@@ -107,6 +103,6 @@ class BNHMMConfig:
     def __post_init__(self) -> None:
         if self.latent_states != 10:
             raise ValueError("BNHMM v2 requires exactly ten unnamed latent states")
-        if tuple(self.output_states) != tuple(RegimeState):
-            raise ValueError("output_states must contain the canonical five regimes")
+        if tuple(self.output_states) != REGIME_STATES:
+            raise ValueError("output_states must contain the canonical four regimes")
 

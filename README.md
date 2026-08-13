@@ -96,7 +96,7 @@ python -m bnhmm.cli walk-forward \
   --device cuda:0 --state-timeframe daily
 ```
 
-Reports include out-of-sample five-state predictions, Brier score, log loss,
+Reports include out-of-sample four-state directional predictions, Brier score, log loss,
 calibration, probability/return/standardized residuals, residual
 autocorrelation, posterior predictive checks, and policy equity/drawdown. The
 policy is a separate consumer of the model posterior. Completed daily signals

@@ -243,6 +243,19 @@ function renderJobGpuMemory(job) {
     : `本任务峰值显存：${formatMemory(job.peak_gpu_memory_mib)}`;
 }
 
+function classificationBaseline(summary) {
+  const reportedCount = Array.isArray(summary.class_support) ? summary.class_support.length : 0;
+  const count = reportedCount >= 2 ? reportedCount : 4;
+  const label = ({ 4: "四", 5: "五" })[count] || String(count);
+  return {
+    count,
+    label,
+    accuracy: 1 / count,
+    brier: 1 - 1 / count,
+    logLoss: Math.log(count),
+  };
+}
+
 function renderInsight(summary) {
   const panel = document.querySelector("#result-insight");
   if (!summary) {
@@ -252,14 +265,15 @@ function renderInsight(summary) {
   const accuracy = Number(summary.accuracy);
   const brier = Number(summary.brier_score);
   const logLoss = Number(summary.log_loss);
+  const baseline = classificationBaseline(summary);
   let level = "weak";
   let title = "只有微弱信号，暂不足以用于实盘";
-  let detail = `五分类随机命中率是 20%。本次命中率 ${formatPercent(accuracy)}，虽略高于随机，但概率误差仍较大。`;
-  if (brier >= 0.79 || logLoss >= 1.59 || accuracy <= 0.21) {
+  let detail = `${baseline.label}分类随机命中率是 ${formatPercent(baseline.accuracy)}。本次命中率 ${formatPercent(accuracy)}，虽略高于随机，但概率误差仍较大。`;
+  if (brier >= baseline.brier - 0.01 || logLoss >= baseline.logLoss - 0.02 || accuracy <= baseline.accuracy + 0.01) {
     level = "poor";
     title = "模型输出接近随机猜测";
-    detail = `五分类随机基准为：命中率 20%、Brier 约 0.80、Log Loss 约 1.61。本次结果与随机基准非常接近，当前模型尚未学到稳定规律。`;
-  } else if (accuracy >= 0.28 && brier <= 0.74 && logLoss <= 1.50) {
+    detail = `${baseline.label}分类随机基准为：命中率 ${formatPercent(baseline.accuracy)}、Brier 约 ${formatNumber(baseline.brier, 2)}、Log Loss 约 ${formatNumber(baseline.logLoss, 2)}。本次结果与随机基准非常接近，当前模型尚未学到稳定规律。`;
+  } else if (accuracy >= baseline.accuracy + 0.08 && brier <= baseline.brier - 0.06 && logLoss <= baseline.logLoss - 0.10) {
     level = "promising";
     title = "模型出现初步区分能力，仍需扩大样本验证";
     detail = `本次三个分类指标均明显优于随机基准，但仍需更多股票和更多滚动窗口确认稳定性。`;
@@ -280,13 +294,14 @@ function renderMetrics(summary) {
     grid.replaceChildren();
     return;
   }
+  const baseline = classificationBaseline(summary);
   const values = [
     ["样本外信号", formatInteger(summary.oos_predictions), "未参与训练的预测数量"],
-    ["五状态命中率", formatPercent(summary.accuracy), "随机约 20%，越高越好"],
-    ["均衡命中率", formatPercent(summary.balanced_accuracy), "五种状态分别计算召回率后取平均"],
+    [`${baseline.label}状态命中率`, formatPercent(summary.accuracy), `随机约 ${formatPercent(baseline.accuracy)}，越高越好`],
+    ["均衡命中率", formatPercent(summary.balanced_accuracy), `${baseline.label}种状态分别计算召回率后取平均`],
     ["多数类基线", formatPercent(summary.majority_baseline), "始终猜样本最多状态的命中率"],
-    ["概率误差 Brier", formatNumber(summary.brier_score, 4), "0 最好，随机约 0.80"],
-    ["概率损失 Log Loss", formatNumber(summary.log_loss, 4), "0 最好，随机约 1.61"],
+    ["概率误差 Brier", formatNumber(summary.brier_score, 4), `0 最好，随机约 ${formatNumber(baseline.brier, 2)}`],
+    ["概率损失 Log Loss", formatNumber(summary.log_loss, 4), `0 最好，随机约 ${formatNumber(baseline.logLoss, 2)}`],
     ["有序概率误差 RPS", formatNumber(summary.ranked_probability_score, 4), "越低越好，距离更远的错判惩罚更大"],
     ["模型策略收益", formatPercent(summary.backtest?.total_return), "已扣除设定的交易成本"],
     ["最大回撤", formatPercent(Math.abs(Number(summary.backtest?.max_drawdown))), "历史峰值后的最大跌幅"],

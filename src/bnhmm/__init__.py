@@ -1,6 +1,16 @@
 """Public API for the independent BNHMM engine."""
 
-from .config import BNHMMConfig, LabelConfig, ProfileConfig, RegimeState, SequenceConfig
+from .config import (
+    REGIME_COUNT,
+    REGIME_NAMES,
+    REGIME_PROTOCOL,
+    REGIME_SCORES,
+    BNHMMConfig,
+    LabelConfig,
+    ProfileConfig,
+    RegimeState,
+    SequenceConfig,
+)
 from .data.profile import PriceVolumeProfileBuilder
 from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
 from .data.relative_volume import RelativeVolumeBaseline
@@ -17,11 +27,15 @@ __all__ = [
     "PriceVolumeProfileBuilder",
     "ProfileConfig",
     "ProfileState",
+    "REGIME_COUNT",
+    "REGIME_NAMES",
+    "REGIME_PROTOCOL",
+    "REGIME_SCORES",
     "RegimeState",
     "RelativeVolumeBaseline",
     "SequenceConfig",
     "SequenceWindowBuilder",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 

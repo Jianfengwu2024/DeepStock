@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import date
 
 import numpy as np
 
+from bnhmm import REGIME_SCORES
 from bnhmm.evaluation import (
     DecisionPolicy,
     DecisionPolicyConfig,
@@ -16,7 +18,7 @@ from bnhmm.evaluation import (
 
 def prediction(day: int, target: int, probability: tuple[float, ...]) -> PredictionRecord:
     signal = np.datetime64("2026-01-01") + np.timedelta64(day, "D")
-    scores = np.linspace(-2.0, 2.0, 5)
+    scores = np.asarray(REGIME_SCORES)
     return PredictionRecord(
         symbol="000001",
         timeframe_id=1,
@@ -26,10 +28,10 @@ def prediction(day: int, target: int, probability: tuple[float, ...]) -> Predict
             "datetime64[ns]"
         ),
         target=target,
-        forward_return=(-0.02, -0.008, 0.0, 0.008, 0.02)[target],
+        forward_return=(-0.03, -0.008, 0.008, 0.03)[target],
         probability_mean=probability,
-        aleatoric_variance=(0.01,) * 5,
-        epistemic_variance=(0.001,) * 5,
+        aleatoric_variance=(0.01,) * 4,
+        epistemic_variance=(0.001,) * 4,
         expected_score=float(np.asarray(probability) @ scores),
         context_length=8,
     )
@@ -38,13 +40,13 @@ def prediction(day: int, target: int, probability: tuple[float, ...]) -> Predict
 class EvaluationTests(unittest.TestCase):
     def test_report_contains_probabilistic_and_strategy_diagnostics(self) -> None:
         predictions = [
-            prediction(index, index % 5, tuple(np.eye(5)[index % 5] * 0.6 + 0.08))
-            for index in range(15)
+            prediction(index, index % 4, tuple(np.eye(4)[index % 4] * 0.6 + 0.1))
+            for index in range(12)
         ]
         report = evaluate_predictions(
             predictions,
-            np.asarray([-0.03, -0.01, 0.0, 0.01, 0.03]),
-            np.full(5, 0.0001),
+            np.asarray([-0.03, -0.01, 0.01, 0.03]),
+            np.full(4, 0.0001),
         )
 
         self.assertLess(report["log_loss"], 1.0)
@@ -52,18 +54,29 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn("max_drawdown", report["backtest"])
         self.assertIn("average_abs_position", report["backtest"])
         self.assertGreaterEqual(report["backtest"]["active_position_ratio"], 0.0)
-        self.assertEqual(report["observation_count"], 15)
+        self.assertEqual(report["observation_count"], 12)
         self.assertEqual(report["balanced_accuracy"], 1.0)
         self.assertEqual(report["macro_f1"], 1.0)
-        self.assertEqual(report["class_support"], [3, 3, 3, 3, 3])
-        self.assertEqual(report["confusion_matrix"], (np.eye(5, dtype=int) * 3).tolist())
+        self.assertEqual(report["class_support"], [3, 3, 3, 3])
+        self.assertEqual(report["confusion_matrix"], (np.eye(4, dtype=int) * 3).tolist())
         self.assertLess(report["ranked_probability_score"], 0.1)
 
     def test_uncertainty_reduces_position(self) -> None:
-        item = prediction(1, 4, (0.02, 0.03, 0.05, 0.2, 0.7))
+        item = prediction(1, 3, (0.02, 0.03, 0.2, 0.75))
         cautious = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=4.0))
         relaxed = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=0.0))
         self.assertLess(cautious.target_position(item), relaxed.target_position(item))
+
+    def test_five_state_predictions_are_rejected(self) -> None:
+        item = prediction(1, 3, (0.02, 0.03, 0.2, 0.75))
+        legacy = replace(
+            item,
+            probability_mean=(0.1, 0.1, 0.6, 0.1, 0.1),
+            aleatoric_variance=(0.01,) * 5,
+            epistemic_variance=(0.001,) * 5,
+        )
+        with self.assertRaisesRegex(ValueError, "four-state"):
+            evaluate_predictions([legacy], np.zeros(4), np.ones(4))
 
     def test_report_chart_uses_bimonthly_date_labels(self) -> None:
         try:

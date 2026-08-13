@@ -10,7 +10,14 @@ from typing import Sequence
 
 import numpy as np
 
-from .config import LabelConfig, ProfileConfig, SequenceConfig
+from .config import (
+    REGIME_COUNT,
+    REGIME_NAMES,
+    REGIME_PROTOCOL,
+    LabelConfig,
+    ProfileConfig,
+    SequenceConfig,
+)
 from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
 from .data.profile import PriceVolumeProfileBuilder
 from .data.source import BrokerBarSource, DuckDBBarSource
@@ -19,6 +26,14 @@ from .storage import apply_migrations
 
 def _state_timeframes(mode: str) -> tuple[str, ...]:
     return ("1d",) if mode == "daily" else ("60m", "1d")
+
+
+def _regime_metadata(labels: LabelConfig) -> dict[str, object]:
+    return {
+        "version": REGIME_PROTOCOL,
+        "states": list(REGIME_NAMES),
+        "thresholds": list(labels.thresholds),
+    }
 
 
 def _profile_smoke(args: argparse.Namespace) -> int:
@@ -73,9 +88,8 @@ def _train(args: argparse.Namespace) -> int:
     source = DuckDBBarSource(args.duckdb_path)
     bars = source.fetch(args.symbol, "1m", args.start, args.end)
     states = PriceVolumeProfileBuilder(profile_config).build(bars)
-    observations = ProfileLabelBuilder(
-        LabelConfig(forward_sessions=args.forward_sessions)
-    ).build(states)
+    label_config = LabelConfig(forward_sessions=args.forward_sessions)
+    observations = ProfileLabelBuilder(label_config).build(states)
     sessions = np.unique(observations.signal_times.astype("datetime64[D]"))
     if len(sessions) < 10:
         raise ValueError("training requires at least ten complete sessions")
@@ -127,6 +141,7 @@ def _train(args: argparse.Namespace) -> int:
         "training_cutoff": str(cutoff),
         "profile_states": len(states),
         "profile_protocol": "variable-log-bins-v2",
+        "regime_protocol": _regime_metadata(label_config),
         "bin_width_bps": args.bin_width_bps,
         "maximum_profile_bins": max((len(state.distribution) for state in states), default=0),
         "state_timeframe": args.state_timeframe,
@@ -163,7 +178,9 @@ def _train(args: argparse.Namespace) -> int:
         "bars": len(bars),
         "train_sequences": len(train_sequences),
         "validation_sequences": len(validation_sequences),
-        "class_counts": np.bincount(observations.targets, minlength=5).tolist(),
+        "class_counts": np.bincount(
+            observations.targets, minlength=REGIME_COUNT
+        ).tolist(),
         "best_epoch": result.best_epoch,
         "best_validation_loss": result.best_validation_loss,
         "history": list(result.history),
@@ -298,6 +315,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "max_profile_bins": args.max_profile_bins,
             "channels": 3,
         },
+        "regime_protocol": _regime_metadata(label_config),
         "model_config": asdict(model_config),
         "trainer_config": asdict(trainer_config),
         "sequence_config": asdict(sequence_config),

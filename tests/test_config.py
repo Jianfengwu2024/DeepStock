@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import unittest
 
-from bnhmm import BNHMMConfig, LabelConfig, ProfileConfig
+from bnhmm import REGIME_NAMES, BNHMMConfig, LabelConfig, ProfileConfig
 
 
 class ConfigTests(unittest.TestCase):
     def test_model_shape_is_fixed(self) -> None:
         config = BNHMMConfig()
         self.assertEqual(config.latent_states, 10)
-        self.assertEqual(len(config.output_states), 5)
+        self.assertEqual(len(config.output_states), 4)
+        self.assertNotIn("neutral", REGIME_NAMES)
 
     def test_invalid_profile_scale_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -26,7 +27,8 @@ class ConfigTests(unittest.TestCase):
 
     def test_label_thresholds_must_be_ordered(self) -> None:
         with self.assertRaises(ValueError):
-            LabelConfig(weak_bear_threshold=0.03)
+            LabelConfig(direction_threshold=0.03)
+        self.assertEqual(LabelConfig().thresholds, (-0.02, 0.0, 0.02))
 
 
 if __name__ == "__main__":

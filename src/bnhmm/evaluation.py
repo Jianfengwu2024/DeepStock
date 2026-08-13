@@ -11,6 +11,7 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 import torch
 
+from .config import REGIME_COUNT
 from .data.dataset import ProfileObservations, ProfileSequence
 from .model import BNHMMNetwork
 from .training import collate_profile_sequences
@@ -44,7 +45,7 @@ class DecisionPolicyConfig:
 
 
 class DecisionPolicy:
-    """Convert five-state posteriors into positions without entering the model."""
+    """Convert four-state posteriors into positions without entering the model."""
 
     def __init__(self, config: DecisionPolicyConfig | None = None) -> None:
         self.config = config or DecisionPolicyConfig()
@@ -122,9 +123,9 @@ def estimate_regime_return_moments(
     returns = np.concatenate([item.forward_returns for item in observations])
     global_mean = float(returns.mean())
     global_variance = float(returns.var())
-    means = np.empty(5, dtype=np.float64)
-    variances = np.empty(5, dtype=np.float64)
-    for state in range(5):
+    means = np.empty(REGIME_COUNT, dtype=np.float64)
+    variances = np.empty(REGIME_COUNT, dtype=np.float64)
+    for state in range(REGIME_COUNT):
         values = returns[targets == state]
         means[state] = float(values.mean()) if len(values) else global_mean
         variances[state] = float(values.var()) if len(values) > 1 else global_variance
@@ -143,7 +144,15 @@ def evaluate_predictions(
     probability = np.asarray([item.probability_mean for item in predictions])
     targets = np.asarray([item.target for item in predictions], dtype=np.int64)
     returns = np.asarray([item.forward_return for item in predictions])
-    one_hot = np.eye(5)[targets]
+    if probability.ndim != 2 or probability.shape[1] != REGIME_COUNT:
+        raise ValueError("predictions must contain four-state probabilities")
+    if np.any((targets < 0) | (targets >= REGIME_COUNT)):
+        raise ValueError("prediction targets must use four-state indices")
+    if regime_return_means.shape != (REGIME_COUNT,) or regime_return_variances.shape != (
+        REGIME_COUNT,
+    ):
+        raise ValueError("regime return moments must contain four values")
+    one_hot = np.eye(REGIME_COUNT)[targets]
     probability_residuals = one_hot - probability
     ranked_probability_score = np.square(
         probability.cumsum(axis=1)[:, :-1] - one_hot.cumsum(axis=1)[:, :-1]
@@ -172,26 +181,26 @@ def evaluate_predictions(
     confidence = probability.max(axis=1)
     predicted = probability.argmax(axis=1)
     correct = predicted == targets
-    confusion = np.zeros((5, 5), dtype=np.int64)
+    confusion = np.zeros((REGIME_COUNT, REGIME_COUNT), dtype=np.int64)
     np.add.at(confusion, (targets, predicted), 1)
     class_support = confusion.sum(axis=1)
     predicted_counts = confusion.sum(axis=0)
     recall = np.divide(
         np.diag(confusion),
         class_support,
-        out=np.zeros(5, dtype=np.float64),
+        out=np.zeros(REGIME_COUNT, dtype=np.float64),
         where=class_support > 0,
     )
     precision = np.divide(
         np.diag(confusion),
         predicted_counts,
-        out=np.zeros(5, dtype=np.float64),
+        out=np.zeros(REGIME_COUNT, dtype=np.float64),
         where=predicted_counts > 0,
     )
     f1 = np.divide(
         2.0 * precision * recall,
         precision + recall,
-        out=np.zeros(5, dtype=np.float64),
+        out=np.zeros(REGIME_COUNT, dtype=np.float64),
         where=(precision + recall) > 0,
     )
 

@@ -9,7 +9,7 @@
    source gaps do not discard the full day; hourly states are opt-in only.
 3. The model layer encodes adjacent two-bin and three-bin motifs, then
    applies a Bayesian Transformer and a conditional ten-state transition model.
-4. The output layer emits five-state posterior means and variances, including
+4. The output layer emits four directional posterior means and variances, including
    aleatoric and epistemic uncertainty.
 5. The policy layer maps posterior output to target positions independently of
    the model.

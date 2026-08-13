@@ -18,12 +18,16 @@ temporal attention mask is causal.
 
 Ten unnamed latent probabilities are filtered sequentially using a Bayesian base
 transition matrix plus a context-dependent transition delta. The output head
-maps the filtered latent state and Transformer context to five Dirichlet
-concentrations ordered from strong bear to strong bull.
+maps the filtered latent state and Transformer context to four Dirichlet
+concentrations ordered as strong bear, weak bear, weak bull, and strong bull.
+Forward returns use `[-2%, 0%, +2%]` as the three boundaries. There is no
+neutral output: low-conviction cases remain expressible through balanced
+directional probabilities and posterior uncertainty, which the separate policy
+may convert to a near-zero position.
 
 Monte Carlo prediction returns:
 
-- five-state posterior probability means;
+- four-state posterior probability means, with no neutral class;
 - aleatoric Dirichlet variance;
 - epistemic variance across sampled weights;
 - total variance;

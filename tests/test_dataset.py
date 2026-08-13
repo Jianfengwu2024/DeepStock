@@ -57,7 +57,7 @@ class ProfileDatasetTests(unittest.TestCase):
 
         self.assertEqual(len(observations), 10)
         np.testing.assert_array_equal(observations.targets[:5], [0, 0, 0, 2, 2])
-        np.testing.assert_array_equal(observations.targets[5:], [4, 4, 4, 2, 2])
+        np.testing.assert_array_equal(observations.targets[5:], [3, 3, 3, 2, 2])
         self.assertTrue(
             np.all(observations.execution_times > observations.signal_times)
         )

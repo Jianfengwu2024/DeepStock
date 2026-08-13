@@ -1,4 +1,4 @@
-"""Training objective for five-state evidential Bayesian classification."""
+"""Training objective for four-state evidential Bayesian classification."""
 
 from __future__ import annotations
 

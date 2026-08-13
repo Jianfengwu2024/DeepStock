@@ -12,6 +12,7 @@ from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader, Dataset
 
+from .config import REGIME_COUNT, REGIME_NAMES, REGIME_PROTOCOL
 from .data.dataset import ProfileSequence
 from .model import BNHMMNetwork, evidential_classification_loss
 
@@ -21,6 +22,7 @@ class ModelConfig:
     max_profile_bins: int = 512
     profile_channels: int = 3
     state_feature_dim: int = 9
+    output_states: int = REGIME_COUNT
     d_model: int = 96
     motif_dim: int = 32
     heads: int = 4
@@ -102,7 +104,7 @@ def collate_profile_sequences(items: Sequence[ProfileSequence]) -> dict[str, Ten
     profile_mask = torch.zeros(batch, sequence, bins, dtype=torch.bool)
     state_features = torch.zeros(batch, sequence, feature_dim, dtype=torch.float32)
     timeframe_ids = torch.zeros(batch, sequence, dtype=torch.long)
-    targets = torch.full((batch, sequence), 2, dtype=torch.long)
+    targets = torch.zeros(batch, sequence, dtype=torch.long)
     valid_mask = torch.zeros(batch, sequence, dtype=torch.bool)
     for index, item in enumerate(items):
         if len(item.profiles) != len(item) or len(item.bin_coordinates) != len(item):
@@ -420,7 +422,9 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 3,
+            "format_version": 4,
+            "regime_protocol": REGIME_PROTOCOL,
+            "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),
             "model_config": asdict(model_config),
             "trainer_config": asdict(trainer_config),

@@ -37,7 +37,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         features = state_features()
         timeframes = torch.tensor([[0, 0, 0, 1, 0, 1]]).repeat(2, 1)
         output = self.model(values, timeframes, features, sample=True)
-        self.assertEqual(output.alpha.shape, (2, 6, 5))
+        self.assertEqual(output.alpha.shape, (2, 6, 4))
         self.assertEqual(output.latent_probabilities.shape, (2, 6, 10))
         self.assertTrue(torch.all(output.alpha > 1.0))
         self.assertTrue(
@@ -45,7 +45,7 @@ class BNHMMNetworkTests(unittest.TestCase):
                 output.latent_probabilities.sum(dim=-1), torch.ones(2, 6), atol=1e-5
             )
         )
-        targets = torch.randint(0, 5, (2, 6))
+        targets = torch.randint(0, 4, (2, 6))
         loss = evidential_classification_loss(output, targets)
         loss.total.backward()
         self.assertTrue(torch.isfinite(loss.total))
@@ -69,6 +69,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(torch.all(posterior.epistemic_variance >= 0))
         self.assertTrue(torch.all(posterior.expected_score <= 2.0))
         self.assertTrue(torch.all(posterior.expected_score >= -2.0))
+        self.assertEqual(self.model.regime_scores.tolist(), [-2.0, -1.0, 1.0, 2.0])
 
     def test_ordinal_loss_penalizes_distant_state_errors(self) -> None:
         common = {
@@ -77,10 +78,10 @@ class BNHMMNetworkTests(unittest.TestCase):
             "kl_divergence": torch.tensor(0.0),
         }
         near = SinglePassOutput(
-            alpha=torch.tensor([[[2.0, 9.0, 2.0, 2.0, 2.0]]]), **common
+            alpha=torch.tensor([[[2.0, 9.0, 2.0, 2.0]]]), **common
         )
         far = SinglePassOutput(
-            alpha=torch.tensor([[[2.0, 2.0, 2.0, 2.0, 9.0]]]), **common
+            alpha=torch.tensor([[[2.0, 2.0, 2.0, 9.0]]]), **common
         )
         target = torch.zeros((1, 1), dtype=torch.long)
 
