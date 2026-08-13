@@ -40,7 +40,15 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("daily", command)
         self.assertIn("--bin-width-bps", command)
         self.assertIn("--max-profile-bins", command)
+        self.assertIn("--kl-weight", command)
+        self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
+
+        deterministic = build_command(
+            request.model_copy(update={"deterministic_training": True}),
+            Path("/tmp/result"),
+        )
+        self.assertIn("--deterministic-training", deterministic)
 
     def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
         output = "123, 512\n456, 900\n123, 256\n"

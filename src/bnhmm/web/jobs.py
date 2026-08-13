@@ -32,6 +32,8 @@ class WalkForwardJobRequest(BaseModel):
     epochs: int = Field(10, ge=1, le=1000)
     batch_size: int = Field(8, ge=1, le=512)
     learning_rate: float = Field(3e-4, gt=0, le=1.0)
+    kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
+    deterministic_training: bool = False
     forward_sessions: int = Field(1, ge=1, le=60)
     minimum_train_sessions: int = Field(252, ge=10)
     tuning_sessions: int = Field(60, ge=2)
@@ -166,6 +168,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.batch_size),
         "--learning-rate",
         str(request.learning_rate),
+        "--kl-weight",
+        str(request.kl_weight),
         "--forward-sessions",
         str(request.forward_sessions),
         "--minimum-train-sessions",
@@ -213,6 +217,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         command.extend(("--max-folds", str(request.max_folds)))
     if request.allow_short:
         command.append("--allow-short")
+    if request.deterministic_training:
+        command.append("--deterministic-training")
     return command
 
 

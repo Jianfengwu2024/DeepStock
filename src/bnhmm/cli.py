@@ -101,6 +101,8 @@ def _train(args: argparse.Namespace) -> int:
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
+        kl_weight=args.kl_weight,
+        sample_during_training=not args.deterministic_training,
         seed=args.seed,
     )
     device = args.device
@@ -237,6 +239,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
+        kl_weight=args.kl_weight,
+        sample_during_training=not args.deterministic_training,
         seed=args.seed,
     )
     walk_config = WalkForwardConfig(
@@ -286,6 +290,12 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "folds": list(result.folds),
         "oos_predictions": len(result.predictions),
         "accuracy": report["accuracy"],
+        "majority_baseline": report["majority_baseline"],
+        "balanced_accuracy": report["balanced_accuracy"],
+        "macro_f1": report["macro_f1"],
+        "class_support": report["class_support"],
+        "predicted_class_counts": report["predicted_class_counts"],
+        "confusion_matrix": report["confusion_matrix"],
         "brier_score": report["brier_score"],
         "log_loss": report["log_loss"],
         "return_residual": report["return_residual"],
@@ -336,6 +346,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--epochs", type=int, default=10)
     train.add_argument("--batch-size", type=int, default=8)
     train.add_argument("--learning-rate", type=float, default=3e-4)
+    train.add_argument("--kl-weight", type=float, default=1e-3)
+    train.add_argument("--deterministic-training", action="store_true")
     train.add_argument("--train-fraction", type=float, default=0.8)
     train.add_argument("--forward-sessions", type=int, default=1)
     train.add_argument("--bin-width-bps", type=float, default=10.0)
@@ -370,6 +382,8 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--epochs", type=int, default=10)
     walk.add_argument("--batch-size", type=int, default=8)
     walk.add_argument("--learning-rate", type=float, default=3e-4)
+    walk.add_argument("--kl-weight", type=float, default=1e-3)
+    walk.add_argument("--deterministic-training", action="store_true")
     walk.add_argument("--forward-sessions", type=int, default=1)
     walk.add_argument("--minimum-train-sessions", type=int, default=252)
     walk.add_argument("--tuning-sessions", type=int, default=60)

@@ -51,6 +51,10 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn("average_abs_position", report["backtest"])
         self.assertGreaterEqual(report["backtest"]["active_position_ratio"], 0.0)
         self.assertEqual(report["observation_count"], 15)
+        self.assertEqual(report["balanced_accuracy"], 1.0)
+        self.assertEqual(report["macro_f1"], 1.0)
+        self.assertEqual(report["class_support"], [3, 3, 3, 3, 3])
+        self.assertEqual(report["confusion_matrix"], (np.eye(5, dtype=int) * 3).tolist())
 
     def test_uncertainty_reduces_position(self) -> None:
         item = prediction(1, 4, (0.02, 0.03, 0.05, 0.2, 0.7))

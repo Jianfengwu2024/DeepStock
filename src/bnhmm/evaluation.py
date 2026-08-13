@@ -166,11 +166,40 @@ def evaluate_predictions(
         np.maximum(posterior_return_variance, 1e-10)
     )
     confidence = probability.max(axis=1)
-    correct = probability.argmax(axis=1) == targets
+    predicted = probability.argmax(axis=1)
+    correct = predicted == targets
+    confusion = np.zeros((5, 5), dtype=np.int64)
+    np.add.at(confusion, (targets, predicted), 1)
+    class_support = confusion.sum(axis=1)
+    predicted_counts = confusion.sum(axis=0)
+    recall = np.divide(
+        np.diag(confusion),
+        class_support,
+        out=np.zeros(5, dtype=np.float64),
+        where=class_support > 0,
+    )
+    precision = np.divide(
+        np.diag(confusion),
+        predicted_counts,
+        out=np.zeros(5, dtype=np.float64),
+        where=predicted_counts > 0,
+    )
+    f1 = np.divide(
+        2.0 * precision * recall,
+        precision + recall,
+        out=np.zeros(5, dtype=np.float64),
+        where=(precision + recall) > 0,
+    )
 
     report: dict[str, object] = {
         "observation_count": len(predictions),
         "accuracy": float(correct.mean()),
+        "majority_baseline": float(class_support.max() / len(targets)),
+        "balanced_accuracy": float(recall.mean()),
+        "macro_f1": float(f1.mean()),
+        "class_support": class_support.tolist(),
+        "predicted_class_counts": predicted_counts.tolist(),
+        "confusion_matrix": confusion.tolist(),
         "brier_score": float(np.square(probability_residuals).sum(axis=1).mean()),
         "log_loss": float(-np.log(np.clip(probability[np.arange(len(targets)), targets], 1e-12, 1.0)).mean()),
         "probability_residual_mean": probability_residuals.mean(axis=0).tolist(),

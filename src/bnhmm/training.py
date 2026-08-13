@@ -43,6 +43,7 @@ class TrainerConfig:
     kl_anneal_epochs: int = 10
     brier_weight: float = 0.25
     latent_balance_weight: float = 0.05
+    sample_during_training: bool = True
     gradient_clip: float = 1.0
     seed: int = 7
 
@@ -247,7 +248,7 @@ class BNHMMTrainer:
                     batch["bin_coordinates"],
                     batch["profile_mask"],
                     valid_mask=batch["valid_mask"],
-                    sample=training,
+                    sample=training and self.config.sample_during_training,
                 )
                 loss = evidential_classification_loss(
                     output,

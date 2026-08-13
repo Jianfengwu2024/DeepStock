@@ -81,6 +81,36 @@ def learnable_sequence(symbol: str, length: int = 25) -> ProfileSequence:
 
 
 class TrainerTests(unittest.TestCase):
+    def test_deterministic_training_disables_weight_sampling(self) -> None:
+        model = ModelConfig(
+            max_profile_bins=32,
+            d_model=16,
+            motif_dim=4,
+            heads=4,
+            layers=1,
+            feedforward_dim=24,
+            dropout=0.0,
+            max_sequence_length=8,
+        ).build()
+        calls: list[bool] = []
+        original_forward = model.forward
+
+        def recording_forward(*args: object, **kwargs: object):
+            calls.append(bool(kwargs.get("sample")))
+            return original_forward(*args, **kwargs)
+
+        model.forward = recording_forward  # type: ignore[method-assign]
+        BNHMMTrainer(
+            model,
+            TrainerConfig(
+                epochs=1,
+                batch_size=1,
+                sample_during_training=False,
+            ),
+        ).fit_fixed([sequence(4)])
+
+        self.assertEqual(calls, [False])
+
     def test_collation_masks_variable_days_and_sequence_lengths(self) -> None:
         items = [sequence(1, length=8), sequence(2, length=5)]
 
