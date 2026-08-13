@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BNHMM Lab</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=0.3.1">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=0.3.1" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -146,6 +146,14 @@
             <div class="progress-band hidden" id="progress-band">
               <div class="progress-track"><span></span></div>
               <div><strong id="progress-label">任务运行中</strong><span id="elapsed-time"></span></div>
+            </div>
+
+            <div class="result-scope hidden" id="result-scope">
+              <div class="result-scope-head">
+                <div><strong>查看结果</strong><span id="result-scope-note"></span></div>
+                <span class="scope-badge" id="result-scope-badge"></span>
+              </div>
+              <div class="scope-tabs" id="scope-tabs" role="tablist" aria-label="结果范围"></div>
             </div>
 
             <div class="result-insight hidden" id="result-insight">

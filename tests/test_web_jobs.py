@@ -120,6 +120,38 @@ class WebJobTests(unittest.TestCase):
             self.assertTrue(manager.delete(record.id))
             manager.close()
 
+    def test_symbol_artifacts_are_scoped_to_the_requested_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = JobManager(directory, Path.cwd())
+            job_dir = Path(directory, "completed")
+            symbol_dir = job_dir / "symbols" / "000001"
+            symbol_dir.mkdir(parents=True)
+            report = symbol_dir / "evaluation.json"
+            report.write_text("{}", encoding="utf-8")
+            record = JobRecord(
+                id="completed",
+                status="completed",
+                created_at=datetime.now(timezone.utc),
+                output_dir=str(job_dir),
+                request=WalkForwardJobRequest(symbols=["000001"]),
+            )
+            with manager._lock:
+                manager._jobs[record.id] = record
+
+            self.assertEqual(
+                manager.symbol_artifact_path(
+                    "completed", "000001", "evaluation.json"
+                ),
+                report.resolve(),
+            )
+            self.assertIsNone(
+                manager.symbol_artifact_path("completed", "../000001", "evaluation.json")
+            )
+            self.assertIsNone(
+                manager.symbol_artifact_path("completed", "000001", "../job.json")
+            )
+            manager.close()
+
     def test_jobs_without_state_mode_are_loaded_as_legacy_mixed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

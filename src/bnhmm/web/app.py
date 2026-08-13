@@ -43,6 +43,14 @@ app = FastAPI(title="BNHMM Lab", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
 
 
+@app.middleware("http")
+async def disable_ui_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def manager(request: Request) -> JobManager:
     return request.app.state.jobs
 
@@ -133,6 +141,16 @@ def artifact(identifier: str, name: str, request: Request) -> FileResponse:
     return FileResponse(path)
 
 
+@app.get("/api/jobs/{identifier}/symbols/{symbol}/artifacts/{name}")
+def symbol_artifact(
+    identifier: str, symbol: str, name: str, request: Request
+) -> FileResponse:
+    path = manager(request).symbol_artifact_path(identifier, symbol, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="symbol artifact not found")
+    return FileResponse(path)
+
+
 def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[str, Any]:
     payload = record.model_dump(mode="json")
     payload.pop("process_id", None)
@@ -148,6 +166,21 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "run-summary.json",
         )
         if store.artifact_path(record.id, name) is not None
+    }
+    payload["symbol_artifacts"] = {
+        symbol: {
+            name: f"/api/jobs/{record.id}/symbols/{symbol}/artifacts/{name}"
+            for name in (
+                "equity_drawdown.png",
+                "residuals.png",
+                "calibration_acf.png",
+                "evaluation.json",
+                "predictions.json",
+            )
+            if store.symbol_artifact_path(record.id, symbol, name) is not None
+        }
+        for symbol in record.request.symbols
+        if store.symbol_artifact_path(record.id, symbol, "evaluation.json") is not None
     }
     if detail:
         payload["log"] = store.log_tail(record.id)

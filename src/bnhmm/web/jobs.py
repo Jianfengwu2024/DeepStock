@@ -336,6 +336,27 @@ class JobManager:
             return None
         return candidate
 
+    def symbol_artifact_path(
+        self, identifier: str, symbol: str, name: str
+    ) -> Path | None:
+        record = self.get(identifier)
+        if (
+            record is None
+            or not symbol
+            or "/" in symbol
+            or "\\" in symbol
+            or "/" in name
+            or "\\" in name
+        ):
+            return None
+        output_root = Path(record.output_dir).resolve()
+        symbols_root = (output_root / "symbols").resolve()
+        symbol_root = (symbols_root / symbol).resolve()
+        candidate = (symbol_root / name).resolve()
+        if symbol_root.parent != symbols_root or candidate.parent != symbol_root:
+            return None
+        return candidate if candidate.is_file() else None
+
     def close(self) -> None:
         self._queue.put(None)
 

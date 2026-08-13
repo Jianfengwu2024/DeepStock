@@ -5,6 +5,8 @@ const state = {
   selectedId: null,
   symbols: [],
   dialogSelected: new Set(),
+  resultScopeByJob: new Map(),
+  symbolReportCache: new Map(),
   polling: false,
 };
 
@@ -219,12 +221,116 @@ function renderJob(job) {
   document.querySelector("#progress-label").textContent = job.status === "queued" ? "等待 GPU 任务" : "Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
-  renderInsight(job.summary);
-  renderMetrics(job.summary);
-  renderSymbolMetrics(job.summary?.per_symbol || []);
-  renderFolds(job.summary?.folds || []);
-  renderArtifacts(job);
+  renderResultScope(job);
+  renderSelectedResult(job);
   icons();
+}
+
+function resultScope(job) {
+  const requested = state.resultScopeByJob.get(job.id) || "portfolio";
+  return requested === "portfolio" || job.symbol_artifacts?.[requested]
+    ? requested
+    : "portfolio";
+}
+
+function renderResultScope(job) {
+  const section = document.querySelector("#result-scope");
+  const symbols = Object.keys(job.symbol_artifacts || {});
+  const independent = job.request.training_scope === "per-symbol" && symbols.length > 0;
+  section.classList.toggle("hidden", !independent);
+  if (!independent) return;
+
+  const selected = resultScope(job);
+  document.querySelector("#result-scope-note").textContent = selected === "portfolio"
+    ? "当前显示各独立模型的组合汇总"
+    : `当前只显示 ${selected} 的独立模型结果`;
+  document.querySelector("#result-scope-badge").textContent = selected === "portfolio"
+    ? "组合汇总"
+    : "单股独立模型";
+
+  const choices = [
+    { value: "portfolio", label: "组合总览" },
+    ...symbols.map(symbol => ({ value: symbol, label: symbol })),
+  ];
+  const tabs = document.querySelector("#scope-tabs");
+  tabs.replaceChildren(...choices.map(choice => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `scope-tab${choice.value === selected ? " active" : ""}`;
+    button.textContent = choice.label;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(choice.value === selected));
+    button.addEventListener("click", () => {
+      state.resultScopeByJob.set(job.id, choice.value);
+      renderResultScope(job);
+      renderSelectedResult(job);
+    });
+    return button;
+  }));
+}
+
+function renderSelectedResult(job) {
+  const scope = resultScope(job);
+  if (scope === "portfolio") {
+    document.querySelector("#insight-label").textContent = job.summary?.model_scope === "per-symbol"
+      ? "独立模型组合结论"
+      : "本次结论";
+    renderInsight(job.summary);
+    renderMetrics(job.summary);
+    renderSymbolMetrics(job.summary?.per_symbol || []);
+    renderFolds(job.summary?.folds || []);
+    renderArtifacts(job, job.artifacts || {});
+    return;
+  }
+
+  const row = job.summary?.per_symbol?.find(item => item.symbol === scope) || {};
+  const fallback = {
+    ...row,
+    symbol: scope,
+    model_scope: "single-symbol",
+    regime_protocol: job.summary?.regime_protocol,
+  };
+  const key = `${job.id}:${scope}`;
+  const cached = state.symbolReportCache.get(key);
+  const summary = cached ? {
+    ...cached,
+    symbol: scope,
+    model_scope: "single-symbol",
+    regime_protocol: job.summary?.regime_protocol,
+    oos_predictions: cached.observation_count,
+  } : fallback;
+  renderSymbolResult(job, scope, summary);
+
+  const evaluationUrl = job.symbol_artifacts?.[scope]?.["evaluation.json"];
+  if (!evaluationUrl || state.symbolReportCache.has(key)) return;
+  state.symbolReportCache.set(key, null);
+  const activeButton = document.querySelector(`.scope-tab.active`);
+  activeButton?.classList.add("loading");
+  api(evaluationUrl).then(report => {
+    state.symbolReportCache.set(key, report);
+    if (state.selectedId !== job.id || resultScope(job) !== scope) return;
+    renderSymbolResult(job, scope, {
+      ...report,
+      symbol: scope,
+      model_scope: "single-symbol",
+      regime_protocol: job.summary?.regime_protocol,
+      oos_predictions: report.observation_count,
+    });
+    renderResultScope(job);
+  }).catch(() => {
+    state.symbolReportCache.delete(key);
+    activeButton?.classList.remove("loading");
+  });
+}
+
+function renderSymbolResult(job, symbol, summary) {
+  document.querySelector("#insight-label").textContent = `${symbol} 单股结论`;
+  renderInsight(summary);
+  renderMetrics(summary);
+  const row = job.summary?.per_symbol?.find(item => item.symbol === symbol);
+  renderSymbolMetrics(row ? [row] : []);
+  renderFolds((job.summary?.folds || []).filter(fold => fold.symbol === symbol));
+  renderArtifacts(job, job.symbol_artifacts?.[symbol] || {});
 }
 
 function renderJobGpuMemory(job) {
@@ -291,6 +397,7 @@ function renderInsight(summary) {
     : Math.abs(Number(backtest.total_return || 0)) < 0.001 && Math.abs(Number(backtest.max_drawdown || 0)) < 0.002;
   if (inactive) detail += " 蓝色净值几乎不动，表示不确定性过滤后仓位接近零。";
   if (summary.model_scope === "per-symbol") detail += " 顶部指标是各标的独立模型的组合汇总，单股结论请查看滚动验证页。";
+  if (summary.model_scope === "single-symbol") detail += ` 当前页面只统计 ${summary.symbol}，没有混入其他股票。`;
   panel.className = `result-insight ${level}`;
   document.querySelector("#insight-title").textContent = title;
   document.querySelector("#insight-detail").textContent = detail;
@@ -329,14 +436,14 @@ function renderSymbolMetrics(rows) {
   table.innerHTML = rows.map(row => `<tr><td>${escapeHtml(row.symbol)}</td><td>${formatInteger(row.oos_predictions)}</td><td>${formatPercent(row.accuracy)}</td><td>${formatPercent(row.balanced_accuracy)}</td><td>${formatPercent(row.majority_baseline)}</td><td>${formatNumber(row.brier_score, 4)}</td><td>${formatNumber(row.log_loss, 4)}</td><td>${formatPercent(row.backtest?.total_return)}</td><td>${formatPercent(Math.abs(Number(row.backtest?.max_drawdown)))}</td></tr>`).join("");
 }
 
-function renderArtifacts(job) {
+function renderArtifacts(job, artifacts) {
   const cache = `?v=${encodeURIComponent(job.finished_at || Date.now())}`;
-  setImage("equity-image", job.artifacts["equity_drawdown.png"], cache);
-  setImage("residual-image", job.artifacts["residuals.png"], cache);
-  setImage("calibration-image", job.artifacts["calibration_acf.png"], cache);
+  setImage("equity-image", artifacts["equity_drawdown.png"], cache);
+  setImage("residual-image", artifacts["residuals.png"], cache);
+  setImage("calibration-image", artifacts["calibration_acf.png"], cache);
   const row = document.querySelector("#download-row");
   const names = { "evaluation.json": "评估数据", "predictions.json": "OOS 预测", "run-summary.json": "运行摘要" };
-  row.innerHTML = Object.entries(names).filter(([name]) => job.artifacts[name]).map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`).join("");
+  row.innerHTML = Object.entries(names).filter(([name]) => artifacts[name]).map(([name, label]) => `<a href="${artifacts[name]}" download>${label}</a>`).join("");
 }
 
 function setImage(id, source, cache) {
