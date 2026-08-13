@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
@@ -103,13 +104,15 @@ def _train(args: argparse.Namespace) -> int:
         learning_rate=args.learning_rate,
         kl_weight=args.kl_weight,
         ordinal_weight=args.ordinal_weight,
+        pretrain_epochs=args.pretrain_epochs,
+        pretrain_mask_probability=args.pretrain_mask_probability,
         sample_during_training=not args.deterministic_training,
         seed=args.seed,
     )
     device = args.device
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = model_config.build()
+    model = model_config.build(seed=args.seed)
     trainer = BNHMMTrainer(model, trainer_config, device=device)
     result = trainer.fit(train_sequences, validation_sequences)
 
@@ -160,6 +163,7 @@ def _train(args: argparse.Namespace) -> int:
         "best_epoch": result.best_epoch,
         "best_validation_loss": result.best_validation_loss,
         "history": list(result.history),
+        "pretraining_history": list(result.pretraining_history),
         "latest_signal_time": str(validation_sequences[-1].signal_times[last]),
         "latest_probability_mean": posterior.probability_mean[0, last]
         .cpu()
@@ -242,6 +246,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
         learning_rate=args.learning_rate,
         kl_weight=args.kl_weight,
         ordinal_weight=args.ordinal_weight,
+        pretrain_epochs=args.pretrain_epochs,
+        pretrain_mask_probability=args.pretrain_mask_probability,
         sample_during_training=not args.deterministic_training,
         seed=args.seed,
     )
@@ -288,6 +294,10 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "max_profile_bins": args.max_profile_bins,
             "channels": 3,
         },
+        "model_config": asdict(model_config),
+        "trainer_config": asdict(trainer_config),
+        "sequence_config": asdict(sequence_config),
+        "walk_forward_config": asdict(walk_config),
         "data": data_summary,
         "folds": list(result.folds),
         "oos_predictions": len(result.predictions),
@@ -351,6 +361,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--kl-weight", type=float, default=1e-3)
     train.add_argument("--ordinal-weight", type=float, default=0.0)
+    train.add_argument("--pretrain-epochs", type=int, default=0)
+    train.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     train.add_argument("--deterministic-training", action="store_true")
     train.add_argument("--train-fraction", type=float, default=0.8)
     train.add_argument("--forward-sessions", type=int, default=1)
@@ -388,6 +400,8 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--learning-rate", type=float, default=3e-4)
     walk.add_argument("--kl-weight", type=float, default=1e-3)
     walk.add_argument("--ordinal-weight", type=float, default=0.0)
+    walk.add_argument("--pretrain-epochs", type=int, default=0)
+    walk.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     walk.add_argument("--deterministic-training", action="store_true")
     walk.add_argument("--forward-sessions", type=int, default=1)
     walk.add_argument("--minimum-train-sessions", type=int, default=252)

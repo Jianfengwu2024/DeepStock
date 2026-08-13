@@ -42,6 +42,8 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--max-profile-bins", command)
         self.assertIn("--kl-weight", command)
         self.assertIn("--ordinal-weight", command)
+        self.assertIn("--pretrain-epochs", command)
+        self.assertIn("--pretrain-mask-probability", command)
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
 

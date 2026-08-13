@@ -9,7 +9,7 @@ const state = {
 };
 
 const numberFields = new Set([
-  "epochs", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions",
+  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
   "max_folds", "bin_width_bps", "max_profile_bins", "sequence_length", "sequence_stride",
   "minimum_sequence_length", "d_model", "motif_dim", "heads", "layers",

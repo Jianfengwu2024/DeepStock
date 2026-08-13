@@ -187,6 +187,7 @@ class BNHMMNetwork(nn.Module):
         self.latent_states = latent_states
         self.output_states = output_states
         self.max_sequence_length = max_sequence_length
+        self.d_model = d_model
 
         self.tokenizer = BayesianMotifTokenizer(
             max_profile_bins,
@@ -215,6 +216,13 @@ class BNHMMNetwork(nn.Module):
         self.transition_mu = nn.Parameter(transition)
         self.transition_rho = nn.Parameter(torch.full_like(transition, -4.5))
         self.evidence = BayesianLinear(d_model + latent_states, output_states)
+        pretraining_dim = d_model + latent_states
+        self.masked_state_reconstruction = nn.Linear(
+            pretraining_dim, state_feature_dim
+        )
+        self.next_state_prediction = nn.Linear(
+            pretraining_dim, state_feature_dim
+        )
         self.register_buffer(
             "regime_scores", torch.linspace(-2.0, 2.0, output_states), persistent=False
         )
@@ -305,6 +313,9 @@ class BNHMMNetwork(nn.Module):
             module_kl_divergence(self) + self._transition_kl(transition_std)
         ) / self.kl_distribution_count
         return SinglePassOutput(alpha, latent, context, kl)
+
+    def pretraining_features(self, output: SinglePassOutput) -> Tensor:
+        return torch.cat((output.context, output.latent_probabilities), dim=-1)
 
     def _filter_latent(
         self,

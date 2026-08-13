@@ -40,6 +40,7 @@
           <summary>训练</summary>
           <div class="three-columns">
             <label>轮数<input name="epochs" type="number" min="1"></label>
+            <label>预训练轮数<input name="pretrain_epochs" type="number" min="0"></label>
             <label>批量<input name="batch_size" type="number" min="1"></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
           </div>
@@ -47,6 +48,7 @@
             <label>学习率<input name="learning_rate" type="number" min="0" step="0.00001"></label>
             <label>KL 权重<input name="kl_weight" type="number" min="0" max="1" step="0.0001"></label>
             <label>有序损失权重<input name="ordinal_weight" type="number" min="0" max="10" step="0.1"></label>
+            <label>遮罩比例<input name="pretrain_mask_probability" type="number" min="0.01" max="0.99" step="0.01"></label>
           </div>
           <label class="toggle-row"><span>确定性训练（消融）</span><input name="deterministic_training" type="checkbox" role="switch"></label>
         </details>

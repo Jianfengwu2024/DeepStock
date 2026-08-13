@@ -29,8 +29,12 @@ class ModelConfig:
     dropout: float = 0.1
     max_sequence_length: int = 128
 
-    def build(self) -> BNHMMNetwork:
-        return BNHMMNetwork(**asdict(self))
+    def build(self, *, seed: int | None = None) -> BNHMMNetwork:
+        if seed is None:
+            return BNHMMNetwork(**asdict(self))
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed)
+            return BNHMMNetwork(**asdict(self))
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +47,9 @@ class TrainerConfig:
     kl_anneal_epochs: int = 10
     brier_weight: float = 0.25
     ordinal_weight: float = 0.0
+    pretrain_epochs: int = 0
+    pretrain_mask_probability: float = 0.15
+    pretrain_next_weight: float = 1.0
     latent_balance_weight: float = 0.05
     sample_during_training: bool = True
     gradient_clip: float = 1.0
@@ -55,6 +62,12 @@ class TrainerConfig:
             raise ValueError("learning_rate and gradient_clip must be positive")
         if self.kl_weight < 0 or self.kl_anneal_epochs < 1:
             raise ValueError("KL weight must be non-negative and annealing must be positive")
+        if self.pretrain_epochs < 0:
+            raise ValueError("pretraining epochs cannot be negative")
+        if not 0.0 < self.pretrain_mask_probability < 1.0:
+            raise ValueError("pretraining mask probability must be between zero and one")
+        if self.pretrain_next_weight < 0:
+            raise ValueError("next-state pretraining weight cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +75,7 @@ class TrainingResult:
     history: tuple[dict[str, float], ...]
     best_epoch: int
     best_validation_loss: float
+    pretraining_history: tuple[dict[str, float], ...] = ()
 
 
 class _SequenceDataset(Dataset[ProfileSequence]):
@@ -148,12 +162,21 @@ class BNHMMTrainer:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(self.config.seed)
         generator = torch.Generator().manual_seed(self.config.seed)
+        pretraining_generator = torch.Generator().manual_seed(self.config.seed + 10_000)
+        dataset = _SequenceDataset(train_sequences)
         train_loader = DataLoader(
-            _SequenceDataset(train_sequences),
+            dataset,
             batch_size=self.config.batch_size,
             shuffle=True,
             collate_fn=collate_profile_sequences,
             generator=generator,
+        )
+        pretraining_loader = DataLoader(
+            dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True,
+            collate_fn=collate_profile_sequences,
+            generator=pretraining_generator,
         )
         validation_loader = DataLoader(
             _SequenceDataset(validation_sequences),
@@ -161,6 +184,8 @@ class BNHMMTrainer:
             shuffle=False,
             collate_fn=collate_profile_sequences,
         )
+        pretraining_history = self._pretrain(pretraining_loader)
+        self._reset_training_seed()
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
@@ -188,7 +213,9 @@ class BNHMMTrainer:
 
         if best_state is not None:
             self.model.load_state_dict(best_state)
-        return TrainingResult(tuple(history), best_epoch, best_loss)
+        return TrainingResult(
+            tuple(history), best_epoch, best_loss, pretraining_history
+        )
 
     def fit_fixed(self, train_sequences: Sequence[ProfileSequence]) -> TrainingResult:
         """Train for an already selected epoch count without touching outer test data."""
@@ -197,13 +224,23 @@ class BNHMMTrainer:
         torch.manual_seed(self.config.seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(self.config.seed)
+        dataset = _SequenceDataset(train_sequences)
         loader = DataLoader(
-            _SequenceDataset(train_sequences),
+            dataset,
             batch_size=self.config.batch_size,
             shuffle=True,
             collate_fn=collate_profile_sequences,
             generator=torch.Generator().manual_seed(self.config.seed),
         )
+        pretraining_loader = DataLoader(
+            dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True,
+            collate_fn=collate_profile_sequences,
+            generator=torch.Generator().manual_seed(self.config.seed + 10_000),
+        )
+        pretraining_history = self._pretrain(pretraining_loader)
+        self._reset_training_seed()
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
@@ -216,7 +253,88 @@ class BNHMMTrainer:
             row = {"epoch": float(epoch)}
             row.update({f"train_{key}": value for key, value in metrics.items()})
             history.append(row)
-        return TrainingResult(tuple(history), self.config.epochs, float("nan"))
+        return TrainingResult(
+            tuple(history),
+            self.config.epochs,
+            float("nan"),
+            pretraining_history,
+        )
+
+    def _pretrain(
+        self, loader: DataLoader[dict[str, Tensor]]
+    ) -> tuple[dict[str, float], ...]:
+        if self.config.pretrain_epochs == 0:
+            return ()
+        optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+        )
+        history: list[dict[str, float]] = []
+        for epoch in range(1, self.config.pretrain_epochs + 1):
+            self.model.train()
+            masked_total = 0.0
+            next_total = 0.0
+            batch_count = 0
+            for cpu_batch in loader:
+                batch = {key: value.to(self.device) for key, value in cpu_batch.items()}
+                masked_states = (
+                    torch.rand_like(batch["valid_mask"], dtype=torch.float32)
+                    < self.config.pretrain_mask_probability
+                ) & batch["valid_mask"]
+                if not masked_states.any():
+                    first_valid = batch["valid_mask"].nonzero()[0]
+                    masked_states[first_valid[0], first_valid[1]] = True
+
+                profiles = batch["profiles"].clone()
+                state_features = batch["state_features"].clone()
+                profiles[masked_states] = 0.0
+                state_features[masked_states] = 0.0
+                optimizer.zero_grad(set_to_none=True)
+                output = self.model(
+                    profiles,
+                    batch["timeframe_ids"],
+                    state_features,
+                    batch["bin_coordinates"],
+                    batch["profile_mask"],
+                    valid_mask=batch["valid_mask"],
+                    sample=False,
+                )
+                features = self.model.pretraining_features(output)
+                reconstructed = self.model.masked_state_reconstruction(features)
+                masked_loss = torch.nn.functional.smooth_l1_loss(
+                    reconstructed[masked_states],
+                    batch["state_features"][masked_states],
+                )
+
+                pair_mask = (
+                    batch["valid_mask"][:, :-1] & batch["valid_mask"][:, 1:]
+                )
+                predicted_next = self.model.next_state_prediction(features[:, :-1])
+                next_loss = torch.nn.functional.smooth_l1_loss(
+                    predicted_next[pair_mask],
+                    batch["state_features"][:, 1:][pair_mask],
+                )
+                total = masked_loss + self.config.pretrain_next_weight * next_loss
+                total.backward()
+                clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
+                optimizer.step()
+                masked_total += float(masked_loss.detach())
+                next_total += float(next_loss.detach())
+                batch_count += 1
+            history.append(
+                {
+                    "epoch": float(epoch),
+                    "masked_state_loss": masked_total / batch_count,
+                    "next_state_loss": next_total / batch_count,
+                }
+            )
+        return tuple(history)
+
+    def _reset_training_seed(self) -> None:
+        torch.manual_seed(self.config.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(self.config.seed)
 
     def _run_epoch(
         self,
@@ -302,11 +420,12 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 2,
+            "format_version": 3,
             "model_state": model.state_dict(),
             "model_config": asdict(model_config),
             "trainer_config": asdict(trainer_config),
             "history": list(result.history),
+            "pretraining_history": list(result.pretraining_history),
             "best_epoch": result.best_epoch,
             "best_validation_loss": result.best_validation_loss,
             "metadata": metadata,

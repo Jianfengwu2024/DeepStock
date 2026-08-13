@@ -81,6 +81,63 @@ def learnable_sequence(symbol: str, length: int = 25) -> ProfileSequence:
 
 
 class TrainerTests(unittest.TestCase):
+    def test_self_supervised_pretraining_records_both_objectives(self) -> None:
+        model = ModelConfig(
+            max_profile_bins=32,
+            d_model=16,
+            motif_dim=4,
+            heads=4,
+            layers=1,
+            feedforward_dim=24,
+            dropout=0.0,
+            max_sequence_length=8,
+        ).build(seed=7)
+        result = BNHMMTrainer(
+            model,
+            TrainerConfig(
+                epochs=1,
+                pretrain_epochs=2,
+                batch_size=2,
+                learning_rate=1e-3,
+            ),
+        ).fit_fixed([sequence(1), sequence(2)])
+
+        self.assertEqual(len(result.pretraining_history), 2)
+        self.assertGreaterEqual(
+            result.pretraining_history[-1]["masked_state_loss"], 0.0
+        )
+        self.assertGreaterEqual(
+            result.pretraining_history[-1]["next_state_loss"], 0.0
+        )
+
+    def test_seeded_model_build_is_reproducible(self) -> None:
+        config = ModelConfig(
+            max_profile_bins=32,
+            d_model=16,
+            motif_dim=4,
+            heads=4,
+            layers=1,
+            feedforward_dim=24,
+            max_sequence_length=8,
+        )
+
+        first = config.build(seed=17)
+        second = config.build(seed=17)
+        different = config.build(seed=18)
+
+        first_state = first.state_dict()
+        second_state = second.state_dict()
+        different_state = different.state_dict()
+        self.assertTrue(
+            all(torch.equal(first_state[key], second_state[key]) for key in first_state)
+        )
+        self.assertTrue(
+            any(
+                not torch.equal(first_state[key], different_state[key])
+                for key in first_state
+            )
+        )
+
     def test_deterministic_training_disables_weight_sampling(self) -> None:
         model = ModelConfig(
             max_profile_bins=32,

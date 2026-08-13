@@ -133,7 +133,7 @@ def run_walk_forward(
         if not all((fit_sequences, tune_sequences, pretest_sequences, test_sequences)):
             raise ValueError(f"fold {fold.index} contains an empty sequence partition")
 
-        tuning_model = model_config.build()
+        tuning_model = model_config.build(seed=trainer_config.seed + fold.index * 2)
         tuning_trainer = BNHMMTrainer(
             tuning_model, trainer_config, device=device
         )
@@ -144,7 +144,7 @@ def run_walk_forward(
             torch.cuda.empty_cache()
 
         final_config = replace(trainer_config, epochs=selected_epochs)
-        final_model = model_config.build()
+        final_model = model_config.build(seed=trainer_config.seed + fold.index * 2 + 1)
         final_trainer = BNHMMTrainer(final_model, final_config, device=device)
         final_result = final_trainer.fit_fixed(pretest_sequences)
         predictions = infer_sequences(
@@ -178,6 +178,7 @@ def run_walk_forward(
             "test_start": str(fold.test_start),
             "test_end": str(fold.test_end),
             "selected_epochs": selected_epochs,
+            "pretrain_epochs": trainer_config.pretrain_epochs,
             "symbols": [item.symbol for item in observations],
             "training_cutoff": str(fold.test_start),
         }

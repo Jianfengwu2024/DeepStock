@@ -16,6 +16,12 @@ Bayesian multi-head attention, a conditional ten-state latent transition filter,
 and a five-regime Dirichlet evidence head. `predict_posterior()` separates
 aleatoric and epistemic variance through Monte Carlo weight sampling.
 
+Optional self-supervised pretraining uses only states available before each
+walk-forward cutoff. It reconstructs randomly masked daily state features and
+predicts the next daily state features from causal context before the noisy
+five-regime target is introduced. Pretraining and supervised fine-tuning use
+separate deterministic random streams so controlled ablations are reproducible.
+
 The offline trainer reads bounded symbol/date slices from a static DuckDB
 replica, constructs labels from future trading-session returns, and purges any
 training observation whose label matures on or after the validation cutoff.
