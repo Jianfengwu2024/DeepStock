@@ -60,6 +60,12 @@
 
         <details class="form-section">
           <summary>序列与模型</summary>
+          <label>状态粒度
+            <select name="state_timeframe">
+              <option value="daily">日状态（1分钟线生成）</option>
+              <option value="mixed">小时 + 日状态（对照）</option>
+            </select>
+          </label>
           <div class="two-columns">
             <label>直方图柱<input name="profile_bins" type="number"></label>
             <label>序列长度<input name="sequence_length" type="number"></label>

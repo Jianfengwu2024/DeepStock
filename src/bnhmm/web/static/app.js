@@ -190,7 +190,10 @@ function renderJob(job) {
   const badge = document.querySelector("#run-status");
   badge.className = `status-badge ${job.status}`;
   badge.textContent = statusText[job.status];
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${job.request.device}`;
+  const stateMode = job.request.state_timeframe === "mixed"
+    ? "小时 + 日状态"
+    : "日状态（1分钟线生成）";
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${stateMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);

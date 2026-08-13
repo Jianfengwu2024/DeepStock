@@ -29,7 +29,7 @@ class _NormalizerState:
 
 
 class PriceVolumeProfileBuilder:
-    """Build aligned hourly/daily states without using future sessions."""
+    """Build configured minute-derived states without using future sessions."""
 
     def __init__(self, config: ProfileConfig | None = None) -> None:
         self.config = config or ProfileConfig()
@@ -46,6 +46,7 @@ class PriceVolumeProfileBuilder:
             return []
 
         bars = self._continuous_session_bars(bars)
+        bars = self._complete_session_bars(bars)
         if not len(bars):
             return []
         relative = self.relative_volume.transform(bars)
@@ -60,8 +61,9 @@ class PriceVolumeProfileBuilder:
             anchor = normalizer.previous_close or float(day.open[0])
             scale = self._historical_scale(normalizer)
 
-            states.extend(self._build_hour_states(day, day_relative, anchor, scale))
-            if len(day) >= self.config.minimum_day_bars:
+            if "60m" in self.config.state_timeframes:
+                states.extend(self._build_hour_states(day, day_relative, anchor, scale))
+            if "1d" in self.config.state_timeframes and len(day) >= self.config.minimum_day_bars:
                 session_date = day.timestamp[0].astype("datetime64[D]")
                 states.append(
                     self._build_state(
@@ -89,6 +91,19 @@ class PriceVolumeProfileBuilder:
         morning = (minute_slots > 9 * 60 + 30) & (minute_slots <= 11 * 60 + 30)
         afternoon = (minute_slots > 13 * 60) & (minute_slots <= 15 * 60)
         return bars.take(np.flatnonzero(morning | afternoon))
+
+    def _complete_session_bars(self, bars: BarBatch) -> BarBatch:
+        """Keep sessions with enough distinct continuous-trading minute slots."""
+        sessions = bars.timestamp.astype("datetime64[D]")
+        minute_slots = bars.timestamp.astype("datetime64[m]").astype(np.int64) % (24 * 60)
+        admitted: list[NDArray[np.int64]] = []
+        for session in np.unique(sessions):
+            indices = np.flatnonzero(sessions == session)
+            if len(np.unique(minute_slots[indices])) >= self.config.minimum_day_bars:
+                admitted.append(indices)
+        if not admitted:
+            return bars.take(np.asarray([], dtype=np.int64))
+        return bars.take(np.concatenate(admitted))
 
     def _historical_scale(self, state: _NormalizerState) -> float:
         if not state.daily_ranges:

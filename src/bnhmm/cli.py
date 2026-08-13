@@ -16,6 +16,10 @@ from .data.source import BrokerBarSource, DuckDBBarSource
 from .storage import apply_migrations
 
 
+def _state_timeframes(mode: str) -> tuple[str, ...]:
+    return ("1d",) if mode == "daily" else ("60m", "1d")
+
+
 def _profile_smoke(args: argparse.Namespace) -> int:
     source = BrokerBarSource(args.broker_url, timeout_seconds=args.timeout)
     bars = source.fetch(args.symbol, "1m", args.start, args.end)
@@ -54,7 +58,10 @@ def _train(args: argparse.Namespace) -> int:
         save_checkpoint,
     )
 
-    profile_config = ProfileConfig(bins=args.profile_bins)
+    profile_config = ProfileConfig(
+        bins=args.profile_bins,
+        state_timeframes=_state_timeframes(args.state_timeframe),
+    )
     sequence_config = SequenceConfig(
         length=args.sequence_length,
         stride=args.sequence_stride,
@@ -111,6 +118,7 @@ def _train(args: argparse.Namespace) -> int:
         "cutoff": str(cutoff),
         "training_cutoff": str(cutoff),
         "profile_states": len(states),
+        "state_timeframe": args.state_timeframe,
         "train_observations": len(train_observations),
         "validation_observations": len(validation_observations),
     }
@@ -179,7 +187,10 @@ def _walk_forward(args: argparse.Namespace) -> int:
         symbols = source.list_symbols(args.symbol_limit)
     observations = []
     data_summary: dict[str, dict[str, int]] = {}
-    profile_config = ProfileConfig(bins=args.profile_bins)
+    profile_config = ProfileConfig(
+        bins=args.profile_bins,
+        state_timeframes=_state_timeframes(args.state_timeframe),
+    )
     label_config = LabelConfig(forward_sessions=args.forward_sessions)
     for symbol in symbols:
         bars = source.fetch(symbol, "1m", args.start, args.end)
@@ -253,6 +264,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
     save_evaluation_report(args.output_dir, report)
     summary = {
         "symbols": list(data_summary),
+        "state_timeframe": args.state_timeframe,
         "data": data_summary,
         "folds": list(result.folds),
         "oos_predictions": len(result.predictions),
@@ -310,6 +322,12 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--train-fraction", type=float, default=0.8)
     train.add_argument("--forward-sessions", type=int, default=1)
     train.add_argument("--profile-bins", type=int, default=48)
+    train.add_argument(
+        "--state-timeframe",
+        choices=("daily", "mixed"),
+        default="daily",
+        help="daily builds one state from each full 1m session; mixed also builds 60m states",
+    )
     train.add_argument("--sequence-length", type=int, default=128)
     train.add_argument("--sequence-stride", type=int, default=64)
     train.add_argument("--minimum-sequence-length", type=int, default=32)
@@ -341,6 +359,12 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--step-sessions", type=int, default=60)
     walk.add_argument("--max-folds", type=int)
     walk.add_argument("--profile-bins", type=int, default=48)
+    walk.add_argument(
+        "--state-timeframe",
+        choices=("daily", "mixed"),
+        default="daily",
+        help="daily builds one state from each full 1m session; mixed also builds 60m states",
+    )
     walk.add_argument("--sequence-length", type=int, default=128)
     walk.add_argument("--sequence-stride", type=int, default=64)
     walk.add_argument("--minimum-sequence-length", type=int, default=32)

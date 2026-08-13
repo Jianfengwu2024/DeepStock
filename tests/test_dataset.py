@@ -5,14 +5,30 @@ from dataclasses import replace
 
 import numpy as np
 
-from bnhmm import LabelConfig, PriceVolumeProfileBuilder, SequenceConfig
+from bnhmm import LabelConfig, PriceVolumeProfileBuilder, ProfileConfig, SequenceConfig
 from bnhmm.data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
 from test_profile import synthetic_sessions
 
 
 class ProfileDatasetTests(unittest.TestCase):
-    def test_labels_use_state_end_price_and_future_session_close(self) -> None:
+    def test_daily_signals_execute_on_next_sessions_first_tradable_minute(self) -> None:
         states = PriceVolumeProfileBuilder().build(synthetic_sessions(4))
+        observations = ProfileLabelBuilder(LabelConfig(forward_sessions=1)).build(states)
+
+        self.assertEqual(len(observations), 3)
+        self.assertTrue(np.all(observations.timeframe_ids == 1))
+        self.assertTrue(np.all(observations.execution_times > observations.signal_times))
+        self.assertTrue(
+            np.all(
+                observations.execution_times.astype("datetime64[D]")
+                > observations.signal_times.astype("datetime64[D]")
+            )
+        )
+
+    def test_labels_use_state_end_price_and_future_session_close(self) -> None:
+        states = PriceVolumeProfileBuilder(
+            ProfileConfig(state_timeframes=("60m", "1d"))
+        ).build(synthetic_sessions(4))
         dates = sorted({state.period_start.astype("datetime64[D]") for state in states})
         closes = dict(zip(dates, (100.0, 101.0, 97.0, 100.0), strict=True))
         states = [
@@ -35,7 +51,9 @@ class ProfileDatasetTests(unittest.TestCase):
         )
 
     def test_temporal_split_purges_labels_crossing_cutoff(self) -> None:
-        states = PriceVolumeProfileBuilder().build(synthetic_sessions(4))
+        states = PriceVolumeProfileBuilder(
+            ProfileConfig(state_timeframes=("60m", "1d"))
+        ).build(synthetic_sessions(4))
         observations = ProfileLabelBuilder().build(states)
         dates = np.unique(observations.signal_times.astype("datetime64[D]"))
 
@@ -47,7 +65,9 @@ class ProfileDatasetTests(unittest.TestCase):
         self.assertTrue(np.all(validation.signal_times >= dates[2]))
 
     def test_sequence_windows_include_the_tail_once(self) -> None:
-        states = PriceVolumeProfileBuilder().build(synthetic_sessions(5))
+        states = PriceVolumeProfileBuilder(
+            ProfileConfig(state_timeframes=("60m", "1d"))
+        ).build(synthetic_sessions(5))
         observations = ProfileLabelBuilder().build(states)
         windows = SequenceWindowBuilder(
             SequenceConfig(length=7, stride=5, minimum_length=4)

@@ -39,6 +39,7 @@ class WalkForwardJobRequest(BaseModel):
     step_sessions: int = Field(60, ge=1)
     max_folds: int | None = Field(None, ge=1, le=100)
     profile_bins: int = Field(48, ge=8, le=256)
+    state_timeframe: Literal["daily", "mixed"] = "daily"
     sequence_length: int = Field(128, ge=8, le=2048)
     sequence_stride: int = Field(64, ge=1, le=2048)
     minimum_sequence_length: int = Field(32, ge=2, le=2048)
@@ -173,6 +174,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.step_sessions),
         "--profile-bins",
         str(request.profile_bins),
+        "--state-timeframe",
+        request.state_timeframe,
         "--sequence-length",
         str(request.sequence_length),
         "--sequence-stride",

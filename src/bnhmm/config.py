@@ -16,6 +16,7 @@ class RegimeState(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class ProfileConfig:
+    state_timeframes: tuple[str, ...] = ("1d",)
     bins: int = 48
     price_span: float = 4.0
     default_log_scale: float = 0.02
@@ -25,9 +26,14 @@ class ProfileConfig:
     relative_volume_min_observations: int = 5
     relative_volume_clip: float = 10.0
     minimum_hour_bars: int = 20
-    minimum_day_bars: int = 120
+    minimum_day_bars: int = 240
 
     def __post_init__(self) -> None:
+        if not self.state_timeframes:
+            raise ValueError("at least one state timeframe is required")
+        unsupported = set(self.state_timeframes) - {"60m", "1d"}
+        if unsupported:
+            raise ValueError(f"unsupported state timeframes: {sorted(unsupported)}")
         if self.bins < 8:
             raise ValueError("profile bins must be at least 8")
         if self.price_span <= 0:

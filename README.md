@@ -6,7 +6,8 @@ Quant Platform.
 
 The first implemented vertical slice reads bounded OHLCV batches from the shared
 DuckDB broker, computes a historical-only relative-volume baseline, and converts
-one-minute bars into hourly and daily price/relative-volume profile states.
+each complete one-minute trading session into one daily price/relative-volume
+profile state. Hourly states remain available only as an explicit comparison mode.
 
 The model core now includes adjacent two/three-bin motif tokenization, causal
 Bayesian multi-head attention, a conditional ten-state latent transition filter,
@@ -24,8 +25,8 @@ Required input columns are `symbol`, `timestamp`, `open`, `high`, `low`, `close`
 and `volume`. The production source currently contains:
 
 - `kline_1m`: core profile input.
-- `kline_60m`: validation and multi-scale context.
-- `kline_1d`: labels and multi-scale context.
+- `kline_60m`: optional validation context; not used to build default states.
+- `kline_1d`: label validation context; not used to build default states.
 
 Only completed bars are admitted. Financial statement fields are not used.
 
@@ -64,7 +65,7 @@ python -m bnhmm.cli train \
   --duckdb-path /home/share/data/market.duckdb \
   --symbol 000090 --start 2025-01-01 --end 2026-08-05 \
   --output-dir /home/wujianfeng/private/bnhmm-storage/artifacts/000090 \
-  --device cuda:0 --epochs 10
+  --device cuda:0 --epochs 10 --state-timeframe daily
 ```
 
 The output directory contains `model.pt` and `metrics.json`. The checkpoint
@@ -84,7 +85,7 @@ python -m bnhmm.cli walk-forward \
   --symbols 000090,000099,000488 \
   --start 2024-01-01 --end 2026-08-05 \
   --output-dir /home/wujianfeng/private/bnhmm-storage/artifacts/walk-forward \
-  --device cuda:0
+  --device cuda:0 --state-timeframe daily
 ```
 
 Reports include out-of-sample five-state predictions, Brier score, log loss,

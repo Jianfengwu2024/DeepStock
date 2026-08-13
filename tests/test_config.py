@@ -15,6 +15,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ProfileConfig(bins=4)
 
+    def test_daily_states_are_default_and_timeframes_are_validated(self) -> None:
+        self.assertEqual(ProfileConfig().state_timeframes, ("1d",))
+        with self.assertRaises(ValueError):
+            ProfileConfig(state_timeframes=())
+        with self.assertRaises(ValueError):
+            ProfileConfig(state_timeframes=("5m",))
+
     def test_label_thresholds_must_be_ordered(self) -> None:
         with self.assertRaises(ValueError):
             LabelConfig(weak_bear_threshold=0.03)

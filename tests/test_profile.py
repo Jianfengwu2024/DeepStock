@@ -34,8 +34,25 @@ def synthetic_sessions(session_count: int = 2) -> BarBatch:
 
 
 class ProfileBuilderTests(unittest.TestCase):
+    def test_default_builds_one_full_minute_profile_per_session(self) -> None:
+        states = PriceVolumeProfileBuilder().build(synthetic_sessions(2))
+
+        self.assertEqual(len(states), 2)
+        self.assertTrue(all(item.timeframe == "1d" for item in states))
+        self.assertTrue(all(item.bar_count == 240 for item in states))
+        self.assertTrue(
+            all(
+                str(item.period_end).endswith("15:00:00.000000000")
+                for item in states
+            )
+        )
+
     def test_builds_four_hour_states_and_one_day_state_per_session(self) -> None:
-        config = ProfileConfig(bins=32, relative_volume_min_observations=1)
+        config = ProfileConfig(
+            state_timeframes=("60m", "1d"),
+            bins=32,
+            relative_volume_min_observations=1,
+        )
         states = PriceVolumeProfileBuilder(config).build(synthetic_sessions(2))
         self.assertEqual(sum(item.timeframe == "60m" for item in states), 8)
         self.assertEqual(sum(item.timeframe == "1d" for item in states), 2)
@@ -72,6 +89,14 @@ class ProfileBuilderTests(unittest.TestCase):
         daily = next(state for state in states if state.timeframe == "1d")
         self.assertEqual(daily.bar_count, 240)
         self.assertNotEqual(daily.total_raw_volume, float(extended.volume.sum()))
+
+    def test_incomplete_session_does_not_create_a_daily_state(self) -> None:
+        bars = synthetic_sessions(1)
+        incomplete = bars.take(np.arange(len(bars) - 1))
+
+        states = PriceVolumeProfileBuilder().build(incomplete)
+
+        self.assertEqual(states, [])
 
 
 if __name__ == "__main__":

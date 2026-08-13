@@ -34,6 +34,9 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("000001,000002", command)
         self.assertIn("--max-folds", command)
         self.assertIn("--allow-short", command)
+        self.assertEqual(request.state_timeframe, "daily")
+        self.assertIn("--state-timeframe", command)
+        self.assertIn("daily", command)
         self.assertNotIn("shell=True", command)
 
     def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
