@@ -48,6 +48,7 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--pretrain-mask-probability", command)
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
+        self.assertEqual(request.training_scope, "per-symbol")
 
         deterministic = build_command(
             request.model_copy(update={"deterministic_training": True}),
@@ -127,6 +128,7 @@ class WebJobTests(unittest.TestCase):
             request = WalkForwardJobRequest().model_dump(mode="json")
             request.pop("state_timeframe")
             request.pop("profile_protocol")
+            request.pop("training_scope")
             request.pop("bin_width_bps")
             request.pop("max_profile_bins")
             payload = {
@@ -145,6 +147,7 @@ class WebJobTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.request.state_timeframe, "mixed")
             self.assertEqual(loaded.request.profile_protocol, "legacy-fixed-bins")
+            self.assertEqual(loaded.request.training_scope, "shared-legacy")
 
 
 if __name__ == "__main__":

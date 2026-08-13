@@ -31,6 +31,7 @@ class WalkForwardJobRequest(BaseModel):
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
+    training_scope: Literal["per-symbol", "shared-legacy"] = "per-symbol"
     start: date = date(2024, 1, 1)
     end: date = date(2026, 8, 5)
     device: str = "cuda:0"
@@ -455,6 +456,11 @@ class JobManager:
                     and "profile_protocol" not in request_payload
                 ):
                     request_payload["profile_protocol"] = "legacy-fixed-bins"
+                if (
+                    isinstance(request_payload, dict)
+                    and "training_scope" not in request_payload
+                ):
+                    request_payload["training_scope"] = "shared-legacy"
                 record = JobRecord.model_validate(payload)
             except Exception:
                 continue

@@ -173,7 +173,12 @@
               <div class="report-image-wrap"><img id="calibration-image" alt="校准和残差自相关报告"></div>
             </div>
             <div class="tab-panel hidden" data-panel="folds">
-              <div class="table-scroll"><table><thead><tr><th>窗口</th><th>调参开始</th><th>测试区间</th><th>Epoch</th><th>训练序列</th><th>OOS 预测</th><th>验证损失</th></tr></thead><tbody id="fold-table"></tbody></table></div>
+              <section id="symbol-results" class="hidden">
+                <h3>逐标的样本外结果</h3>
+                <div class="table-scroll"><table><thead><tr><th>标的</th><th>OOS</th><th>命中率</th><th>均衡命中率</th><th>多数类基线</th><th>Brier</th><th>Log Loss</th><th>策略收益</th><th>最大回撤</th></tr></thead><tbody id="symbol-metrics-table"></tbody></table></div>
+              </section>
+              <h3>逐标的滚动窗口</h3>
+              <div class="table-scroll"><table><thead><tr><th>标的</th><th>窗口</th><th>调参开始</th><th>测试区间</th><th>Epoch</th><th>训练序列</th><th>OOS 预测</th><th>验证损失</th></tr></thead><tbody id="fold-table"></tbody></table></div>
             </div>
             <div class="tab-panel hidden" data-panel="logs"><pre id="job-log"></pre></div>
           </div>

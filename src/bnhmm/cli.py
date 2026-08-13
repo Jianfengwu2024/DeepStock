@@ -134,6 +134,7 @@ def _train(args: argparse.Namespace) -> int:
     checkpoint_path = output_dir / "model.pt"
     metadata = {
         "symbol": args.symbol,
+        "model_scope": "single-symbol",
         "source": str(Path(args.duckdb_path).resolve()),
         "start": args.start,
         "end": args.end,
@@ -301,13 +302,48 @@ def _walk_forward(args: argparse.Namespace) -> int:
     )
     report = evaluate_predictions(
         result.predictions,
-        np.asarray(result.regime_return_means),
-        np.asarray(result.regime_return_variances),
+        result.regime_return_means,
+        result.regime_return_variances,
         policy=policy,
     )
     save_evaluation_report(args.output_dir, report)
+    per_symbol: list[dict[str, object]] = []
+    for symbol in data_summary:
+        symbol_predictions = [
+            item for item in result.predictions if item.symbol == symbol
+        ]
+        if not symbol_predictions:
+            continue
+        symbol_report = evaluate_predictions(
+            symbol_predictions,
+            result.regime_return_means,
+            result.regime_return_variances,
+            policy=policy,
+        )
+        save_evaluation_report(
+            Path(args.output_dir) / "symbols" / symbol, symbol_report
+        )
+        per_symbol.append(
+            {
+                "symbol": symbol,
+                "oos_predictions": len(symbol_predictions),
+                "accuracy": symbol_report["accuracy"],
+                "majority_baseline": symbol_report["majority_baseline"],
+                "balanced_accuracy": symbol_report["balanced_accuracy"],
+                "brier_score": symbol_report["brier_score"],
+                "log_loss": symbol_report["log_loss"],
+                "ranked_probability_score": symbol_report[
+                    "ranked_probability_score"
+                ],
+                "backtest": {
+                    key: symbol_report["backtest"][key]
+                    for key in ("total_return", "max_drawdown")
+                },
+            }
+        )
     summary = {
         "symbols": list(data_summary),
+        "model_scope": "per-symbol",
         "state_timeframe": args.state_timeframe,
         "profile_protocol": {
             "version": "variable-log-bins-v2",
@@ -321,6 +357,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "sequence_config": asdict(sequence_config),
         "walk_forward_config": asdict(walk_config),
         "data": data_summary,
+        "per_symbol": per_symbol,
         "folds": list(result.folds),
         "oos_predictions": len(result.predictions),
         "accuracy": report["accuracy"],

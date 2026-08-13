@@ -83,9 +83,11 @@ read directly by Quant Platform.
 
 ## Walk-forward evaluation
 
-`walk-forward` trains several symbols together. Every fold uses an inner tuning
+`walk-forward` can orchestrate several symbols in one command. Every fold uses an inner tuning
 period to select the epoch count, retrains on all data available before the
-outer test, and then predicts the untouched outer period:
+outer test, and then predicts the untouched outer period. A multi-symbol command
+creates one complete BNHMM per symbol; no model or transition parameters are
+shared between symbols:
 
 ```bash
 python -m bnhmm.cli walk-forward \

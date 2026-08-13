@@ -207,7 +207,10 @@ function renderJob(job) {
   const profileMode = job.request.profile_protocol === "legacy-fixed-bins"
     ? "旧固定柱协议"
     : `${job.request.bin_width_bps} BP 可变日态`;
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  const modelScope = job.request.training_scope === "per-symbol"
+    ? "逐标的独立 BNHMM"
+    : "多标的共享模型（旧）";
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
@@ -218,6 +221,7 @@ function renderJob(job) {
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderInsight(job.summary);
   renderMetrics(job.summary);
+  renderSymbolMetrics(job.summary?.per_symbol || []);
   renderFolds(job.summary?.folds || []);
   renderArtifacts(job);
   icons();
@@ -279,13 +283,14 @@ function renderInsight(summary) {
   } else if (accuracy >= baseline.accuracy + 0.08 && brier <= baseline.brier - 0.06 && logLoss <= baseline.logLoss - 0.10) {
     level = "promising";
     title = "模型出现初步区分能力，仍需扩大样本验证";
-    detail = `本次三个分类指标均明显优于随机基准，但仍需更多股票和更多滚动窗口确认稳定性。`;
+    detail = `本次三个分类指标均明显优于随机基准，但仍需更多标的独立模型和更多滚动窗口确认稳定性。`;
   }
   const backtest = summary.backtest || {};
   const inactive = Number.isFinite(Number(backtest.average_abs_position))
     ? Number(backtest.average_abs_position) < 0.02
     : Math.abs(Number(backtest.total_return || 0)) < 0.001 && Math.abs(Number(backtest.max_drawdown || 0)) < 0.002;
   if (inactive) detail += " 蓝色净值几乎不动，表示不确定性过滤后仓位接近零。";
+  if (summary.model_scope === "per-symbol") detail += " 顶部指标是各标的独立模型的组合汇总，单股结论请查看滚动验证页。";
   panel.className = `result-insight ${level}`;
   document.querySelector("#insight-title").textContent = title;
   document.querySelector("#insight-detail").textContent = detail;
@@ -314,7 +319,14 @@ function renderMetrics(summary) {
 
 function renderFolds(folds) {
   const table = document.querySelector("#fold-table");
-  table.innerHTML = folds.map(fold => `<tr><td>${fold.fold + 1}</td><td>${fold.tuning_start}</td><td>${fold.test_start} → ${fold.test_end}</td><td>${fold.selected_epochs}</td><td>${fold.pretest_sequences}</td><td>${fold.outer_test_predictions}</td><td>${formatNumber(fold.tuning_best_validation_loss, 4)}</td></tr>`).join("");
+  table.innerHTML = folds.map(fold => `<tr><td>${escapeHtml(fold.symbol || "共享（旧）")}</td><td>${fold.fold + 1}</td><td>${fold.tuning_start}</td><td>${fold.test_start} → ${fold.test_end}</td><td>${fold.selected_epochs}</td><td>${fold.pretest_sequences}</td><td>${fold.outer_test_predictions}</td><td>${formatNumber(fold.tuning_best_validation_loss, 4)}</td></tr>`).join("");
+}
+
+function renderSymbolMetrics(rows) {
+  const section = document.querySelector("#symbol-results");
+  const table = document.querySelector("#symbol-metrics-table");
+  section.classList.toggle("hidden", !rows.length);
+  table.innerHTML = rows.map(row => `<tr><td>${escapeHtml(row.symbol)}</td><td>${formatInteger(row.oos_predictions)}</td><td>${formatPercent(row.accuracy)}</td><td>${formatPercent(row.balanced_accuracy)}</td><td>${formatPercent(row.majority_baseline)}</td><td>${formatNumber(row.brier_score, 4)}</td><td>${formatNumber(row.log_loss, 4)}</td><td>${formatPercent(row.backtest?.total_return)}</td><td>${formatPercent(Math.abs(Number(row.backtest?.max_drawdown)))}</td></tr>`).join("");
 }
 
 function renderArtifacts(job) {

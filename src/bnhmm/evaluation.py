@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -134,8 +134,8 @@ def estimate_regime_return_moments(
 
 def evaluate_predictions(
     predictions: Sequence[PredictionRecord],
-    regime_return_means: np.ndarray,
-    regime_return_variances: np.ndarray,
+    regime_return_means: np.ndarray | Mapping[str, Sequence[float]],
+    regime_return_variances: np.ndarray | Mapping[str, Sequence[float]],
     *,
     policy: DecisionPolicy | None = None,
 ) -> dict[str, object]:
@@ -148,19 +148,21 @@ def evaluate_predictions(
         raise ValueError("predictions must contain four-state probabilities")
     if np.any((targets < 0) | (targets >= REGIME_COUNT)):
         raise ValueError("prediction targets must use four-state indices")
-    if regime_return_means.shape != (REGIME_COUNT,) or regime_return_variances.shape != (
-        REGIME_COUNT,
-    ):
-        raise ValueError("regime return moments must contain four values")
+    return_mean_rows = _moment_rows(
+        regime_return_means, predictions, "regime return means"
+    )
+    return_variance_rows = _moment_rows(
+        regime_return_variances, predictions, "regime return variances"
+    )
     one_hot = np.eye(REGIME_COUNT)[targets]
     probability_residuals = one_hot - probability
     ranked_probability_score = np.square(
         probability.cumsum(axis=1)[:, :-1] - one_hot.cumsum(axis=1)[:, :-1]
     ).mean(axis=1)
-    predicted_returns = probability @ regime_return_means
-    mixture_second_moment = probability @ (
-        regime_return_variances + regime_return_means**2
-    )
+    predicted_returns = (probability * return_mean_rows).sum(axis=1)
+    mixture_second_moment = (
+        probability * (return_variance_rows + return_mean_rows**2)
+    ).sum(axis=1)
     categorical_variance = np.maximum(
         mixture_second_moment - predicted_returns**2, 0.0
     )
@@ -172,7 +174,7 @@ def evaluate_predictions(
         ]
     )
     posterior_return_variance = categorical_variance + (
-        probability_variance * regime_return_means**2
+        probability_variance * return_mean_rows**2
     ).sum(axis=1)
     return_residuals = returns - predicted_returns
     standardized_residuals = return_residuals / np.sqrt(
@@ -257,6 +259,26 @@ def evaluate_predictions(
         "standardized_residuals": standardized_residuals.tolist(),
     }
     return report
+
+
+def _moment_rows(
+    values: np.ndarray | Mapping[str, Sequence[float]],
+    predictions: Sequence[PredictionRecord],
+    name: str,
+) -> np.ndarray:
+    if isinstance(values, Mapping):
+        missing = sorted({item.symbol for item in predictions} - set(values))
+        if missing:
+            raise ValueError(f"{name} are missing symbols: {missing}")
+        rows = np.asarray([values[item.symbol] for item in predictions], dtype=np.float64)
+    else:
+        vector = np.asarray(values, dtype=np.float64)
+        if vector.shape != (REGIME_COUNT,):
+            raise ValueError(f"{name} must contain four values")
+        rows = np.broadcast_to(vector, (len(predictions), REGIME_COUNT))
+    if rows.shape != (len(predictions), REGIME_COUNT):
+        raise ValueError(f"{name} must contain four values per symbol")
+    return rows
 
 
 def save_evaluation_report(output_dir: str | Path, report: dict[str, object]) -> None:

@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .. import __version__
 from ..data.source import DuckDBBarSource
 from .jobs import (
     ActiveJobDeletionError,
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
     manager.close()
 
 
-app = FastAPI(title="BNHMM Lab", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="BNHMM Lab", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
 
 

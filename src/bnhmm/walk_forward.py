@@ -50,6 +50,14 @@ class WalkForwardFold:
 class WalkForwardResult:
     folds: tuple[dict[str, object], ...]
     predictions: tuple[PredictionRecord, ...]
+    regime_return_means: dict[str, tuple[float, ...]]
+    regime_return_variances: dict[str, tuple[float, ...]]
+
+
+@dataclass(frozen=True, slots=True)
+class _SymbolWalkForwardResult:
+    folds: tuple[dict[str, object], ...]
+    predictions: tuple[PredictionRecord, ...]
     regime_return_means: tuple[float, ...]
     regime_return_variances: tuple[float, ...]
 
@@ -100,9 +108,66 @@ def run_walk_forward(
 ) -> WalkForwardResult:
     if not observations:
         raise ValueError("observations cannot be empty")
+    symbols = [item.symbol for item in observations]
+    if len(symbols) != len(set(symbols)):
+        raise ValueError("each symbol must have exactly one observation set")
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    all_predictions: list[PredictionRecord] = []
+    fold_summaries: list[dict[str, object]] = []
+    return_means: dict[str, tuple[float, ...]] = {}
+    return_variances: dict[str, tuple[float, ...]] = {}
+
+    for observation in observations:
+        symbol_destination = destination / "symbols" / observation.symbol
+        result = _run_symbol_walk_forward(
+            observation,
+            model_config,
+            trainer_config,
+            sequence_config,
+            walk_forward_config,
+            device=device,
+            output_dir=symbol_destination,
+            mc_samples=mc_samples,
+        )
+        all_predictions.extend(result.predictions)
+        fold_summaries.extend(result.folds)
+        return_means[observation.symbol] = result.regime_return_means
+        return_variances[observation.symbol] = result.regime_return_variances
+
+    ordered_predictions = tuple(
+        sorted(
+            all_predictions,
+            key=lambda item: (item.signal_time, item.symbol, item.timeframe_id),
+        )
+    )
+    (destination / "predictions.json").write_text(
+        json.dumps(records_as_json(ordered_predictions), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return WalkForwardResult(
+        folds=tuple(fold_summaries),
+        predictions=ordered_predictions,
+        regime_return_means=return_means,
+        regime_return_variances=return_variances,
+    )
+
+
+def _run_symbol_walk_forward(
+    observation: ProfileObservations,
+    model_config: ModelConfig,
+    trainer_config: TrainerConfig,
+    sequence_config: SequenceConfig,
+    walk_forward_config: WalkForwardConfig,
+    *,
+    device: str | torch.device,
+    output_dir: str | Path,
+    mc_samples: int,
+) -> _SymbolWalkForwardResult:
+    observations = [observation]
     folds = build_walk_forward_folds(observations, walk_forward_config)
     if not folds:
-        raise ValueError("not enough sessions for a walk-forward fold")
+        raise ValueError(f"{observation.symbol} does not have enough sessions")
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     window_builder = SequenceWindowBuilder(sequence_config)
@@ -131,7 +196,9 @@ def run_walk_forward(
         pretest_sequences = _windows(pretest_observations, window_builder)
         test_sequences = _windows(test_context, window_builder)
         if not all((fit_sequences, tune_sequences, pretest_sequences, test_sequences)):
-            raise ValueError(f"fold {fold.index} contains an empty sequence partition")
+            raise ValueError(
+                f"{observation.symbol} fold {fold.index} contains an empty sequence partition"
+            )
 
         tuning_model = model_config.build(seed=trainer_config.seed + fold.index * 2)
         tuning_trainer = BNHMMTrainer(
@@ -164,7 +231,9 @@ def run_walk_forward(
             and item.signal_time < fold.test_end
         ]
         if not predictions:
-            raise ValueError(f"fold {fold.index} produced no outer-test predictions")
+            raise ValueError(
+                f"{observation.symbol} fold {fold.index} produced no outer-test predictions"
+            )
         for prediction in predictions:
             key = (
                 prediction.symbol,
@@ -177,13 +246,15 @@ def run_walk_forward(
             fixed_moments = estimate_regime_return_moments(pretest_observations)
         fold_dir = destination / f"fold-{fold.index:02d}"
         metadata = {
+            "symbol": observation.symbol,
+            "model_scope": "single-symbol",
             "fold": fold.index,
             "tuning_start": str(fold.tuning_start),
             "test_start": str(fold.test_start),
             "test_end": str(fold.test_end),
             "selected_epochs": selected_epochs,
             "pretrain_epochs": trainer_config.pretrain_epochs,
-            "symbols": [item.symbol for item in observations],
+            "symbols": [observation.symbol],
             "training_cutoff": str(fold.test_start),
         }
         save_checkpoint(
@@ -221,7 +292,7 @@ def run_walk_forward(
         encoding="utf-8",
     )
     assert fixed_moments is not None
-    return WalkForwardResult(
+    return _SymbolWalkForwardResult(
         folds=tuple(fold_summaries),
         predictions=ordered_predictions,
         regime_return_means=tuple(float(value) for value in fixed_moments[0]),

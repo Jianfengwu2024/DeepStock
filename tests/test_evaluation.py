@@ -78,6 +78,22 @@ class EvaluationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "four-state"):
             evaluate_predictions([legacy], np.zeros(4), np.ones(4))
 
+    def test_return_moments_are_selected_by_symbol(self) -> None:
+        first = replace(
+            prediction(1, 3, (0.0, 0.0, 0.0, 1.0)), symbol="000001"
+        )
+        second = replace(first, symbol="000002")
+        report = evaluate_predictions(
+            [first, second],
+            {
+                "000001": (-0.03, -0.01, 0.01, 0.03),
+                "000002": (-0.02, -0.005, 0.005, 0.01),
+            },
+            {"000001": (0.0001,) * 4, "000002": (0.0001,) * 4},
+        )
+
+        np.testing.assert_allclose(report["series"]["return_residuals"], [0.0, 0.02])
+
     def test_report_chart_uses_bimonthly_date_labels(self) -> None:
         try:
             import matplotlib

@@ -137,6 +137,8 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .tab { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; font-weight: 700; }
 .tab.active { color: var(--green); border-bottom-color: var(--green); }
 .tab-panel { min-width: 0; padding-top: 16px; }
+.tab-panel h3 { margin: 0 0 8px; font-size: 12px; font-weight: 750; }
+#symbol-results { margin-bottom: 22px; }
 .chart-explanation { display: flex; flex-wrap: wrap; gap: 16px; margin: -2px 0 10px; color: var(--muted); font-size: 11px; }
 .chart-explanation span { display: inline-flex; align-items: center; gap: 6px; }
 .line-key { width: 22px; height: 3px; background: var(--blue); }

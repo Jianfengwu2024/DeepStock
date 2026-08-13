@@ -9,11 +9,15 @@
    source gaps do not discard the full day; hourly states are opt-in only.
 3. The model layer encodes adjacent two-bin and three-bin motifs, then
    applies a Bayesian Transformer and a conditional ten-state transition model.
+   Every symbol owns a complete model instance; Transformer weights, hidden-state
+   transitions, evidence heads, and return moments are never shared across symbols.
 4. The output layer emits four directional posterior means and variances, including
    aleatoric and epistemic uncertainty.
 5. The policy layer maps posterior output to target positions independently of
    the model.
 6. Walk-forward evaluation publishes only point-in-time-correct predictions.
+   Each model is trained on one symbol's past and tested only on that same
+   symbol's future. Multi-symbol runs are orchestration and portfolio aggregation.
 7. Quant Platform bulk-loads published predictions for a complete backtest.
 
 ## Leakage boundary
