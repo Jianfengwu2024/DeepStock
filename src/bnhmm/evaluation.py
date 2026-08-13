@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from datetime import date
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 import torch
@@ -353,6 +354,14 @@ def _backtest(
     }
 
 
+def _format_bimonthly_date_axis(axis: Any) -> None:
+    from matplotlib import dates as mdates
+
+    axis.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    axis.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    axis.tick_params(axis="x", rotation=0)
+
+
 def _plot_report(destination: Path, report: dict[str, object]) -> None:
     try:
         import matplotlib
@@ -363,14 +372,15 @@ def _plot_report(destination: Path, report: dict[str, object]) -> None:
         return
 
     backtest = report["backtest"]
+    dates = [date.fromisoformat(value) for value in backtest["dates"]]
     figure, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
-    axes[0].plot(backtest["dates"], backtest["equity"], label="Decision policy")
-    axes[0].plot(backtest["dates"], backtest["benchmark"], label="Benchmark")
+    axes[0].plot(dates, backtest["equity"], label="Decision policy")
+    axes[0].plot(dates, backtest["benchmark"], label="Benchmark")
     axes[0].set_ylabel("Net value")
     axes[0].legend()
-    axes[1].fill_between(backtest["dates"], backtest["drawdown"], 0.0)
+    axes[1].fill_between(dates, backtest["drawdown"], 0.0)
     axes[1].set_ylabel("Drawdown")
-    axes[1].tick_params(axis="x", rotation=45)
+    _format_bimonthly_date_axis(axes[1])
     figure.tight_layout()
     figure.savefig(destination / "equity_drawdown.png", dpi=150)
     plt.close(figure)

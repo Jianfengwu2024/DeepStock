@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 
 import numpy as np
 
@@ -8,6 +9,7 @@ from bnhmm.evaluation import (
     DecisionPolicy,
     DecisionPolicyConfig,
     PredictionRecord,
+    _format_bimonthly_date_axis,
     evaluate_predictions,
 )
 
@@ -62,6 +64,30 @@ class EvaluationTests(unittest.TestCase):
         cautious = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=4.0))
         relaxed = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=0.0))
         self.assertLess(cautious.target_position(item), relaxed.target_position(item))
+
+    def test_report_chart_uses_bimonthly_date_labels(self) -> None:
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            from matplotlib import pyplot as plt
+        except ImportError:
+            self.skipTest("matplotlib is an optional dependency")
+
+        figure, axis = plt.subplots()
+        axis.plot([date(2025, 1, 1), date(2025, 12, 31)], [1.0, 1.1])
+        _format_bimonthly_date_axis(axis)
+        figure.canvas.draw()
+        labels = [label.get_text() for label in axis.get_xticklabels() if label.get_text()]
+        plt.close(figure)
+
+        self.assertGreaterEqual(len(labels), 5)
+        self.assertLessEqual(len(labels), 7)
+        self.assertTrue(all(len(label) == 7 and label[4] == "-" for label in labels))
+        month_indexes = [int(label[:4]) * 12 + int(label[5:]) for label in labels]
+        self.assertTrue(
+            all(later - earlier == 2 for earlier, later in zip(month_indexes, month_indexes[1:]))
+        )
 
 
 if __name__ == "__main__":
