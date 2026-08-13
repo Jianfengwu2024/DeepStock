@@ -7,6 +7,7 @@ import os
 import queue
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -20,6 +21,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled", "interrupted"]
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+class ActiveJobDeletionError(RuntimeError):
+    pass
 
 
 class WalkForwardJobRequest(BaseModel):
@@ -287,6 +292,21 @@ class JobManager:
             if self._current_id == identifier and self._current_process is not None:
                 self._current_process.send_signal(signal.SIGTERM)
             return record.model_copy(deep=True)
+
+    def delete(self, identifier: str) -> bool:
+        with self._lock:
+            record = self._jobs.get(identifier)
+            if record is None:
+                return False
+            if record.status in {"queued", "running"}:
+                raise ActiveJobDeletionError("active jobs cannot be deleted")
+            output_dir = Path(record.output_dir).resolve()
+            if output_dir.parent != self.root or output_dir == self.root:
+                raise ValueError("job output directory is outside the storage root")
+            if output_dir.exists():
+                shutil.rmtree(output_dir)
+            del self._jobs[identifier]
+            return True
 
     def log_tail(self, identifier: str, lines: int = 120) -> list[str]:
         record = self.get(identifier)

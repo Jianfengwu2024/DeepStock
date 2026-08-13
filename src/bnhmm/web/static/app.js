@@ -149,11 +149,15 @@ async function refreshAll() {
     ]);
     state.jobs = jobs;
     updateDevices(gpuPayload.devices);
-    if (!state.selectedId && state.jobs.length) state.selectedId = state.jobs[0].id;
+    if (!state.jobs.some(job => job.id === state.selectedId)) {
+      state.selectedId = state.jobs[0]?.id || null;
+    }
     renderJobList();
     if (state.selectedId) {
       const job = await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`);
       renderJob(job);
+    } else {
+      renderEmptyState();
     }
     renderGlobalStatus();
   } catch (exception) {
@@ -161,6 +165,12 @@ async function refreshAll() {
   } finally {
     state.polling = false;
   }
+}
+
+function renderEmptyState() {
+  document.querySelector("#empty-state").classList.remove("hidden");
+  document.querySelector("#job-view").classList.add("hidden");
+  document.querySelector("#job-subtitle").textContent = "开始新的实验";
 }
 
 function renderJobList() {
@@ -201,6 +211,7 @@ function renderJob(job) {
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
+  document.querySelector("#delete-button").classList.toggle("hidden", active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued" ? "等待 GPU 任务" : "Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
@@ -365,12 +376,33 @@ function setupEvents() {
   document.querySelector("#select-all").addEventListener("click", () => { document.querySelectorAll("#symbol-list input").forEach(item => { item.checked = true; state.dialogSelected.add(item.value); }); updateSelectedCount(); });
   document.querySelector("#clear-symbols").addEventListener("click", () => { state.dialogSelected.clear(); document.querySelectorAll("#symbol-list input").forEach(item => item.checked = false); updateSelectedCount(); });
   document.querySelector("#cancel-button").addEventListener("click", async () => { if (state.selectedId) { await api(`/api/jobs/${state.selectedId}/cancel`, { method: "POST" }); refreshAll(); } });
+  document.querySelector("#delete-button").addEventListener("click", deleteSelectedJob);
   document.querySelector("#open-config").addEventListener("click", () => document.querySelector("#config-panel").classList.add("open"));
   document.querySelector("#close-config").addEventListener("click", () => document.querySelector("#config-panel").classList.remove("open"));
   document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach(item => item.classList.toggle("active", item === tab));
     document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("hidden", panel.dataset.panel !== tab.dataset.tab));
   }));
+}
+
+async function deleteSelectedJob() {
+  if (!state.selectedId) return;
+  const job = state.jobs.find(item => item.id === state.selectedId);
+  const name = job?.request?.name || state.selectedId;
+  if (!window.confirm(`确定删除“${name}”及其全部检查点和报告吗？此操作不可撤销。`)) return;
+  const identifier = state.selectedId;
+  const button = document.querySelector("#delete-button");
+  button.disabled = true;
+  try {
+    await api(`/api/jobs/${encodeURIComponent(identifier)}`, { method: "DELETE" });
+    state.jobs = state.jobs.filter(item => item.id !== identifier);
+    state.selectedId = state.jobs[0]?.id || null;
+    await refreshAll();
+  } catch (exception) {
+    window.alert(`删除失败：${exception.message}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function formatDate(value) { return new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }

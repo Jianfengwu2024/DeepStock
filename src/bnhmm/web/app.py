@@ -13,7 +13,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..data.source import DuckDBBarSource
-from .jobs import JobManager, JobRecord, WalkForwardJobRequest
+from .jobs import (
+    ActiveJobDeletionError,
+    JobManager,
+    JobRecord,
+    WalkForwardJobRequest,
+)
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -104,6 +109,19 @@ def cancel_job(identifier: str, request: Request) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail="job not found")
     return _job_payload(manager(request), record, detail=True)
+
+
+@app.delete("/api/jobs/{identifier}")
+def delete_job(identifier: str, request: Request) -> dict[str, str]:
+    try:
+        deleted = manager(request).delete(identifier)
+    except ActiveJobDeletionError as exc:
+        raise HTTPException(status_code=409, detail="运行中的任务不能删除") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"deleted": identifier}
 
 
 @app.get("/api/jobs/{identifier}/artifacts/{name}")

@@ -13,7 +13,9 @@ from unittest.mock import patch
 from pydantic import ValidationError
 
 from bnhmm.web.jobs import (
+    ActiveJobDeletionError,
     JobManager,
+    JobRecord,
     WalkForwardJobRequest,
     build_command,
     gpu_memory_for_pid,
@@ -88,6 +90,34 @@ class WebJobTests(unittest.TestCase):
             self.assertEqual(current.status, "completed")
             stored = json.loads((Path(current.output_dir) / "job.json").read_text())
             self.assertEqual(stored["status"], "completed")
+
+            output_dir = Path(current.output_dir)
+            self.assertTrue(manager.delete(current.id))
+            self.assertIsNone(manager.get(current.id))
+            self.assertFalse(output_dir.exists())
+
+    def test_active_job_cannot_be_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = JobManager(directory, Path.cwd())
+            output_dir = Path(directory, "active")
+            output_dir.mkdir()
+            record = JobRecord(
+                id="active",
+                status="running",
+                created_at=datetime.now(timezone.utc),
+                output_dir=str(output_dir),
+                request=WalkForwardJobRequest(name="active"),
+            )
+            with manager._lock:
+                manager._jobs[record.id] = record
+
+            with self.assertRaises(ActiveJobDeletionError):
+                manager.delete(record.id)
+
+            with manager._lock:
+                manager._jobs[record.id].status = "cancelled"
+            self.assertTrue(manager.delete(record.id))
+            manager.close()
 
     def test_jobs_without_state_mode_are_loaded_as_legacy_mixed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

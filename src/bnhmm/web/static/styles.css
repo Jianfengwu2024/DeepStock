@@ -107,6 +107,7 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .empty-state strong { font-size: 13px; }
 .job-view { max-width: 1240px; margin: 0 auto; }
 .run-toolbar { min-height: 50px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.run-actions { display: flex; align-items: center; gap: 7px; }
 .run-title-row { display: flex; align-items: center; gap: 10px; }
 .run-title-row h2 { margin: 0; font-size: 18px; }
 .run-meta { margin-top: 6px; color: var(--muted); font-size: 11px; }
