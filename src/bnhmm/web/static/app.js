@@ -245,7 +245,10 @@ function renderJobGpuMemory(job) {
 
 function classificationBaseline(summary) {
   const reportedCount = Array.isArray(summary.class_support) ? summary.class_support.length : 0;
-  const count = reportedCount >= 2 ? reportedCount : 4;
+  const protocolCount = Array.isArray(summary.regime_protocol?.states)
+    ? summary.regime_protocol.states.length
+    : 0;
+  const count = reportedCount >= 2 ? reportedCount : (protocolCount >= 2 ? protocolCount : 5);
   const label = ({ 4: "四", 5: "五" })[count] || String(count);
   return {
     count,
