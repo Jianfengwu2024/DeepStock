@@ -90,13 +90,18 @@ class ProfileBuilderTests(unittest.TestCase):
         self.assertEqual(daily.bar_count, 240)
         self.assertNotEqual(daily.total_raw_volume, float(extended.volume.sum()))
 
-    def test_incomplete_session_does_not_create_a_daily_state(self) -> None:
+    def test_small_minute_gap_does_not_discard_the_daily_state(self) -> None:
         bars = synthetic_sessions(1)
         incomplete = bars.take(np.arange(len(bars) - 1))
 
         states = PriceVolumeProfileBuilder().build(incomplete)
 
-        self.assertEqual(states, [])
+        self.assertEqual(len(states), 1)
+        self.assertEqual(states[0].bar_count, 239)
+        self.assertEqual(
+            states[0].period_end,
+            np.datetime64("2026-01-05T15:00:00", "ns"),
+        )
 
 
 if __name__ == "__main__":

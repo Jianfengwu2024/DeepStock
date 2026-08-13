@@ -26,7 +26,7 @@ class ProfileConfig:
     relative_volume_min_observations: int = 5
     relative_volume_clip: float = 10.0
     minimum_hour_bars: int = 20
-    minimum_day_bars: int = 240
+    minimum_day_bars: int = 120
 
     def __post_init__(self) -> None:
         if not self.state_timeframes:

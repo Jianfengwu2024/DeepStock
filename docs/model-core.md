@@ -2,8 +2,9 @@
 
 The input tensor has shape `[batch, sequence, profile_bins]`. By default, each
 sequence item is one completed daily price/relative-volume profile built from
-240 one-minute bars. A parallel timeframe tensor uses `1` for these daily
-states; `0` remains reserved for opt-in hourly comparison states.
+that session's available one-minute bars (normally 240). A parallel timeframe
+tensor uses `1` for these daily states; `0` remains reserved for opt-in hourly
+comparison states.
 
 The tokenizer learns three views of every profile: individual bin value and
 position, adjacent two-bin shapes, and adjacent three-bin shapes. Their pooled

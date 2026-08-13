@@ -4,7 +4,8 @@
 
 1. The data layer reads one symbol and a bounded date range at a time.
 2. The profile layer creates one daily price/relative-volume state from each
-   complete one-minute session. Hourly states are an opt-in comparison mode.
+   one-minute trading session. Small source gaps do not discard the full day;
+   hourly states are an opt-in comparison mode.
 3. The model layer encodes adjacent two-bin and three-bin motifs, then
    applies a Bayesian Transformer and a conditional ten-state transition model.
 4. The output layer emits five-state posterior means and variances, including
