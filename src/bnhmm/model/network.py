@@ -35,39 +35,135 @@ class PosteriorOutput:
 
 
 class BayesianMotifTokenizer(nn.Module):
-    """Encode bin values and adjacent two/three-bin local shapes."""
+    """Encode position-aligned bin motifs without averaging their locations away."""
 
-    def __init__(self, profile_bins: int, d_model: int, motif_dim: int) -> None:
+    def __init__(
+        self,
+        max_profile_bins: int,
+        profile_channels: int,
+        state_feature_dim: int,
+        d_model: int,
+        motif_dim: int,
+    ) -> None:
         super().__init__()
-        self.profile_bins = profile_bins
-        self.single = BayesianLinear(2, motif_dim)
-        self.pair = BayesianLinear(2, motif_dim)
-        self.triple = BayesianLinear(3, motif_dim)
+        self.max_profile_bins = max_profile_bins
+        self.profile_channels = profile_channels
+        self.state_feature_dim = state_feature_dim
+        coordinate_features = 5
+        self.single = BayesianLinear(
+            profile_channels + coordinate_features, motif_dim
+        )
+        self.pair = BayesianLinear(
+            profile_channels * 2 + coordinate_features, motif_dim
+        )
+        self.triple = BayesianLinear(
+            profile_channels * 3 + coordinate_features, motif_dim
+        )
         self.output = BayesianLinear(motif_dim * 3, d_model)
-        self.register_buffer(
-            "bin_positions", torch.linspace(-1.0, 1.0, profile_bins), persistent=False
+        self.pool_score = BayesianLinear(d_model, 1)
+        self.metadata = BayesianLinear(state_feature_dim, d_model)
+        self.combine = BayesianLinear(d_model * 2, d_model)
+        self.output_norm = nn.LayerNorm(d_model)
+
+    def forward(
+        self,
+        profiles: Tensor,
+        bin_coordinates: Tensor,
+        profile_mask: Tensor,
+        state_features: Tensor,
+        *,
+        sample: bool,
+        state_mask: Tensor | None = None,
+    ) -> Tensor:
+        if (
+            profiles.ndim != 4
+            or profiles.shape[-1] != self.profile_channels
+        ):
+            raise ValueError(
+                "profiles must have shape "
+                f"[batch, sequence, bins, {self.profile_channels}]"
+            )
+        if profiles.shape[-2] > self.max_profile_bins:
+            raise ValueError("profile exceeds configured maximum bin count")
+        if bin_coordinates.shape != profiles.shape[:3]:
+            raise ValueError("bin_coordinates must match profile batch, sequence, and bins")
+        if profile_mask.shape != profiles.shape[:3] or profile_mask.dtype != torch.bool:
+            raise ValueError("profile_mask must be boolean and align with profile bins")
+        if state_mask is None:
+            state_mask = torch.ones(
+                profiles.shape[:2], dtype=torch.bool, device=profiles.device
+            )
+        if state_mask.shape != profiles.shape[:2] or state_mask.dtype != torch.bool:
+            raise ValueError("state_mask must be boolean and align with daily states")
+        if not torch.all(profile_mask.any(dim=-1) | ~state_mask):
+            raise ValueError("every valid daily profile must contain at least one valid bin")
+        if state_features.shape != (*profiles.shape[:2], self.state_feature_dim):
+            raise ValueError("state_features must match batch, sequence, and feature dimensions")
+
+        positions = self._coordinate_features(bin_coordinates, profiles.dtype)
+        single = F.gelu(
+            self.single(torch.cat((profiles, positions), dim=-1), sample=sample)
         )
 
-    def forward(self, profiles: Tensor, *, sample: bool) -> Tensor:
-        if profiles.ndim != 3 or profiles.shape[-1] != self.profile_bins:
-            raise ValueError(
-                f"profiles must have shape [batch, sequence, {self.profile_bins}]"
+        pair_values = profiles.unfold(-2, 2, 1).transpose(-1, -2).flatten(-2)
+        pair_coordinates = (
+            bin_coordinates[..., :-1] + bin_coordinates[..., 1:]
+        ) / 2.0
+        pair_positions = self._coordinate_features(pair_coordinates, profiles.dtype)
+        pairs = F.gelu(
+            self.pair(
+                torch.cat((pair_values, pair_positions), dim=-1), sample=sample
             )
-        positions = self.bin_positions.to(dtype=profiles.dtype).expand_as(profiles)
-        single_input = torch.stack((profiles, positions), dim=-1)
-        single = F.gelu(self.single(single_input, sample=sample)).mean(dim=-2)
-        pairs = F.gelu(self.pair(profiles.unfold(-1, 2, 1), sample=sample)).mean(dim=-2)
+        )
+        pairs = F.pad(pairs, (0, 0, 0, 1))
+
+        triple_values = profiles.unfold(-2, 3, 1).transpose(-1, -2).flatten(-2)
+        triple_positions = self._coordinate_features(
+            bin_coordinates[..., 1:-1], profiles.dtype
+        )
         triples = F.gelu(
-            self.triple(profiles.unfold(-1, 3, 1), sample=sample)
-        ).mean(dim=-2)
-        return self.output(torch.cat((single, pairs, triples), dim=-1), sample=sample)
+            self.triple(
+                torch.cat((triple_values, triple_positions), dim=-1), sample=sample
+            )
+        )
+        triples = F.pad(triples, (0, 0, 1, 1))
+
+        tokens = F.gelu(
+            self.output(torch.cat((single, pairs, triples), dim=-1), sample=sample)
+        )
+        tokens = tokens * profile_mask.unsqueeze(-1)
+        scores = self.pool_score(torch.tanh(tokens), sample=sample).squeeze(-1)
+        scores = scores.masked_fill(~profile_mask, torch.finfo(scores.dtype).min)
+        attention = F.softmax(scores, dim=-1)
+        profile_summary = (tokens * attention.unsqueeze(-1)).sum(dim=-2)
+        metadata = F.gelu(self.metadata(state_features, sample=sample))
+        combined = self.combine(
+            torch.cat((profile_summary, metadata), dim=-1), sample=sample
+        )
+        return self.output_norm(combined)
+
+    @staticmethod
+    def _coordinate_features(coordinates: Tensor, dtype: torch.dtype) -> Tensor:
+        coordinates = coordinates.to(dtype=dtype)
+        return torch.stack(
+            (
+                coordinates / 256.0,
+                torch.sin(coordinates * torch.pi / 8.0),
+                torch.cos(coordinates * torch.pi / 8.0),
+                torch.sin(coordinates * torch.pi / 32.0),
+                torch.cos(coordinates * torch.pi / 32.0),
+            ),
+            dim=-1,
+        )
 
 
 class BNHMMNetwork(nn.Module):
     def __init__(
         self,
         *,
-        profile_bins: int = 48,
+        max_profile_bins: int = 512,
+        profile_channels: int = 3,
+        state_feature_dim: int = 9,
         latent_states: int = 10,
         output_states: int = 5,
         d_model: int = 96,
@@ -85,12 +181,20 @@ class BNHMMNetwork(nn.Module):
             raise ValueError("BNHMM v2 requires five output regimes")
         if max_sequence_length < 2:
             raise ValueError("max_sequence_length must be at least two")
-        self.profile_bins = profile_bins
+        self.max_profile_bins = max_profile_bins
+        self.profile_channels = profile_channels
+        self.state_feature_dim = state_feature_dim
         self.latent_states = latent_states
         self.output_states = output_states
         self.max_sequence_length = max_sequence_length
 
-        self.tokenizer = BayesianMotifTokenizer(profile_bins, d_model, motif_dim)
+        self.tokenizer = BayesianMotifTokenizer(
+            max_profile_bins,
+            profile_channels,
+            state_feature_dim,
+            d_model,
+            motif_dim,
+        )
         self.timeframe_embedding = nn.Embedding(2, d_model)
         self.position_embedding = nn.Parameter(
             torch.zeros(max_sequence_length, d_model)
@@ -114,18 +218,29 @@ class BNHMMNetwork(nn.Module):
         self.register_buffer(
             "regime_scores", torch.linspace(-2.0, 2.0, output_states), persistent=False
         )
+        self.kl_distribution_count = sum(
+            module.weight_mu.numel()
+            + (module.bias_mu.numel() if module.bias_mu is not None else 0)
+            for module in self.modules()
+            if isinstance(module, BayesianLinear)
+        ) + self.transition_mu.numel()
 
     def forward(
         self,
         profiles: Tensor,
         timeframe_ids: Tensor,
+        state_features: Tensor | None = None,
+        bin_coordinates: Tensor | None = None,
+        profile_mask: Tensor | None = None,
         *,
         valid_mask: Tensor | None = None,
         sample: bool = True,
     ) -> SinglePassOutput:
-        if profiles.ndim != 3:
-            raise ValueError("profiles must be rank three")
-        batch, sequence, _ = profiles.shape
+        if profiles.ndim != 4:
+            raise ValueError("profiles must be rank four")
+        batch, sequence, bins, channels = profiles.shape
+        if bins > self.max_profile_bins or channels != self.profile_channels:
+            raise ValueError("profile maximum bins or channel count does not match the model")
         if sequence > self.max_sequence_length:
             raise ValueError("sequence exceeds max_sequence_length")
         if timeframe_ids.shape != (batch, sequence):
@@ -138,8 +253,30 @@ class BNHMMNetwork(nn.Module):
             raise ValueError("valid_mask must be boolean [batch, sequence]")
         if not torch.all(valid_mask[:, 0]):
             raise ValueError("the first sequence element must be valid")
+        if state_features is None:
+            state_features = torch.zeros(
+                batch,
+                sequence,
+                self.state_feature_dim,
+                dtype=profiles.dtype,
+                device=profiles.device,
+            )
+        if bin_coordinates is None:
+            coordinates = torch.arange(bins, device=profiles.device, dtype=profiles.dtype)
+            bin_coordinates = coordinates.view(1, 1, bins).expand(batch, sequence, bins)
+        if profile_mask is None:
+            profile_mask = torch.ones(
+                batch, sequence, bins, dtype=torch.bool, device=profiles.device
+            )
 
-        tokens = self.tokenizer(profiles, sample=sample)
+        tokens = self.tokenizer(
+            profiles,
+            bin_coordinates,
+            profile_mask,
+            state_features,
+            sample=sample,
+            state_mask=valid_mask,
+        )
         tokens = tokens + self.timeframe_embedding(timeframe_ids)
         tokens = tokens + self.position_embedding[:sequence]
         tokens = tokens * valid_mask.unsqueeze(-1)
@@ -164,7 +301,9 @@ class BNHMMNetwork(nn.Module):
             self.evidence(torch.cat((context, latent), dim=-1), sample=sample)
         )
         alpha = evidence + 1.0
-        kl = module_kl_divergence(self) + self._transition_kl(transition_std)
+        kl = (
+            module_kl_divergence(self) + self._transition_kl(transition_std)
+        ) / self.kl_distribution_count
         return SinglePassOutput(alpha, latent, context, kl)
 
     def _filter_latent(
@@ -202,6 +341,9 @@ class BNHMMNetwork(nn.Module):
         self,
         profiles: Tensor,
         timeframe_ids: Tensor,
+        state_features: Tensor | None = None,
+        bin_coordinates: Tensor | None = None,
+        profile_mask: Tensor | None = None,
         *,
         valid_mask: Tensor | None = None,
         mc_samples: int = 16,
@@ -215,7 +357,13 @@ class BNHMMNetwork(nn.Module):
         latent: list[Tensor] = []
         for _ in range(mc_samples):
             output = self(
-                profiles, timeframe_ids, valid_mask=valid_mask, sample=True
+                profiles,
+                timeframe_ids,
+                state_features,
+                bin_coordinates,
+                profile_mask,
+                valid_mask=valid_mask,
+                sample=True,
             )
             concentration = output.alpha.sum(dim=-1, keepdim=True)
             mean = output.alpha / concentration

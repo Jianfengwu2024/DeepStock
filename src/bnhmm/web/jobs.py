@@ -38,7 +38,11 @@ class WalkForwardJobRequest(BaseModel):
     test_sessions: int = Field(60, ge=1)
     step_sessions: int = Field(60, ge=1)
     max_folds: int | None = Field(None, ge=1, le=100)
-    profile_bins: int = Field(48, ge=8, le=256)
+    bin_width_bps: float = Field(10.0, gt=0.0, le=100.0)
+    max_profile_bins: int = Field(512, ge=8, le=2048)
+    profile_protocol: Literal["variable-log-bins-v2", "legacy-fixed-bins"] = (
+        "variable-log-bins-v2"
+    )
     state_timeframe: Literal["daily", "mixed"] = "daily"
     sequence_length: int = Field(128, ge=8, le=2048)
     sequence_stride: int = Field(64, ge=1, le=2048)
@@ -172,8 +176,10 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.test_sessions),
         "--step-sessions",
         str(request.step_sessions),
-        "--profile-bins",
-        str(request.profile_bins),
+        "--bin-width-bps",
+        str(request.bin_width_bps),
+        "--max-profile-bins",
+        str(request.max_profile_bins),
         "--state-timeframe",
         request.state_timeframe,
         "--sequence-length",
@@ -409,6 +415,11 @@ class JobManager:
                 ):
                     # Jobs created before daily-only mode always used mixed states.
                     request_payload["state_timeframe"] = "mixed"
+                if (
+                    isinstance(request_payload, dict)
+                    and "profile_protocol" not in request_payload
+                ):
+                    request_payload["profile_protocol"] = "legacy-fixed-bins"
                 record = JobRecord.model_validate(payload)
             except Exception:
                 continue

@@ -67,7 +67,8 @@
             </select>
           </label>
           <div class="two-columns">
-            <label>直方图柱<input name="profile_bins" type="number"></label>
+            <label>每柱基点<input name="bin_width_bps" type="number" min="1" max="100" step="1"></label>
+            <label>单日最大柱数<input name="max_profile_bins" type="number" min="8" max="2048"></label>
             <label>序列长度<input name="sequence_length" type="number"></label>
             <label>序列步长<input name="sequence_stride" type="number"></label>
             <label>最短序列<input name="minimum_sequence_length" type="number"></label>

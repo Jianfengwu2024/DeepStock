@@ -76,6 +76,9 @@ def infer_sequences(
         posterior = model.predict_posterior(
             batch["profiles"].to(device),
             batch["timeframe_ids"].to(device),
+            batch["state_features"].to(device),
+            batch["bin_coordinates"].to(device),
+            batch["profile_mask"].to(device),
             valid_mask=batch["valid_mask"].to(device),
             mc_samples=mc_samples,
         )

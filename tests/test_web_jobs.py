@@ -38,6 +38,8 @@ class WebJobTests(unittest.TestCase):
         self.assertEqual(request.state_timeframe, "daily")
         self.assertIn("--state-timeframe", command)
         self.assertIn("daily", command)
+        self.assertIn("--bin-width-bps", command)
+        self.assertIn("--max-profile-bins", command)
         self.assertNotIn("shell=True", command)
 
     def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
@@ -83,6 +85,9 @@ class WebJobTests(unittest.TestCase):
             job_dir.mkdir()
             request = WalkForwardJobRequest().model_dump(mode="json")
             request.pop("state_timeframe")
+            request.pop("profile_protocol")
+            request.pop("bin_width_bps")
+            request.pop("max_profile_bins")
             payload = {
                 "id": "legacy-job",
                 "status": "completed",
@@ -98,6 +103,7 @@ class WebJobTests(unittest.TestCase):
 
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.request.state_timeframe, "mixed")
+            self.assertEqual(loaded.request.profile_protocol, "legacy-fixed-bins")
 
 
 if __name__ == "__main__":

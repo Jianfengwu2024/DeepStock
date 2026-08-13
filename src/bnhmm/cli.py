@@ -32,7 +32,8 @@ def _profile_smoke(args: argparse.Namespace) -> int:
         "last_bar": str(bars.timestamp[-1]) if len(bars) else None,
         "hour_states": sum(state.timeframe == "60m" for state in states),
         "day_states": sum(state.timeframe == "1d" for state in states),
-        "profile_bins": len(states[0].distribution) if states else 0,
+        "minimum_profile_bins": min((len(state.distribution) for state in states), default=0),
+        "maximum_profile_bins": max((len(state.distribution) for state in states), default=0),
         "all_profiles_normalized": all(
             abs(float(state.distribution.sum()) - 1.0) < 1e-9 for state in states
         ),
@@ -59,7 +60,8 @@ def _train(args: argparse.Namespace) -> int:
     )
 
     profile_config = ProfileConfig(
-        bins=args.profile_bins,
+        bin_width_bps=args.bin_width_bps,
+        max_profile_bins=args.max_profile_bins,
         state_timeframes=_state_timeframes(args.state_timeframe),
     )
     sequence_config = SequenceConfig(
@@ -86,7 +88,7 @@ def _train(args: argparse.Namespace) -> int:
         raise ValueError("date range is too short for the configured sequence windows")
 
     model_config = ModelConfig(
-        profile_bins=args.profile_bins,
+        max_profile_bins=args.max_profile_bins,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -118,6 +120,9 @@ def _train(args: argparse.Namespace) -> int:
         "cutoff": str(cutoff),
         "training_cutoff": str(cutoff),
         "profile_states": len(states),
+        "profile_protocol": "variable-log-bins-v2",
+        "bin_width_bps": args.bin_width_bps,
+        "maximum_profile_bins": max((len(state.distribution) for state in states), default=0),
         "state_timeframe": args.state_timeframe,
         "train_observations": len(train_observations),
         "validation_observations": len(validation_observations),
@@ -135,6 +140,9 @@ def _train(args: argparse.Namespace) -> int:
     posterior = model.predict_posterior(
         posterior_batch["profiles"].to(device),
         posterior_batch["timeframe_ids"].to(device),
+        posterior_batch["state_features"].to(device),
+        posterior_batch["bin_coordinates"].to(device),
+        posterior_batch["profile_mask"].to(device),
         valid_mask=posterior_batch["valid_mask"].to(device),
         mc_samples=args.mc_samples,
     )
@@ -188,7 +196,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
     observations = []
     data_summary: dict[str, dict[str, int]] = {}
     profile_config = ProfileConfig(
-        bins=args.profile_bins,
+        bin_width_bps=args.bin_width_bps,
+        max_profile_bins=args.max_profile_bins,
         state_timeframes=_state_timeframes(args.state_timeframe),
     )
     label_config = LabelConfig(forward_sessions=args.forward_sessions)
@@ -203,6 +212,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "bars": len(bars),
             "profile_states": len(states),
             "observations": len(labeled),
+            "minimum_profile_bins": min(len(state.distribution) for state in states),
+            "maximum_profile_bins": max(len(state.distribution) for state in states),
         }
     if not observations:
         raise ValueError("none of the requested symbols produced observations")
@@ -213,7 +224,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         minimum_length=args.minimum_sequence_length,
     )
     model_config = ModelConfig(
-        profile_bins=args.profile_bins,
+        max_profile_bins=args.max_profile_bins,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -265,6 +276,12 @@ def _walk_forward(args: argparse.Namespace) -> int:
     summary = {
         "symbols": list(data_summary),
         "state_timeframe": args.state_timeframe,
+        "profile_protocol": {
+            "version": "variable-log-bins-v2",
+            "bin_width_bps": args.bin_width_bps,
+            "max_profile_bins": args.max_profile_bins,
+            "channels": 3,
+        },
         "data": data_summary,
         "folds": list(result.folds),
         "oos_predictions": len(result.predictions),
@@ -321,7 +338,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--train-fraction", type=float, default=0.8)
     train.add_argument("--forward-sessions", type=int, default=1)
-    train.add_argument("--profile-bins", type=int, default=48)
+    train.add_argument("--bin-width-bps", type=float, default=10.0)
+    train.add_argument("--max-profile-bins", type=int, default=512)
     train.add_argument(
         "--state-timeframe",
         choices=("daily", "mixed"),
@@ -358,7 +376,8 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--test-sessions", type=int, default=60)
     walk.add_argument("--step-sessions", type=int, default=60)
     walk.add_argument("--max-folds", type=int)
-    walk.add_argument("--profile-bins", type=int, default=48)
+    walk.add_argument("--bin-width-bps", type=float, default=10.0)
+    walk.add_argument("--max-profile-bins", type=int, default=512)
     walk.add_argument(
         "--state-timeframe",
         choices=("daily", "mixed"),

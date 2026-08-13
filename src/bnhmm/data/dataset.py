@@ -12,10 +12,15 @@ from ..config import LabelConfig, SequenceConfig
 from ..types import ProfileState
 
 
+STATE_FEATURE_DIM = 9
+
+
 @dataclass(frozen=True, slots=True)
 class ProfileObservations:
     symbol: str
-    profiles: NDArray[np.float32]
+    profiles: tuple[NDArray[np.float32], ...]
+    bin_coordinates: tuple[NDArray[np.float32], ...]
+    state_features: NDArray[np.float32]
     timeframe_ids: NDArray[np.int64]
     targets: NDArray[np.int64]
     signal_times: NDArray[np.datetime64]
@@ -30,7 +35,11 @@ class ProfileObservations:
     def take(self, indices: NDArray[np.integer]) -> "ProfileObservations":
         return ProfileObservations(
             symbol=self.symbol,
-            profiles=self.profiles[indices],
+            profiles=tuple(self.profiles[int(index)] for index in indices),
+            bin_coordinates=tuple(
+                self.bin_coordinates[int(index)] for index in indices
+            ),
+            state_features=self.state_features[indices],
             timeframe_ids=self.timeframe_ids[indices],
             targets=self.targets[indices],
             signal_times=self.signal_times[indices],
@@ -53,7 +62,9 @@ class ProfileObservations:
 @dataclass(frozen=True, slots=True)
 class ProfileSequence:
     symbol: str
-    profiles: NDArray[np.float32]
+    profiles: tuple[NDArray[np.float32], ...]
+    bin_coordinates: tuple[NDArray[np.float32], ...]
+    state_features: NDArray[np.float32]
     timeframe_ids: NDArray[np.int64]
     targets: NDArray[np.int64]
     signal_times: NDArray[np.datetime64]
@@ -117,8 +128,22 @@ class ProfileLabelBuilder:
             raise ValueError("profile states do not contain enough future sessions")
         return ProfileObservations(
             symbol=symbol,
-            profiles=np.asarray(
-                [row[0].distribution for row in rows], dtype=np.float32
+            profiles=tuple(
+                np.stack(
+                    (
+                        row[0].price_distribution,
+                        row[0].distribution,
+                        np.log1p(row[0].relative_volume_intensity),
+                    ),
+                    axis=-1,
+                ).astype(np.float32)
+                for row in rows
+            ),
+            bin_coordinates=tuple(
+                row[0].bin_coordinates.astype(np.float32) for row in rows
+            ),
+            state_features=np.asarray(
+                [self._state_features(row[0]) for row in rows], dtype=np.float32
             ),
             timeframe_ids=np.asarray(
                 [0 if row[0].timeframe == "60m" else 1 for row in rows],
@@ -136,6 +161,28 @@ class ProfileLabelBuilder:
             ),
             entry_prices=np.asarray([row[1].start_price for row in rows]),
             forward_returns=np.asarray([row[3] for row in rows], dtype=np.float64),
+        )
+
+    @staticmethod
+    def _state_features(state: ProfileState) -> NDArray[np.float32]:
+        relative_volume_mean = state.total_relative_volume / max(state.bar_count, 1)
+
+        def scaled_log(numerator: float, denominator: float, scale: float) -> float:
+            return float(np.clip(np.log(numerator / denominator) / scale, -4.0, 4.0))
+
+        return np.asarray(
+            (
+                scaled_log(state.start_price, state.anchor_price, 0.05),
+                scaled_log(state.end_price, state.anchor_price, 0.05),
+                scaled_log(state.end_price, state.start_price, 0.05),
+                scaled_log(state.high_price, state.anchor_price, 0.05),
+                scaled_log(state.low_price, state.anchor_price, 0.05),
+                float(np.clip((state.high_price - state.low_price) / state.anchor_price / 0.1, 0.0, 4.0)),
+                float(np.clip(np.log(max(relative_volume_mean, 1e-6)), -3.0, 3.0)),
+                float(np.clip(state.bar_count / 240.0, 0.0, 1.0)),
+                float(state.profile_clipped),
+            ),
+            dtype=np.float32,
         )
 
 
@@ -164,6 +211,8 @@ class SequenceWindowBuilder:
                 ProfileSequence(
                     symbol=observations.symbol,
                     profiles=observations.profiles[section],
+                    bin_coordinates=observations.bin_coordinates[section],
+                    state_features=observations.state_features[section],
                     timeframe_ids=observations.timeframe_ids[section],
                     targets=observations.targets[section],
                     signal_times=observations.signal_times[section],

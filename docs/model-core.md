@@ -1,14 +1,16 @@
 # Bayesian Model Core
 
-The input tensor has shape `[batch, sequence, profile_bins]`. By default, each
-sequence item is one completed daily price/relative-volume profile built from
-that session's available one-minute bars (normally 240). A parallel timeframe
-tensor uses `1` for these daily states; `0` remains reserved for opt-in hourly
-comparison states.
+The padded input tensor has shape `[batch, sequence, bins, 3]`, where `bins`
+varies by batch. Its channels are price occupancy, relative-volume shape, and
+relative-volume intensity. A bin mask excludes padding and an absolute
+10-basis-point coordinate tensor preserves whether the whole profile lies below
+or above the previous close.
 
-The tokenizer learns three views of every profile: individual bin value and
-position, adjacent two-bin shapes, and adjacent three-bin shapes. Their pooled
-representations form a temporal token.
+The tokenizer learns position-aligned individual-bin, adjacent two-bin, and
+adjacent three-bin motifs. Coordinate Fourier features prevent cropped profiles
+from losing their absolute return location. Masked attention pooling combines
+the motifs with open/close/range, total relative volume, bar coverage, and
+overflow metadata to form one daily token.
 
 All query, key, value, attention-output, feed-forward, motif, transition-context,
 latent-emission, and evidence projections use variational Gaussian weights. The

@@ -11,7 +11,7 @@ const state = {
 const numberFields = new Set([
   "epochs", "batch_size", "learning_rate", "forward_sessions",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
-  "max_folds", "profile_bins", "sequence_length", "sequence_stride",
+  "max_folds", "bin_width_bps", "max_profile_bins", "sequence_length", "sequence_stride",
   "minimum_sequence_length", "d_model", "motif_dim", "heads", "layers",
   "feedforward_dim", "dropout", "mc_samples", "uncertainty_aversion",
   "transaction_cost_bps", "seed",
@@ -193,7 +193,10 @@ function renderJob(job) {
   const stateMode = job.request.state_timeframe === "mixed"
     ? "小时 + 日状态"
     : "日状态（1分钟线生成）";
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${stateMode} · ${job.request.device}`;
+  const profileMode = job.request.profile_protocol === "legacy-fixed-bins"
+    ? "旧固定柱协议"
+    : `${job.request.bin_width_bps} BP 可变日态`;
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);

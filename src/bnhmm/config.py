@@ -17,11 +17,9 @@ class RegimeState(IntEnum):
 @dataclass(frozen=True, slots=True)
 class ProfileConfig:
     state_timeframes: tuple[str, ...] = ("1d",)
-    bins: int = 48
-    price_span: float = 4.0
-    default_log_scale: float = 0.02
-    minimum_log_scale: float = 0.0025
-    scale_lookback_sessions: int = 20
+    bin_width_bps: float = 10.0
+    max_profile_bins: int = 512
+    profile_margin_bins: int = 1
     relative_volume_lookback_sessions: int = 20
     relative_volume_min_observations: int = 5
     relative_volume_clip: float = 10.0
@@ -34,16 +32,12 @@ class ProfileConfig:
         unsupported = set(self.state_timeframes) - {"60m", "1d"}
         if unsupported:
             raise ValueError(f"unsupported state timeframes: {sorted(unsupported)}")
-        if self.bins < 8:
-            raise ValueError("profile bins must be at least 8")
-        if self.price_span <= 0:
-            raise ValueError("price_span must be positive")
-        if self.minimum_log_scale <= 0:
-            raise ValueError("minimum_log_scale must be positive")
-        if self.default_log_scale < self.minimum_log_scale:
-            raise ValueError("default_log_scale cannot be below minimum_log_scale")
-        if self.scale_lookback_sessions < 2:
-            raise ValueError("scale_lookback_sessions must be at least 2")
+        if self.bin_width_bps <= 0:
+            raise ValueError("profile bin width must be positive")
+        if self.max_profile_bins < 8:
+            raise ValueError("maximum profile bins must be at least 8")
+        if self.profile_margin_bins < 0:
+            raise ValueError("profile margin bins cannot be negative")
         if self.relative_volume_lookback_sessions < 2:
             raise ValueError("relative-volume lookback must be at least 2")
         if self.relative_volume_min_observations < 1:

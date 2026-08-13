@@ -6,9 +6,10 @@ Quant Platform.
 
 The first implemented vertical slice reads bounded OHLCV batches from the shared
 DuckDB broker, computes a historical-only relative-volume baseline, and converts
-each trading session's available one-minute bars into one daily
-price/relative-volume profile state. Hourly states remain available only as an
-explicit comparison mode.
+each trading session's available one-minute bars into one variable-length daily
+price/relative-volume profile. The previous close is coordinate zero and every
+log-price bin is 10 basis points wide. Hourly states remain an explicit
+comparison mode only.
 
 The model core now includes adjacent two/three-bin motif tokenization, causal
 Bayesian multi-head attention, a conditional ten-state latent transition filter,

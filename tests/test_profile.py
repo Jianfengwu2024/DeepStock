@@ -35,7 +35,7 @@ def synthetic_sessions(session_count: int = 2) -> BarBatch:
 
 class ProfileBuilderTests(unittest.TestCase):
     def test_default_builds_one_full_minute_profile_per_session(self) -> None:
-        states = PriceVolumeProfileBuilder().build(synthetic_sessions(2))
+        states = PriceVolumeProfileBuilder().build(synthetic_sessions(3))
 
         self.assertEqual(len(states), 2)
         self.assertTrue(all(item.timeframe == "1d" for item in states))
@@ -50,17 +50,22 @@ class ProfileBuilderTests(unittest.TestCase):
     def test_builds_four_hour_states_and_one_day_state_per_session(self) -> None:
         config = ProfileConfig(
             state_timeframes=("60m", "1d"),
-            bins=32,
             relative_volume_min_observations=1,
         )
-        states = PriceVolumeProfileBuilder(config).build(synthetic_sessions(2))
+        states = PriceVolumeProfileBuilder(config).build(synthetic_sessions(3))
         self.assertEqual(sum(item.timeframe == "60m" for item in states), 8)
         self.assertEqual(sum(item.timeframe == "1d" for item in states), 2)
         for state in states:
-            self.assertEqual(state.distribution.shape, (32,))
-            self.assertEqual(state.adjacent_pairs.shape, (31, 2))
-            self.assertEqual(state.adjacent_triples.shape, (30, 3))
+            bins = len(state.distribution)
+            self.assertGreaterEqual(bins, 3)
+            self.assertEqual(state.price_distribution.shape, (bins,))
+            self.assertEqual(state.relative_volume_intensity.shape, (bins,))
+            self.assertEqual(state.bin_coordinates.shape, (bins,))
+            self.assertEqual(state.adjacent_pairs.shape, (bins - 1, 2))
+            self.assertEqual(state.adjacent_triples.shape, (bins - 2, 3))
             self.assertAlmostEqual(float(state.distribution.sum()), 1.0)
+            self.assertAlmostEqual(float(state.price_distribution.sum()), 1.0)
+            np.testing.assert_allclose(np.diff(state.bin_coordinates), 1.0)
             self.assertGreater(state.first_bar_time, state.period_start)
             self.assertGreater(state.start_price, 0)
             self.assertGreater(state.end_price, 0)
@@ -72,7 +77,7 @@ class ProfileBuilderTests(unittest.TestCase):
         self.assertAlmostEqual(float(histogram.sum()), 7.5)
 
     def test_auction_boundary_row_is_excluded_from_daily_state(self) -> None:
-        bars = synthetic_sessions(1)
+        bars = synthetic_sessions(2)
         extra_timestamp = np.asarray(["2026-01-05T09:30:00"], dtype="datetime64[ns]")
         timestamps = np.concatenate([extra_timestamp, bars.timestamp])
         extra = np.asarray([10.0])
@@ -91,7 +96,7 @@ class ProfileBuilderTests(unittest.TestCase):
         self.assertNotEqual(daily.total_raw_volume, float(extended.volume.sum()))
 
     def test_small_minute_gap_does_not_discard_the_daily_state(self) -> None:
-        bars = synthetic_sessions(1)
+        bars = synthetic_sessions(2)
         incomplete = bars.take(np.arange(len(bars) - 1))
 
         states = PriceVolumeProfileBuilder().build(incomplete)
@@ -100,8 +105,28 @@ class ProfileBuilderTests(unittest.TestCase):
         self.assertEqual(states[0].bar_count, 239)
         self.assertEqual(
             states[0].period_end,
-            np.datetime64("2026-01-05T15:00:00", "ns"),
+            np.datetime64("2026-01-06T15:00:00", "ns"),
         )
+
+    def test_prices_below_previous_close_use_negative_coordinates(self) -> None:
+        bars = synthetic_sessions(2)
+        second_day = bars.timestamp.astype("datetime64[D]") == np.datetime64("2026-01-06")
+        adjustment = np.where(second_day, -1.0, 0.0)
+        shifted = BarBatch(
+            symbol=bars.symbol,
+            timestamp=bars.timestamp,
+            open=bars.open + adjustment,
+            high=bars.high + adjustment,
+            low=bars.low + adjustment,
+            close=bars.close + adjustment,
+            volume=bars.volume,
+        )
+
+        states = PriceVolumeProfileBuilder().build(shifted)
+
+        self.assertEqual(len(states), 1)
+        self.assertLess(float(states[0].bin_coordinates.max()), 0.0)
+        self.assertAlmostEqual(states[0].log_bin_width, np.log1p(0.001))
 
 
 if __name__ == "__main__":

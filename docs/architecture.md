@@ -3,9 +3,10 @@
 ## Runtime boundaries
 
 1. The data layer reads one symbol and a bounded date range at a time.
-2. The profile layer creates one daily price/relative-volume state from each
-   one-minute trading session. Small source gaps do not discard the full day;
-   hourly states are an opt-in comparison mode.
+2. The profile layer creates one variable-length daily price/relative-volume
+   state from each one-minute trading session. The previous close is zero and
+   fixed 10-basis-point log-price bins preserve the real daily amplitude. Small
+   source gaps do not discard the full day; hourly states are opt-in only.
 3. The model layer encodes adjacent two-bin and three-bin motifs, then
    applies a Bayesian Transformer and a conditional ten-state transition model.
 4. The output layer emits five-state posterior means and variances, including
@@ -43,3 +44,8 @@ rows begin at 09:31. Profile construction therefore admits only 09:31-11:30 and
 shared `kline_60m` table currently contains mixed six-row and four-row daily
 conventions. Default profile states are built directly from complete `kline_1m`
 sessions; `kline_60m` is retained only for validation and optional context.
+
+Daily profiles are cropped to their observed low/high coordinate range and are
+never resized to a common width. Batches pad only to their local maximum width
+and carry a bin mask. A 512-bin cap keeps the 10-basis-point scale unchanged;
+extreme overflow is deposited into edge bins and marked in state metadata.
