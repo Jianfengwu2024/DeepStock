@@ -274,7 +274,10 @@ function renderJob(job) {
   const outputMode = job.request.profile_protocol === "phase-space-joint-return-v6"
     ? "连续收益后验 → 空/平/多"
     : "旧三分类证据头";
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → 9 隐藏节点 · ${outputMode} · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  const outputHead = job.summary?.model_config?.output_hidden_states
+    ? `${job.summary.model_config.output_hidden_states} 隐藏节点（旧）`
+    : "直接收益后验头";
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → ${outputHead} · ${outputMode} · 平状态 ±${Number(job.request.flat_threshold_percent ?? 0.5).toFixed(2)}% · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);

@@ -49,9 +49,8 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertEqual(output.return_mean.shape, (2, 6))
         self.assertEqual(output.return_log_variance.shape, (2, 6))
         self.assertEqual(output.latent_probabilities.shape, (2, 6, 50))
-        self.assertEqual(self.model.output_hidden_states, 9)
-        self.assertEqual(self.model.output_hidden.weight_mu.shape, (9, 50))
-        self.assertEqual(self.model.return_distribution.weight_mu.shape, (2, 9))
+        self.assertFalse(hasattr(self.model, "output_hidden"))
+        self.assertEqual(self.model.return_distribution.weight_mu.shape, (2, 50))
         self.assertTrue(torch.all(output.return_log_variance <= -3.0))
         self.assertTrue(
             torch.allclose(

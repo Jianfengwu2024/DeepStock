@@ -21,7 +21,6 @@ PROFILE_PROTOCOL = "phase-space-joint-return-v6"
 SEQUENCE_PROTOCOL = "fixed-recent-endpoint-v1"
 DEFAULT_VELOCITY_BINS = 3
 PROFILE_CHANNELS = 4 + DEFAULT_VELOCITY_BINS**2
-OUTPUT_HIDDEN_STATES = 9
 
 
 @dataclass(frozen=True, slots=True)

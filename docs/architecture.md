@@ -16,10 +16,11 @@
    channel count.
    Every symbol owns a complete model instance; Transformer weights, hidden-state
    transitions, evidence heads, and return moments are never shared across symbols.
-4. The output layer emits bearish, flat, and bullish posterior means and variances,
-   through a fixed nine-node Bayesian hidden layer after the conditional latent
-   state. It includes aleatoric and epistemic uncertainty. Flat uses a configurable
-   symmetric forward-return threshold, with a default half-width of 0.5%.
+4. The filtered latent state feeds directly into a Bayesian Student-t return
+   posterior. Bearish, flat, and bullish probabilities are derived from that
+   posterior, including aleatoric and epistemic uncertainty. Flat uses a
+   configurable symmetric forward-return threshold with a default half-width
+   of 0.5%.
 5. The long-only policy layer opens on bullish, keeps the previous position on flat,
    and closes on bearish independently of the model.
 6. Walk-forward evaluation publishes only point-in-time-correct predictions.

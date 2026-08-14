@@ -29,10 +29,8 @@ immediately overwhelm the price baseline. Four feature modes support controlled
 ablation. Bayesian layers begin at the emission model and feed a configurable
 latent-state filter. Its context-conditioned transition correction is low rank,
 while its base transition matrix remains Bayesian. The filtered state posterior
-passes through a fixed nine-node Bayesian hidden layer into a continuous
-future-return posterior. The first hidden-state count defaults to 50 and cannot
-be smaller than the input channel count; the second hidden layer is always nine
-nodes.
+feeds directly into a Bayesian continuous future-return head. The hidden-state
+count defaults to 50 and cannot be smaller than the input channel count.
 
 Training uses a robust Student-t return likelihood with four degrees of freedom.
 Bearish, flat, and bullish probabilities are derived from the same Student-t

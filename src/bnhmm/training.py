@@ -525,12 +525,11 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 9,
+            "format_version": 10,
             "regime_protocol": REGIME_PROTOCOL,
             "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),
             "model_config": asdict(model_config),
-            "output_hidden_states": model.output_hidden_states,
             "trainer_config": asdict(trainer_config),
             "history": list(result.history),
             "pretraining_history": list(result.pretraining_history),

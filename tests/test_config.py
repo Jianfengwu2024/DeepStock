@@ -6,7 +6,6 @@ from bnhmm import (
     PROFILE_CHANNELS,
     PROFILE_PROTOCOL,
     SEQUENCE_PROTOCOL,
-    OUTPUT_HIDDEN_STATES,
     REGIME_NAMES,
     REGIME_PROTOCOL,
     BNHMMConfig,
@@ -21,7 +20,6 @@ class ConfigTests(unittest.TestCase):
         config = BNHMMConfig()
         self.assertEqual(config.latent_states, 50)
         self.assertEqual(len(config.output_states), 3)
-        self.assertEqual(OUTPUT_HIDDEN_STATES, 9)
         self.assertEqual(REGIME_NAMES, ("bear", "flat", "bull"))
         self.assertEqual(
             REGIME_PROTOCOL, "continuous-return-posterior-v2"

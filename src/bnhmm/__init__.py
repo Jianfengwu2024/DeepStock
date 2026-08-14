@@ -5,7 +5,6 @@ from .config import (
     REGIME_NAMES,
     REGIME_PROTOCOL,
     REGIME_SCORES,
-    OUTPUT_HIDDEN_STATES,
     PROFILE_CHANNELS,
     PROFILE_PROTOCOL,
     SEQUENCE_PROTOCOL,
@@ -34,7 +33,6 @@ __all__ = [
     "PROFILE_CHANNELS",
     "PROFILE_PROTOCOL",
     "SEQUENCE_PROTOCOL",
-    "OUTPUT_HIDDEN_STATES",
     "REGIME_COUNT",
     "REGIME_NAMES",
     "REGIME_PROTOCOL",
@@ -45,5 +43,5 @@ __all__ = [
     "SequenceWindowBuilder",
 ]
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 

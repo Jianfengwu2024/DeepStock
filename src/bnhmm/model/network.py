@@ -10,7 +10,6 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from ..config import (
-    OUTPUT_HIDDEN_STATES,
     PROFILE_CHANNELS,
     REGIME_COUNT,
     REGIME_SCORES,
@@ -358,7 +357,6 @@ class BNHMMNetwork(nn.Module):
         self.profile_channels = profile_channels
         self.state_feature_dim = state_feature_dim
         self.latent_states = latent_states
-        self.output_hidden_states = OUTPUT_HIDDEN_STATES
         self.output_states = output_states
         self.feature_mode = feature_mode
         self.bayesian_backbone = bayesian_backbone
@@ -403,8 +401,7 @@ class BNHMMNetwork(nn.Module):
         transition = torch.eye(latent_states) * 2.0
         self.transition_mu = nn.Parameter(transition)
         self.transition_rho = nn.Parameter(torch.full_like(transition, -6.0))
-        self.output_hidden = BayesianLinear(latent_states, OUTPUT_HIDDEN_STATES)
-        self.return_distribution = BayesianLinear(OUTPUT_HIDDEN_STATES, 2)
+        self.return_distribution = BayesianLinear(latent_states, 2)
         nn.init.zeros_(self.return_distribution.weight_mu)
         nn.init.zeros_(self.return_distribution.bias_mu)
         pretraining_dim = d_model + latent_states
@@ -510,11 +507,8 @@ class BNHMMNetwork(nn.Module):
             emissions, transition_base, transition_delta, valid_mask
         )
         latent_features = latent * float(self.latent_states)
-        output_hidden = F.gelu(
-            self.output_hidden(latent_features, sample=sample)
-        )
         return_parameters = self.return_distribution(
-            output_hidden, sample=sample
+            latent_features, sample=sample
         )
         return_mean = 0.1 * torch.tanh(return_parameters[..., 0])
         return_log_variance = torch.clamp(
