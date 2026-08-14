@@ -25,7 +25,7 @@ class ConfigTests(unittest.TestCase):
             ("strong_bear", "weak_bear", "weak_bull", "strong_bull"),
         )
         self.assertEqual(
-            REGIME_PROTOCOL, "volatility-standardized-prior-evidence-v4"
+            REGIME_PROTOCOL, "volatility-scaled-prior-evidence-v5"
         )
         with self.assertRaises(ValueError):
             BNHMMConfig(latent_states=PROFILE_CHANNELS - 1)

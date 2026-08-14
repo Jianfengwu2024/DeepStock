@@ -232,8 +232,7 @@ def _train(args: argparse.Namespace) -> int:
             posterior.expected_return[0, last].cpu()
         ),
         "latest_expected_return": float(
-            validation_sequences[-1].return_locations[last]
-            + validation_sequences[-1].return_scales[last]
+            validation_sequences[-1].return_scales[last]
             * float(posterior.expected_return[0, last].cpu())
         ),
         "latest_return_variance": float(
@@ -431,7 +430,9 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "lookback_sessions": label_config.standardization_lookback_sessions,
             "minimum_observations": label_config.standardization_min_observations,
             "minimum_scale": label_config.minimum_return_scale,
-            "definition": "(next_open_to_close_return - known_rolling_mean) / known_rolling_std",
+            "definition": "next_open_to_close_return / known_rolling_std",
+            "direction_zero": "actual_zero_return",
+            "rolling_mean_usage": "diagnostic_baseline_only",
         },
         "regime_protocol": _regime_metadata(label_config),
         "model_config": asdict(model_config),

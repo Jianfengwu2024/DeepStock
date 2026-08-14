@@ -491,6 +491,7 @@ function renderInsight(summary) {
       positive_log_information_gain: "Log Loss 未优于训练期先验",
       beats_prior_brier: "Brier 未优于训练期先验",
       beats_dynamic_prior_return_rmse: "收益误差未优于滚动均值",
+      beats_zero_return_rmse: "收益误差未优于零收益预测",
       positive_return_correlation: "收益相关性非正",
       minimum_oos_observations: "样本外数量不足 200",
     };
@@ -533,7 +534,7 @@ function renderMetrics(summary) {
     ["对数信息增益", formatNumber(comparisons.log_information_gain, 4), "大于 0 才说明当前状态提供了超越历史先验的信息"],
     ["有序概率误差 RPS", formatNumber(summary.ranked_probability_score, 4), "越低越好，距离更远的错判惩罚更大"],
     ["收益相关性", formatNumber(summary.return_residual?.correlation, 4), "预测收益与实际收益的样本外相关性"],
-    ["收益 RMSE", formatPercent(summary.return_residual?.rmse), `滚动均值基线 ${formatPercent(comparisons.dynamic_prior_return_rmse)}`],
+    ["收益 RMSE", formatPercent(summary.return_residual?.rmse), `零收益 ${formatPercent(comparisons.zero_return_rmse)} · 滚动均值 ${formatPercent(comparisons.dynamic_prior_return_rmse)}`],
     ["发布验证", summary.validation_gate ? (summary.validation_gate.passed ? "通过" : "未通过") : "未评估", "必须同时通过分类、收益误差、相关性和样本量门槛"],
     ["模型策略收益", formatPercent(summary.backtest?.total_return), "已扣除设定的交易成本"],
     ["最大回撤", formatPercent(Math.abs(Number(summary.backtest?.max_drawdown))), "历史峰值后的最大跌幅"],

@@ -149,7 +149,9 @@ class ProfileLabelBuilder:
                 float(known.std(ddof=1)), self.config.minimum_return_scale
             )
             forward_return = target_state.end_price / execution_state.start_price - 1.0
-            standardized_return = (forward_return - return_location) / return_scale
+            # Keep zero anchored to an actual flat return. Subtracting a noisy
+            # rolling mean can label a positive day bearish (and vice versa).
+            standardized_return = forward_return / return_scale
             regime = int(np.digitize(standardized_return, self.config.thresholds))
             rows.append(
                 (

@@ -73,10 +73,13 @@ class ProfileDatasetTests(unittest.TestCase):
         self.assertGreater(len(observations), 0)
         np.testing.assert_allclose(
             observations.standardized_returns,
-            (observations.forward_returns - observations.return_locations)
-            / observations.return_scales,
+            observations.forward_returns / observations.return_scales,
         )
         self.assertTrue(np.all(observations.return_scales >= 0.002))
+        np.testing.assert_array_equal(
+            observations.targets >= 2,
+            observations.forward_returns >= 0.0,
+        )
         self.assertTrue(
             np.all(observations.execution_times > observations.signal_times)
         )

@@ -127,8 +127,7 @@ def infer_sequences(
                 ),
                 expected_score=float(posterior.expected_score[0, index].cpu()),
                 expected_return=float(
-                    sequence.return_locations[index]
-                    + sequence.return_scales[index]
+                    sequence.return_scales[index]
                     * float(posterior.expected_return[0, index].cpu())
                 ),
                 expected_standardized_return=float(
@@ -425,6 +424,9 @@ def _validation_gate(
         "beats_dynamic_prior_return_rmse": bool(
             float(residual["rmse"])
             < float(baselines["dynamic_prior_return_rmse"])
+        ),
+        "beats_zero_return_rmse": bool(
+            float(residual["rmse"]) < float(baselines["zero_return_rmse"])
         ),
         "positive_return_correlation": bool(float(residual["correlation"]) > 0.0),
         "minimum_oos_observations": bool(int(report["observation_count"]) >= 200),

@@ -38,8 +38,9 @@ whose `training_cutoff` is no later than its signal time.
 
 Labels use the first bar strictly after the completed profile as their entry
 price. A daily state completed at 15:00 therefore enters on the first continuous
-bar of the next trading session. The target is centered and scaled by the mean
-and volatility of the preceding 20 known sessions; no outer-fold observation is
+bar of the next trading session. The target is scaled by the volatility of the
+preceding 20 known sessions, while zero remains actual zero return. The rolling
+mean is diagnostic only; no outer-fold observation is
 used to set labels, class priors, or class weights. Walk-forward folds contain an inner tuning
 window; after choosing the epoch count, the model is rebuilt on all information
 whose labels mature before the outer-test cutoff. The outer window never

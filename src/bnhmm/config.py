@@ -17,7 +17,7 @@ REGIME_STATES = tuple(RegimeState)
 REGIME_COUNT = len(REGIME_STATES)
 REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
-REGIME_PROTOCOL = "volatility-standardized-prior-evidence-v4"
+REGIME_PROTOCOL = "volatility-scaled-prior-evidence-v5"
 PROFILE_PROTOCOL = "phase-space-joint-return-v6"
 SEQUENCE_PROTOCOL = "fixed-recent-endpoint-v1"
 DEFAULT_VELOCITY_BINS = 3
@@ -78,7 +78,7 @@ class ProfileConfig:
 
 @dataclass(frozen=True, slots=True)
 class LabelConfig:
-    """Leakage-safe standardized forward-return definition."""
+    """Leakage-safe volatility-scaled forward-return definition."""
 
     forward_sessions: int = 1
     standardization_lookback_sessions: int = 20

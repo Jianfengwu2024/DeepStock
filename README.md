@@ -33,8 +33,10 @@ while its base transition matrix remains Bayesian. The filtered state posterior
   head. The hidden-state count defaults to 20 and cannot be smaller than the
   input channel count.
 
-The target return is centered and scaled using only the preceding 20 known
-sessions. Training combines a robust Student-t likelihood with a direct ordinal
+The target return is scaled by volatility from the preceding 20 known sessions,
+while zero remains an actual flat return. The noisy rolling mean is retained only
+as an evaluation baseline and is never subtracted from the label. Training
+combines a robust Student-t likelihood with a direct ordinal
 four-state objective. The evidence head starts from the symbol/fold training
 prior, then learns only the information contributed by the current state.
 Strong and weak states are separated at 0.75 rolling standard deviations by
