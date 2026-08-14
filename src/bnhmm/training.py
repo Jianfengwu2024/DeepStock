@@ -12,7 +12,7 @@ from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader, Dataset
 
-from .config import REGIME_COUNT, REGIME_NAMES, REGIME_PROTOCOL
+from .config import PROFILE_CHANNELS, REGIME_COUNT, REGIME_NAMES, REGIME_PROTOCOL
 from .data.dataset import ProfileSequence
 from .model import BNHMMNetwork, evidential_classification_loss
 
@@ -20,7 +20,7 @@ from .model import BNHMMNetwork, evidential_classification_loss
 @dataclass(frozen=True, slots=True)
 class ModelConfig:
     max_profile_bins: int = 512
-    profile_channels: int = 3
+    profile_channels: int = PROFILE_CHANNELS
     state_feature_dim: int = 9
     output_states: int = REGIME_COUNT
     d_model: int = 96

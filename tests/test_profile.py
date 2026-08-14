@@ -35,7 +35,7 @@ def synthetic_sessions(session_count: int = 2) -> BarBatch:
 
 class ProfileBuilderTests(unittest.TestCase):
     def test_default_builds_one_full_minute_profile_per_session(self) -> None:
-        states = PriceVolumeProfileBuilder().build(synthetic_sessions(3))
+        states = PriceVolumeProfileBuilder().build(synthetic_sessions(12))
 
         self.assertEqual(len(states), 2)
         self.assertTrue(all(item.timeframe == "1d" for item in states))
@@ -60,12 +60,20 @@ class ProfileBuilderTests(unittest.TestCase):
             self.assertGreaterEqual(bins, 3)
             self.assertEqual(state.price_distribution.shape, (bins,))
             self.assertEqual(state.relative_volume_intensity.shape, (bins,))
+            self.assertEqual(state.normalized_relative_volume_level.shape, (bins,))
+            self.assertEqual(state.price_velocity_distribution.shape, (bins, 9))
+            self.assertEqual(state.volume_velocity_distribution.shape, (bins, 9))
             self.assertEqual(state.bin_coordinates.shape, (bins,))
+            self.assertEqual(state.normalized_bin_coordinates.shape, (bins,))
             self.assertEqual(state.adjacent_pairs.shape, (bins - 1, 2))
             self.assertEqual(state.adjacent_triples.shape, (bins - 2, 3))
             self.assertAlmostEqual(float(state.distribution.sum()), 1.0)
             self.assertAlmostEqual(float(state.price_distribution.sum()), 1.0)
             np.testing.assert_allclose(np.diff(state.bin_coordinates), 1.0)
+            price_rows = state.price_velocity_distribution.sum(axis=1)
+            volume_rows = state.volume_velocity_distribution.sum(axis=1)
+            self.assertTrue(np.all(np.isclose(price_rows, 0.0) | np.isclose(price_rows, 1.0)))
+            self.assertTrue(np.all(np.isclose(volume_rows, 0.0) | np.isclose(volume_rows, 1.0)))
             self.assertGreater(state.first_bar_time, state.period_start)
             self.assertGreater(state.start_price, 0)
             self.assertGreater(state.end_price, 0)
@@ -77,7 +85,7 @@ class ProfileBuilderTests(unittest.TestCase):
         self.assertAlmostEqual(float(histogram.sum()), 7.5)
 
     def test_auction_boundary_row_is_excluded_from_daily_state(self) -> None:
-        bars = synthetic_sessions(2)
+        bars = synthetic_sessions(12)
         extra_timestamp = np.asarray(["2026-01-05T09:30:00"], dtype="datetime64[ns]")
         timestamps = np.concatenate([extra_timestamp, bars.timestamp])
         extra = np.asarray([10.0])
@@ -96,22 +104,22 @@ class ProfileBuilderTests(unittest.TestCase):
         self.assertNotEqual(daily.total_raw_volume, float(extended.volume.sum()))
 
     def test_small_minute_gap_does_not_discard_the_daily_state(self) -> None:
-        bars = synthetic_sessions(2)
+        bars = synthetic_sessions(12)
         incomplete = bars.take(np.arange(len(bars) - 1))
 
         states = PriceVolumeProfileBuilder().build(incomplete)
 
-        self.assertEqual(len(states), 1)
-        self.assertEqual(states[0].bar_count, 239)
+        self.assertEqual(len(states), 2)
+        self.assertEqual(states[-1].bar_count, 239)
         self.assertEqual(
-            states[0].period_end,
-            np.datetime64("2026-01-06T15:00:00", "ns"),
+            states[-1].period_end,
+            np.datetime64("2026-01-16T15:00:00", "ns"),
         )
 
     def test_prices_below_previous_close_use_negative_coordinates(self) -> None:
-        bars = synthetic_sessions(2)
-        second_day = bars.timestamp.astype("datetime64[D]") == np.datetime64("2026-01-06")
-        adjustment = np.where(second_day, -1.0, 0.0)
+        bars = synthetic_sessions(11)
+        sessions = bars.timestamp.astype("datetime64[D]")
+        adjustment = np.where(sessions == np.unique(sessions)[-1], -1.0, 0.0)
         shifted = BarBatch(
             symbol=bars.symbol,
             timestamp=bars.timestamp,
@@ -127,6 +135,36 @@ class ProfileBuilderTests(unittest.TestCase):
         self.assertEqual(len(states), 1)
         self.assertLess(float(states[0].bin_coordinates.max()), 0.0)
         self.assertAlmostEqual(states[0].log_bin_width, np.log1p(0.001))
+
+    def test_current_session_cannot_change_its_rolling_normalization(self) -> None:
+        bars = synthetic_sessions(11)
+        sessions = bars.timestamp.astype("datetime64[D]")
+        last_session = np.unique(sessions)[-1]
+        changed_volume = bars.volume.copy()
+        changed_volume[sessions == last_session] *= 100.0
+        changed = BarBatch(
+            symbol=bars.symbol,
+            timestamp=bars.timestamp,
+            open=bars.open,
+            high=bars.high,
+            low=bars.low,
+            close=bars.close,
+            volume=changed_volume,
+        )
+
+        original_state = PriceVolumeProfileBuilder().build(bars)[0]
+        changed_state = PriceVolumeProfileBuilder().build(changed)[0]
+
+        self.assertEqual(original_state.normalization_sessions, 10)
+        self.assertAlmostEqual(
+            original_state.average_minute_volume,
+            changed_state.average_minute_volume,
+        )
+        self.assertAlmostEqual(original_state.location_scale, changed_state.location_scale)
+        self.assertGreater(
+            changed_state.total_relative_volume,
+            original_state.total_relative_volume,
+        )
 
 
 if __name__ == "__main__":

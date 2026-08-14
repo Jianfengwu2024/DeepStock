@@ -14,6 +14,7 @@ from .config import (
     REGIME_COUNT,
     REGIME_NAMES,
     REGIME_PROTOCOL,
+    PROFILE_PROTOCOL,
     LabelConfig,
     ProfileConfig,
     SequenceConfig,
@@ -79,6 +80,10 @@ def _train(args: argparse.Namespace) -> int:
         bin_width_bps=args.bin_width_bps,
         max_profile_bins=args.max_profile_bins,
         state_timeframes=_state_timeframes(args.state_timeframe),
+        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
+        relative_volume_min_observations=args.normalization_lookback_sessions,
+        velocity_bins=args.velocity_bins,
+        velocity_clip=args.velocity_clip,
     )
     sequence_config = SequenceConfig(
         length=args.sequence_length,
@@ -104,6 +109,7 @@ def _train(args: argparse.Namespace) -> int:
 
     model_config = ModelConfig(
         max_profile_bins=args.max_profile_bins,
+        profile_channels=profile_config.profile_channels,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -141,7 +147,11 @@ def _train(args: argparse.Namespace) -> int:
         "cutoff": str(cutoff),
         "training_cutoff": str(cutoff),
         "profile_states": len(states),
-        "profile_protocol": "variable-log-bins-v2",
+        "profile_protocol": PROFILE_PROTOCOL,
+        "profile_channels": profile_config.profile_channels,
+        "normalization_lookback_sessions": args.normalization_lookback_sessions,
+        "velocity_bins": args.velocity_bins,
+        "velocity_clip": args.velocity_clip,
         "regime_protocol": _regime_metadata(label_config),
         "bin_width_bps": args.bin_width_bps,
         "maximum_profile_bins": max((len(state.distribution) for state in states), default=0),
@@ -228,6 +238,10 @@ def _walk_forward(args: argparse.Namespace) -> int:
         bin_width_bps=args.bin_width_bps,
         max_profile_bins=args.max_profile_bins,
         state_timeframes=_state_timeframes(args.state_timeframe),
+        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
+        relative_volume_min_observations=args.normalization_lookback_sessions,
+        velocity_bins=args.velocity_bins,
+        velocity_clip=args.velocity_clip,
     )
     label_config = LabelConfig(forward_sessions=args.forward_sessions)
     for symbol in symbols:
@@ -254,6 +268,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
     )
     model_config = ModelConfig(
         max_profile_bins=args.max_profile_bins,
+        profile_channels=profile_config.profile_channels,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -346,10 +361,15 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "model_scope": "per-symbol",
         "state_timeframe": args.state_timeframe,
         "profile_protocol": {
-            "version": "variable-log-bins-v2",
+            "version": PROFILE_PROTOCOL,
             "bin_width_bps": args.bin_width_bps,
             "max_profile_bins": args.max_profile_bins,
-            "channels": 3,
+            "channels": profile_config.profile_channels,
+            "normalization_lookback_sessions": args.normalization_lookback_sessions,
+            "relative_volume_baseline": "prior-mean-daily-volume/240",
+            "velocity_bins": args.velocity_bins,
+            "velocity_clip": args.velocity_clip,
+            "price_coordinate": "log-price-relative-to-previous-close",
         },
         "regime_protocol": _regime_metadata(label_config),
         "model_config": asdict(model_config),
@@ -427,6 +447,9 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--forward-sessions", type=int, default=1)
     train.add_argument("--bin-width-bps", type=float, default=10.0)
     train.add_argument("--max-profile-bins", type=int, default=512)
+    train.add_argument("--normalization-lookback-sessions", type=int, default=10)
+    train.add_argument("--velocity-bins", type=int, default=9)
+    train.add_argument("--velocity-clip", type=float, default=4.0)
     train.add_argument(
         "--state-timeframe",
         choices=("daily", "mixed"),
@@ -470,6 +493,9 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--max-folds", type=int)
     walk.add_argument("--bin-width-bps", type=float, default=10.0)
     walk.add_argument("--max-profile-bins", type=int, default=512)
+    walk.add_argument("--normalization-lookback-sessions", type=int, default=10)
+    walk.add_argument("--velocity-bins", type=int, default=9)
+    walk.add_argument("--velocity-clip", type=float, default=4.0)
     walk.add_argument(
         "--state-timeframe",
         choices=("daily", "mixed"),

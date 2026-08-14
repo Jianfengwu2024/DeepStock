@@ -7,10 +7,19 @@ import numpy as np
 from bnhmm import BarBatch, ProfileConfig, RelativeVolumeBaseline
 
 
-def one_bar(day: int, volume: float) -> BarBatch:
-    timestamp = np.asarray([f"2026-01-{day:02d}T09:31:00"], dtype="datetime64[ns]")
-    price = np.asarray([10.0], dtype=np.float64)
-    return BarBatch("000001", timestamp, price, price, price, price, np.asarray([volume]))
+def full_session(day: int, volume: float) -> BarBatch:
+    start = np.datetime64(f"2026-01-{day:02d}T09:31:00", "ns")
+    timestamp = start + np.arange(240).astype("timedelta64[m]")
+    price = np.full(240, 10.0, dtype=np.float64)
+    return BarBatch(
+        "000001",
+        timestamp,
+        price,
+        price,
+        price,
+        price,
+        np.full(240, volume),
+    )
 
 
 class RelativeVolumeTests(unittest.TestCase):
@@ -18,11 +27,13 @@ class RelativeVolumeTests(unittest.TestCase):
         config = ProfileConfig(relative_volume_min_observations=3)
         baseline = RelativeVolumeBaseline(config)
         for day in range(1, 4):
-            self.assertEqual(float(baseline.transform(one_bar(day, 10.0))[0]), 1.0)
+            np.testing.assert_allclose(
+                baseline.transform(full_session(day, 10.0)), 1.0
+            )
 
-        ratio = float(baseline.transform(one_bar(4, 20.0))[0])
-        self.assertAlmostEqual(ratio, 2.0)
-        self.assertEqual(baseline.observations_for_slot(9, 31), 4)
+        ratio = baseline.transform(full_session(4, 20.0))
+        np.testing.assert_allclose(ratio, 2.0)
+        self.assertEqual(baseline.observations_for_symbol("000001"), 4)
 
 
 if __name__ == "__main__":

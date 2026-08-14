@@ -1,4 +1,4 @@
-"""Leakage-safe relative-volume normalization by exchange minute slot."""
+"""Leakage-safe relative-volume normalization by prior daily volume."""
 
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ from ..types import BarBatch
 
 
 class RelativeVolumeBaseline:
-    """Compute volume ratios using completed prior sessions only."""
+    """Divide minute volume by prior average daily volume divided by 240."""
 
     def __init__(self, config: ProfileConfig) -> None:
         self._lookback = config.relative_volume_lookback_sessions
         self._minimum = config.relative_volume_min_observations
         self._clip = config.relative_volume_clip
-        self._history: dict[int, deque[float]] = defaultdict(
+        self._minutes = config.trading_minutes_per_session
+        self._history: dict[str, deque[float]] = defaultdict(
             lambda: deque(maxlen=self._lookback)
         )
 
@@ -27,28 +28,22 @@ class RelativeVolumeBaseline:
             return np.asarray([], dtype=np.float64)
 
         sessions = bars.timestamp.astype("datetime64[D]")
-        minute_slots = bars.timestamp.astype("datetime64[m]").astype(np.int64) % (24 * 60)
         relative = np.ones(len(bars), dtype=np.float64)
 
         for session in np.unique(sessions):
             indices = np.flatnonzero(sessions == session)
-            pending: list[tuple[int, float]] = []
-            for index in indices:
-                slot = int(minute_slots[index])
-                volume = float(bars.volume[index])
-                history = self._history[slot]
-                if len(history) >= self._minimum:
-                    baseline = float(np.median(np.fromiter(history, dtype=np.float64)))
-                    if baseline > 0:
-                        relative[index] = np.clip(volume / baseline, 0.0, self._clip)
-                pending.append((slot, volume))
-
-            # The current session cannot influence any baseline in that session.
-            for slot, volume in pending:
-                self._history[slot].append(volume)
+            history = self._history[bars.symbol]
+            if len(history) >= self._minimum:
+                baseline = float(np.mean(history)) / self._minutes
+                if baseline > 0:
+                    relative[indices] = np.clip(
+                        bars.volume[indices] / baseline, 0.0, self._clip
+                    )
+            # The current session enters the baseline only after all its bars transform.
+            history.append(float(bars.volume[indices].sum()))
 
         return relative
 
-    def observations_for_slot(self, hour: int, minute: int) -> int:
-        return len(self._history[hour * 60 + minute])
+    def observations_for_symbol(self, symbol: str) -> int:
+        return len(self._history[symbol])
 

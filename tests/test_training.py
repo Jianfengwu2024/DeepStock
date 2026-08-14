@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 import torch
 
+from bnhmm import PROFILE_CHANNELS
 from bnhmm.data.dataset import ProfileSequence
 from bnhmm.training import (
     BNHMMTrainer,
@@ -20,7 +21,7 @@ def sequence(seed: int, length: int = 8, bins: int = 16) -> ProfileSequence:
     coordinates: list[np.ndarray] = []
     for index in range(length):
         state_bins = bins + index % 3
-        profile = random.random((state_bins, 3), dtype=np.float32)
+        profile = random.random((state_bins, PROFILE_CHANNELS), dtype=np.float32)
         profile[:, :2] /= profile[:, :2].sum(axis=0, keepdims=True)
         profiles.append(profile)
         coordinate_start = -(state_bins // 2)
@@ -50,7 +51,7 @@ def learnable_sequence(symbol: str, length: int = 25) -> ProfileSequence:
     coordinates: list[np.ndarray] = []
     state_features = np.zeros((length, 9), dtype=np.float32)
     for index, target in enumerate(targets):
-        profile = np.full((16, 3), 1e-4, dtype=np.float32)
+        profile = np.full((16, PROFILE_CHANNELS), 1e-4, dtype=np.float32)
         position = 1 + 3 * target
         profile[position : position + 2, :2] = 1.0
         profile[:, :2] /= profile[:, :2].sum(axis=0, keepdims=True)

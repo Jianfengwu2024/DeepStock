@@ -28,6 +28,8 @@ class WebJobTests(unittest.TestCase):
             WalkForwardJobRequest(d_model=95, heads=4)
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(minimum_train_sessions=50, tuning_sessions=60)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(velocity_bins=8)
 
     def test_command_contains_optional_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(
@@ -42,6 +44,9 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("daily", command)
         self.assertIn("--bin-width-bps", command)
         self.assertIn("--max-profile-bins", command)
+        self.assertIn("--normalization-lookback-sessions", command)
+        self.assertIn("--velocity-bins", command)
+        self.assertIn("--velocity-clip", command)
         self.assertIn("--kl-weight", command)
         self.assertIn("--ordinal-weight", command)
         self.assertIn("--pretrain-epochs", command)
@@ -49,6 +54,7 @@ class WebJobTests(unittest.TestCase):
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
         self.assertEqual(request.training_scope, "per-symbol")
+        self.assertEqual(request.profile_protocol, "phase-space-log-v3")
 
         deterministic = build_command(
             request.model_copy(update={"deterministic_training": True}),

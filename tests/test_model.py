@@ -4,11 +4,15 @@ import unittest
 
 import torch
 
+from bnhmm import PROFILE_CHANNELS
 from bnhmm.model import BNHMMNetwork, SinglePassOutput, evidential_classification_loss
 
 
 def profiles(
-    batch: int = 2, sequence: int = 6, bins: int = 16, channels: int = 3
+    batch: int = 2,
+    sequence: int = 6,
+    bins: int = 16,
+    channels: int = PROFILE_CHANNELS,
 ) -> torch.Tensor:
     values = torch.rand(batch, sequence, bins, channels)
     return values / values.sum(dim=-2, keepdim=True)

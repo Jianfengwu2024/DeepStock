@@ -18,6 +18,9 @@ REGIME_COUNT = len(REGIME_STATES)
 REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
 REGIME_PROTOCOL = "directional-four-v1"
+PROFILE_PROTOCOL = "phase-space-log-v3"
+DEFAULT_VELOCITY_BINS = 9
+PROFILE_CHANNELS = 4 + 2 * DEFAULT_VELOCITY_BINS
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,9 +29,13 @@ class ProfileConfig:
     bin_width_bps: float = 10.0
     max_profile_bins: int = 512
     profile_margin_bins: int = 1
-    relative_volume_lookback_sessions: int = 20
-    relative_volume_min_observations: int = 5
+    relative_volume_lookback_sessions: int = 10
+    relative_volume_min_observations: int = 10
     relative_volume_clip: float = 10.0
+    trading_minutes_per_session: int = 240
+    velocity_bins: int = DEFAULT_VELOCITY_BINS
+    velocity_clip: float = 4.0
+    feature_clip: float = 4.0
     minimum_hour_bars: int = 20
     minimum_day_bars: int = 120
 
@@ -50,6 +57,19 @@ class ProfileConfig:
             raise ValueError("relative-volume minimum observations must be positive")
         if self.relative_volume_clip <= 1:
             raise ValueError("relative-volume clip must exceed 1")
+        if self.relative_volume_min_observations > self.relative_volume_lookback_sessions:
+            raise ValueError("relative-volume minimum cannot exceed its lookback")
+        if self.trading_minutes_per_session < 1:
+            raise ValueError("trading minutes per session must be positive")
+        if self.velocity_bins < 3 or self.velocity_bins % 2 == 0:
+            raise ValueError("velocity bins must be an odd integer of at least three")
+        if self.velocity_clip <= 0 or self.feature_clip <= 0:
+            raise ValueError("phase-space clipping limits must be positive")
+
+    @property
+    def profile_channels(self) -> int:
+        # Four scalar fields plus two conditional velocity histograms.
+        return 4 + 2 * self.velocity_bins
 
 
 @dataclass(frozen=True, slots=True)

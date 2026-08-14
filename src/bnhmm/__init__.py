@@ -5,6 +5,8 @@ from .config import (
     REGIME_NAMES,
     REGIME_PROTOCOL,
     REGIME_SCORES,
+    PROFILE_CHANNELS,
+    PROFILE_PROTOCOL,
     BNHMMConfig,
     LabelConfig,
     ProfileConfig,
@@ -27,6 +29,8 @@ __all__ = [
     "PriceVolumeProfileBuilder",
     "ProfileConfig",
     "ProfileState",
+    "PROFILE_CHANNELS",
+    "PROFILE_PROTOCOL",
     "REGIME_COUNT",
     "REGIME_NAMES",
     "REGIME_PROTOCOL",
@@ -37,5 +41,5 @@ __all__ = [
     "SequenceWindowBuilder",
 ]
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 

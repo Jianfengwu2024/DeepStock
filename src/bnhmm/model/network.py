@@ -8,7 +8,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from ..config import REGIME_COUNT, REGIME_SCORES
+from ..config import PROFILE_CHANNELS, REGIME_COUNT, REGIME_SCORES
 from .bayesian import BayesianLinear, module_kl_divergence
 from .transformer import BayesianTransformerBlock
 
@@ -163,7 +163,7 @@ class BNHMMNetwork(nn.Module):
         self,
         *,
         max_profile_bins: int = 512,
-        profile_channels: int = 3,
+        profile_channels: int = PROFILE_CHANNELS,
         state_feature_dim: int = 9,
         latent_states: int = 10,
         output_states: int = REGIME_COUNT,

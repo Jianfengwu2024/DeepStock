@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BNHMM Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.3.1">
+  <link rel="stylesheet" href="/static/styles.css?v=0.4.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.3.1" defer></script>
+  <script src="/static/app.js?v=0.4.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -76,6 +76,9 @@
           <div class="two-columns">
             <label>每柱基点<input name="bin_width_bps" type="number" min="1" max="100" step="1"></label>
             <label>单日最大柱数<input name="max_profile_bins" type="number" min="8" max="2048"></label>
+            <label>归一化回看日<input name="normalization_lookback_sessions" type="number" min="2" max="120"></label>
+            <label>速度分布柱数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
+            <label>速度标准差截断<input name="velocity_clip" type="number" min="0.5" max="20" step="0.5"></label>
             <label>序列长度<input name="sequence_length" type="number"></label>
             <label>序列步长<input name="sequence_stride" type="number"></label>
             <label>最短序列<input name="minimum_sequence_length" type="number"></label>

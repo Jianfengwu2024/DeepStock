@@ -1,8 +1,11 @@
 # Bayesian Model Core
 
-The padded input tensor has shape `[batch, sequence, bins, 3]`, where `bins`
-varies by batch. Its channels are price occupancy, relative-volume shape, and
-relative-volume intensity. A bin mask excludes padding and an absolute
+The default padded input tensor has shape `[batch, sequence, bins, 22]`, where
+`bins` varies by batch. Four scalar channels contain price occupancy,
+relative-volume shape, normalized relative-volume level, and normalized log-price
+location. Nine channels encode the conditional normalized price-velocity
+distribution and nine encode the conditional normalized volume-velocity
+distribution. A bin mask excludes padding and an absolute
 10-basis-point coordinate tensor preserves whether the whole profile lies below
 or above the previous close.
 
@@ -10,7 +13,8 @@ The tokenizer learns position-aligned individual-bin, adjacent two-bin, and
 adjacent three-bin motifs. Coordinate Fourier features prevent cropped profiles
 from losing their absolute return location. Masked attention pooling combines
 the motifs with open/close/range, total relative volume, bar coverage, and
-overflow metadata to form one daily token.
+overflow metadata to form one daily token. No exact intraday clock position,
+price acceleration, or direction-times-volume product is provided to the model.
 
 All query, key, value, attention-output, feed-forward, motif, transition-context,
 latent-emission, and evidence projections use variational Gaussian weights. The

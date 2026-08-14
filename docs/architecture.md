@@ -3,10 +3,12 @@
 ## Runtime boundaries
 
 1. The data layer reads one symbol and a bounded date range at a time.
-2. The profile layer creates one variable-length daily price/relative-volume
+2. The profile layer creates one variable-length daily conditional phase-space
    state from each one-minute trading session. The previous close is zero and
-   fixed 10-basis-point log-price bins preserve the real daily amplitude. Small
-   source gaps do not discard the full day; hourly states are opt-in only.
+   fixed 10-basis-point log-price bins preserve the real daily amplitude. Each
+   price bin carries relative volume plus price-velocity and volume-velocity
+   distributions. Small source gaps do not discard the full day; hourly states
+   are opt-in only.
 3. The model layer encodes adjacent two-bin and three-bin motifs, then
    applies a Bayesian Transformer and a conditional ten-state transition model.
    Every symbol owns a complete model instance; Transformer weights, hidden-state
@@ -22,8 +24,10 @@
 
 ## Leakage boundary
 
-At prediction time `t`, feature normalization may use only bars with timestamps
-at or before `t`. A signal becomes executable at `available_at`, which must be
+At prediction time `t`, feature normalization uses only the symbol's ten completed
+sessions strictly before the current session. The current session is appended to
+the rolling history only after its state is built. A signal becomes executable at
+`available_at`, which must be
 strictly later than the final input bar. Historical backtests select a model
 whose `training_cutoff` is no later than its signal time.
 
@@ -53,3 +57,11 @@ Daily profiles are cropped to their observed low/high coordinate range and are
 never resized to a common width. Batches pad only to their local maximum width
 and carry a bin mask. A 512-bin cap keeps the 10-basis-point scale unchanged;
 extreme overflow is deposited into edge bins and marked in state metadata.
+
+Price coordinates use log returns relative to previous close. Relative minute
+volume is divided by prior ten-day mean daily volume divided by 240. Price
+velocity is the one-minute log-price difference; volume velocity is the
+difference of `log1p(relative_volume)`. Both are standardized from the same ten
+historical sessions and discretized into conditional histograms at each price
+bin. Clock time, acceleration, and hand-built direction-times-volume features
+are intentionally absent.

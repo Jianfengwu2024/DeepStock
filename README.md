@@ -5,11 +5,14 @@ Bayesian neural hidden-state market model. It is intentionally independent from
 Quant Platform.
 
 The first implemented vertical slice reads bounded OHLCV batches from the shared
-DuckDB broker, computes a historical-only relative-volume baseline, and converts
-each trading session's available one-minute bars into one variable-length daily
-price/relative-volume profile. The previous close is coordinate zero and every
-log-price bin is 10 basis points wide. Hourly states remain an explicit
-comparison mode only.
+DuckDB broker and converts each trading session's available one-minute bars into
+one variable-length daily log-price phase-space profile. The previous close is
+coordinate zero and every log-price bin is 10 basis points wide. Each price bin
+contains price occupancy, relative-volume mass, normalized relative-volume level,
+and conditional distributions of normalized price velocity and volume velocity.
+All scalers use only the symbol's preceding ten completed sessions. Relative
+volume divides minute volume by prior ten-day mean daily volume divided by 240.
+Hourly states remain an explicit comparison mode only.
 
 The model core now includes adjacent two/three-bin motif tokenization, causal
 Bayesian multi-head attention, a conditional ten-state latent transition filter,
@@ -51,7 +54,7 @@ states = PriceVolumeProfileBuilder(BNHMMConfig().profile).build(bars)
 ```python
 from bnhmm.model import BNHMMNetwork
 
-model = BNHMMNetwork(profile_bins=48)
+model = BNHMMNetwork()
 posterior = model.predict_posterior(profiles, timeframe_ids, mc_samples=16)
 ```
 

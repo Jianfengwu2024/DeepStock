@@ -12,13 +12,13 @@ from test_profile import synthetic_sessions
 
 class ProfileDatasetTests(unittest.TestCase):
     def test_daily_signals_execute_on_next_sessions_first_tradable_minute(self) -> None:
-        states = PriceVolumeProfileBuilder().build(synthetic_sessions(4))
+        states = PriceVolumeProfileBuilder().build(synthetic_sessions(13))
         observations = ProfileLabelBuilder(LabelConfig(forward_sessions=1)).build(states)
 
         self.assertEqual(len(observations), 2)
         self.assertEqual(len(observations.profiles), 2)
         self.assertEqual(len(observations.bin_coordinates), 2)
-        self.assertTrue(all(profile.shape[1] == 3 for profile in observations.profiles))
+        self.assertTrue(all(profile.shape[1] == 22 for profile in observations.profiles))
         self.assertTrue(
             all(
                 len(profile) == len(coordinates)
@@ -41,7 +41,7 @@ class ProfileDatasetTests(unittest.TestCase):
     def test_labels_use_state_end_price_and_future_session_close(self) -> None:
         states = PriceVolumeProfileBuilder(
             ProfileConfig(state_timeframes=("60m", "1d"))
-        ).build(synthetic_sessions(4))
+        ).build(synthetic_sessions(13))
         dates = sorted({state.period_start.astype("datetime64[D]") for state in states})
         closes = dict(zip(dates, (101.0, 97.0, 100.0), strict=True))
         states = [
@@ -65,7 +65,7 @@ class ProfileDatasetTests(unittest.TestCase):
     def test_temporal_split_purges_labels_crossing_cutoff(self) -> None:
         states = PriceVolumeProfileBuilder(
             ProfileConfig(state_timeframes=("60m", "1d"))
-        ).build(synthetic_sessions(5))
+        ).build(synthetic_sessions(14))
         observations = ProfileLabelBuilder().build(states)
         dates = np.unique(observations.signal_times.astype("datetime64[D]"))
 
@@ -79,7 +79,7 @@ class ProfileDatasetTests(unittest.TestCase):
     def test_sequence_windows_include_the_tail_once(self) -> None:
         states = PriceVolumeProfileBuilder(
             ProfileConfig(state_timeframes=("60m", "1d"))
-        ).build(synthetic_sessions(6))
+        ).build(synthetic_sessions(15))
         observations = ProfileLabelBuilder().build(states)
         windows = SequenceWindowBuilder(
             SequenceConfig(length=7, stride=5, minimum_length=4)

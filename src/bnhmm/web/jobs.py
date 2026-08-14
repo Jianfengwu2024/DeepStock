@@ -51,8 +51,13 @@ class WalkForwardJobRequest(BaseModel):
     max_folds: int | None = Field(None, ge=1, le=100)
     bin_width_bps: float = Field(10.0, gt=0.0, le=100.0)
     max_profile_bins: int = Field(512, ge=8, le=2048)
-    profile_protocol: Literal["variable-log-bins-v2", "legacy-fixed-bins"] = (
-        "variable-log-bins-v2"
+    normalization_lookback_sessions: int = Field(10, ge=2, le=120)
+    velocity_bins: int = Field(9, ge=3, le=31)
+    velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
+    profile_protocol: Literal[
+        "phase-space-log-v3", "variable-log-bins-v2", "legacy-fixed-bins"
+    ] = (
+        "phase-space-log-v3"
     )
     state_timeframe: Literal["daily", "mixed"] = "daily"
     sequence_length: int = Field(128, ge=8, le=2048)
@@ -102,6 +107,8 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("sequence_stride cannot exceed sequence_length")
         if self.d_model % self.heads:
             raise ValueError("d_model must be divisible by heads")
+        if self.velocity_bins % 2 == 0:
+            raise ValueError("velocity_bins must be odd")
         return self
 
 
@@ -199,6 +206,12 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.bin_width_bps),
         "--max-profile-bins",
         str(request.max_profile_bins),
+        "--normalization-lookback-sessions",
+        str(request.normalization_lookback_sessions),
+        "--velocity-bins",
+        str(request.velocity_bins),
+        "--velocity-clip",
+        str(request.velocity_clip),
         "--state-timeframe",
         request.state_timeframe,
         "--sequence-length",

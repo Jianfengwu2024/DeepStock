@@ -11,7 +11,11 @@ from numpy.typing import NDArray
 
 from ..config import ProfileConfig
 from ..types import BarBatch, ProfileState
-from .relative_volume import RelativeVolumeBaseline
+from .normalization import (
+    NormalizedSession,
+    PhaseSpaceNormalization,
+    RollingPhaseSpaceNormalizer,
+)
 
 
 _HOUR_BUCKETS = (
@@ -32,7 +36,7 @@ class PriceVolumeProfileBuilder:
 
     def __init__(self, config: ProfileConfig | None = None) -> None:
         self.config = config or ProfileConfig()
-        self.relative_volume = RelativeVolumeBaseline(self.config)
+        self.normalizer = RollingPhaseSpaceNormalizer(self.config)
         self._normalizers: dict[str, _NormalizerState] = defaultdict(
             lambda: _NormalizerState(previous_close=None)
         )
@@ -44,36 +48,50 @@ class PriceVolumeProfileBuilder:
         bars = self._continuous_session_bars(bars)
         if not len(bars):
             return []
-        relative = self.relative_volume.transform(bars)
         sessions = bars.timestamp.astype("datetime64[D]")
         states: list[ProfileState] = []
 
         for session in np.unique(sessions):
             day_indices = np.flatnonzero(sessions == session)
             day = bars.take(day_indices)
-            day_relative = relative[day_indices]
+            normalization_eligible = len(day) >= self.config.minimum_day_bars
             normalizer = self._normalizers[bars.symbol]
             if normalizer.previous_close is None:
                 normalizer.previous_close = float(day.close[-1])
+                if normalization_eligible:
+                    self.normalizer.update(day)
                 continue
             anchor = normalizer.previous_close
+            normalization = self.normalizer.snapshot(bars.symbol)
 
-            if "60m" in self.config.state_timeframes:
-                states.extend(self._build_hour_states(day, day_relative, anchor))
-            if "1d" in self.config.state_timeframes and len(day) >= self.config.minimum_day_bars:
-                session_date = day.timestamp[0].astype("datetime64[D]")
-                states.append(
-                    self._build_state(
-                        day,
-                        day_relative,
-                        "1d",
-                        session_date + np.timedelta64(9 * 60 + 30, "m"),
-                        session_date + np.timedelta64(15 * 60, "m"),
-                        anchor,
+            if normalization is not None:
+                normalized = self.normalizer.transform(day, normalization)
+                if "60m" in self.config.state_timeframes:
+                    states.extend(
+                        self._build_hour_states(
+                            day, normalized, normalization, anchor
+                        )
                     )
-                )
+                if (
+                    "1d" in self.config.state_timeframes
+                    and len(day) >= self.config.minimum_day_bars
+                ):
+                    session_date = day.timestamp[0].astype("datetime64[D]")
+                    states.append(
+                        self._build_state(
+                            day,
+                            normalized,
+                            normalization,
+                            "1d",
+                            session_date + np.timedelta64(9 * 60 + 30, "m"),
+                            session_date + np.timedelta64(15 * 60, "m"),
+                            anchor,
+                        )
+                    )
 
             normalizer.previous_close = float(day.close[-1])
+            if normalization_eligible:
+                self.normalizer.update(day)
 
         return states
 
@@ -88,7 +106,8 @@ class PriceVolumeProfileBuilder:
     def _build_hour_states(
         self,
         day: BarBatch,
-        relative: NDArray[np.float64],
+        normalized: NormalizedSession,
+        normalization: PhaseSpaceNormalization,
         anchor: float,
     ) -> list[ProfileState]:
         minute_slots = day.timestamp.astype("datetime64[m]").astype(np.int64) % (24 * 60)
@@ -105,7 +124,8 @@ class PriceVolumeProfileBuilder:
             result.append(
                 self._build_state(
                     day.take(indices),
-                    relative[indices],
+                    normalized.take(indices),
+                    normalization,
                     "60m",
                     start,
                     end,
@@ -117,7 +137,8 @@ class PriceVolumeProfileBuilder:
     def _build_state(
         self,
         bars: BarBatch,
-        relative: NDArray[np.float64],
+        normalized: NormalizedSession,
+        normalization: PhaseSpaceNormalization,
         timeframe: str,
         period_start: np.datetime64,
         period_end: np.datetime64,
@@ -142,10 +163,21 @@ class PriceVolumeProfileBuilder:
         edge_indices = np.arange(minimum_edge, maximum_edge + 1, dtype=np.float64)
         edges = edge_indices * log_bin_width
         bin_coordinates = edge_indices[:-1] + 0.5
+        normalized_bin_coordinates = np.clip(
+            bin_coordinates * log_bin_width / normalization.location_scale,
+            -self.config.feature_clip,
+            self.config.feature_clip,
+        ) / self.config.feature_clip
         profile_bins = len(bin_coordinates)
         price_histogram = np.zeros(profile_bins, dtype=np.float64)
         relative_volume_histogram = np.zeros(profile_bins, dtype=np.float64)
-        weights = np.maximum(relative, 0.0)
+        relative_level_sum = np.zeros(profile_bins, dtype=np.float64)
+        relative_level_count = np.zeros(profile_bins, dtype=np.float64)
+        price_velocity_histogram = np.zeros(
+            (profile_bins, self.config.velocity_bins), dtype=np.float64
+        )
+        volume_velocity_histogram = np.zeros_like(price_velocity_histogram)
+        weights = np.maximum(normalized.relative_volume, 0.0)
 
         for low, high, weight in zip(normalized_low, normalized_high, weights, strict=True):
             self._deposit(price_histogram, edges, float(low), float(high), 1.0)
@@ -158,6 +190,38 @@ class PriceVolumeProfileBuilder:
                 float(high),
                 float(weight),
             )
+
+        velocity_edges = np.linspace(
+            -self.config.velocity_clip,
+            self.config.velocity_clip,
+            self.config.velocity_bins + 1,
+        )
+        close_positions = np.log(bars.close / anchor)
+        for position, relative_level, price_velocity, volume_velocity in zip(
+            close_positions,
+            normalized.relative_volume_level,
+            normalized.price_velocity,
+            normalized.volume_velocity,
+            strict=True,
+        ):
+            price_index = self._bin_index(edges, float(position))
+            relative_level_sum[price_index] += float(relative_level)
+            relative_level_count[price_index] += 1.0
+            price_velocity_histogram[
+                price_index, self._bin_index(velocity_edges, float(price_velocity))
+            ] += 1.0
+            volume_velocity_histogram[
+                price_index, self._bin_index(velocity_edges, float(volume_velocity))
+            ] += 1.0
+
+        normalized_relative_volume_level = np.divide(
+            relative_level_sum,
+            relative_level_count,
+            out=np.zeros_like(relative_level_sum),
+            where=relative_level_count > 0,
+        ) / self.config.feature_clip
+        self._normalize_rows(price_velocity_histogram)
+        self._normalize_rows(volume_velocity_histogram)
 
         relative_volume_intensity = relative_volume_histogram / max(len(bars), 1)
         self._normalize(price_histogram)
@@ -177,11 +241,24 @@ class PriceVolumeProfileBuilder:
             log_bin_width=log_bin_width,
             price_edges=edges,
             bin_coordinates=bin_coordinates,
+            normalized_bin_coordinates=normalized_bin_coordinates,
             price_distribution=price_histogram,
             distribution=relative_volume_histogram,
             relative_volume_intensity=relative_volume_intensity,
+            normalized_relative_volume_level=normalized_relative_volume_level,
+            price_velocity_distribution=price_velocity_histogram,
+            volume_velocity_distribution=volume_velocity_histogram,
             adjacent_pairs=sliding_window_view(relative_volume_histogram, 2).copy(),
             adjacent_triples=sliding_window_view(relative_volume_histogram, 3).copy(),
+            normalization_sessions=normalization.sessions,
+            average_minute_volume=normalization.average_minute_volume,
+            location_scale=normalization.location_scale,
+            price_velocity_mean=normalization.price_velocity_mean,
+            price_velocity_scale=normalization.price_velocity_scale,
+            relative_volume_mean=normalization.relative_volume_mean,
+            relative_volume_scale=normalization.relative_volume_scale,
+            volume_velocity_mean=normalization.volume_velocity_mean,
+            volume_velocity_scale=normalization.volume_velocity_scale,
             total_raw_volume=float(bars.volume.sum()),
             total_relative_volume=float(weights.sum()),
             bar_count=len(bars),
@@ -194,6 +271,21 @@ class PriceVolumeProfileBuilder:
             histogram.fill(1.0 / len(histogram))
         else:
             histogram /= total
+
+    @staticmethod
+    def _normalize_rows(histogram: NDArray[np.float64]) -> None:
+        totals = histogram.sum(axis=1, keepdims=True)
+        np.divide(histogram, totals, out=histogram, where=totals > 0)
+
+    @staticmethod
+    def _bin_index(edges: NDArray[np.float64], value: float) -> int:
+        return int(
+            np.clip(
+                np.searchsorted(edges, value, side="right") - 1,
+                0,
+                len(edges) - 2,
+            )
+        )
 
     @staticmethod
     def _deposit(

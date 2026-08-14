@@ -109,11 +109,24 @@ class ProfileState:
     log_bin_width: float
     price_edges: FloatArray
     bin_coordinates: FloatArray
+    normalized_bin_coordinates: FloatArray
     price_distribution: FloatArray
     distribution: FloatArray
     relative_volume_intensity: FloatArray
+    normalized_relative_volume_level: FloatArray
+    price_velocity_distribution: FloatArray
+    volume_velocity_distribution: FloatArray
     adjacent_pairs: FloatArray
     adjacent_triples: FloatArray
+    normalization_sessions: int
+    average_minute_volume: float
+    location_scale: float
+    price_velocity_mean: float
+    price_velocity_scale: float
+    relative_volume_mean: float
+    relative_volume_scale: float
+    volume_velocity_mean: float
+    volume_velocity_scale: float
     total_raw_volume: float
     total_relative_volume: float
     bar_count: int
@@ -126,10 +139,21 @@ class ProfileState:
             raise ValueError("price_edges must have one more element than distribution")
         if self.bin_coordinates.shape != self.distribution.shape:
             raise ValueError("bin coordinates must align with profile distributions")
+        if self.normalized_bin_coordinates.shape != self.distribution.shape:
+            raise ValueError("normalized coordinates must align with profile distributions")
         if self.price_distribution.shape != self.distribution.shape:
             raise ValueError("price and relative-volume distributions must align")
         if self.relative_volume_intensity.shape != self.distribution.shape:
             raise ValueError("relative-volume intensity must align with distributions")
+        if self.normalized_relative_volume_level.shape != self.distribution.shape:
+            raise ValueError("relative-volume levels must align with distributions")
+        if (
+            self.price_velocity_distribution.ndim != 2
+            or self.price_velocity_distribution.shape[0] != len(self.distribution)
+            or self.volume_velocity_distribution.shape
+            != self.price_velocity_distribution.shape
+        ):
+            raise ValueError("conditional velocity distributions must align with price bins")
         if len(self.distribution) < 3:
             raise ValueError("profile states require at least three bins")
         if self.adjacent_pairs.shape != (len(self.distribution) - 1, 2):
@@ -142,6 +166,25 @@ class ProfileState:
             raise ValueError("price distribution must sum to one")
         if self.log_bin_width <= 0 or np.any(~np.isfinite(self.bin_coordinates)):
             raise ValueError("profile coordinates and bin width must be finite")
+        phase_arrays = (
+            self.normalized_bin_coordinates,
+            self.normalized_relative_volume_level,
+            self.price_velocity_distribution,
+            self.volume_velocity_distribution,
+        )
+        if any(np.any(~np.isfinite(item)) for item in phase_arrays):
+            raise ValueError("phase-space arrays must be finite")
+        scales = (
+            self.average_minute_volume,
+            self.location_scale,
+            self.price_velocity_scale,
+            self.relative_volume_scale,
+            self.volume_velocity_scale,
+        )
+        if self.normalization_sessions < 1 or any(
+            not np.isfinite(item) or item <= 0 for item in scales
+        ):
+            raise ValueError("normalization metadata must be positive and finite")
         if self.period_end <= self.period_start:
             raise ValueError("profile period must have positive duration")
         if not self.period_start < self.first_bar_time <= self.period_end:

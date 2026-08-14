@@ -128,17 +128,7 @@ class ProfileLabelBuilder:
             raise ValueError("profile states do not contain enough future sessions")
         return ProfileObservations(
             symbol=symbol,
-            profiles=tuple(
-                np.stack(
-                    (
-                        row[0].price_distribution,
-                        row[0].distribution,
-                        np.log1p(row[0].relative_volume_intensity),
-                    ),
-                    axis=-1,
-                ).astype(np.float32)
-                for row in rows
-            ),
+            profiles=tuple(self._profile_channels(row[0]) for row in rows),
             bin_coordinates=tuple(
                 row[0].bin_coordinates.astype(np.float32) for row in rows
             ),
@@ -164,21 +154,60 @@ class ProfileLabelBuilder:
         )
 
     @staticmethod
+    def _profile_channels(state: ProfileState) -> NDArray[np.float32]:
+        return np.concatenate(
+            (
+                state.price_distribution[:, None],
+                state.distribution[:, None],
+                state.normalized_relative_volume_level[:, None],
+                state.normalized_bin_coordinates[:, None],
+                state.price_velocity_distribution,
+                state.volume_velocity_distribution,
+            ),
+            axis=1,
+        ).astype(np.float32)
+
+    @staticmethod
     def _state_features(state: ProfileState) -> NDArray[np.float32]:
         relative_volume_mean = state.total_relative_volume / max(state.bar_count, 1)
 
-        def scaled_log(numerator: float, denominator: float, scale: float) -> float:
-            return float(np.clip(np.log(numerator / denominator) / scale, -4.0, 4.0))
+        def scaled_log(numerator: float, denominator: float) -> float:
+            return float(
+                np.clip(
+                    np.log(numerator / denominator) / state.location_scale,
+                    -4.0,
+                    4.0,
+                )
+            )
+
+        normalized_relative_volume = float(
+            np.clip(
+                (
+                    np.log1p(max(relative_volume_mean, 0.0))
+                    - state.relative_volume_mean
+                )
+                / state.relative_volume_scale,
+                -4.0,
+                4.0,
+            )
+        )
 
         return np.asarray(
             (
-                scaled_log(state.start_price, state.anchor_price, 0.05),
-                scaled_log(state.end_price, state.anchor_price, 0.05),
-                scaled_log(state.end_price, state.start_price, 0.05),
-                scaled_log(state.high_price, state.anchor_price, 0.05),
-                scaled_log(state.low_price, state.anchor_price, 0.05),
-                float(np.clip((state.high_price - state.low_price) / state.anchor_price / 0.1, 0.0, 4.0)),
-                float(np.clip(np.log(max(relative_volume_mean, 1e-6)), -3.0, 3.0)),
+                scaled_log(state.start_price, state.anchor_price),
+                scaled_log(state.end_price, state.anchor_price),
+                scaled_log(state.end_price, state.start_price),
+                scaled_log(state.high_price, state.anchor_price),
+                scaled_log(state.low_price, state.anchor_price),
+                float(
+                    np.clip(
+                        np.log(state.high_price / state.low_price)
+                        / state.location_scale,
+                        0.0,
+                        4.0,
+                    )
+                ),
+                normalized_relative_volume,
                 float(np.clip(state.bar_count / 240.0, 0.0, 1.0)),
                 float(state.profile_clipped),
             ),
