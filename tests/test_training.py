@@ -38,7 +38,7 @@ def sequence(seed: int, length: int = 8, bins: int = 16) -> ProfileSequence:
         bin_coordinates=tuple(coordinates),
         state_features=state_features,
         timeframe_ids=np.arange(length, dtype=np.int64) % 2,
-        targets=random.integers(0, 3, length, dtype=np.int64),
+        targets=random.integers(0, 4, length, dtype=np.int64),
         signal_times=signal_times.astype("datetime64[ns]"),
         execution_times=(signal_times + np.timedelta64(1, "h")).astype("datetime64[ns]"),
         target_times=(signal_times + np.timedelta64(1, "D")).astype("datetime64[ns]"),
@@ -50,7 +50,7 @@ def sequence(seed: int, length: int = 8, bins: int = 16) -> ProfileSequence:
 def learnable_sequence(
     symbol: str, length: int = 25, target_offset: int = 0
 ) -> ProfileSequence:
-    targets = (np.arange(length, dtype=np.int64) + target_offset) % 3
+    targets = (np.arange(length, dtype=np.int64) + target_offset) % 4
     profiles: list[np.ndarray] = []
     coordinates: list[np.ndarray] = []
     state_features = np.zeros((length, 9), dtype=np.float32)
@@ -81,7 +81,7 @@ def learnable_sequence(
             "datetime64[ns]"
         ),
         entry_prices=np.ones(length),
-        forward_returns=np.asarray((-0.01, 0.0, 0.01))[targets],
+        forward_returns=np.asarray((-0.03, -0.005, 0.005, 0.03))[targets],
     )
 
 
@@ -223,10 +223,10 @@ class TrainerTests(unittest.TestCase):
         self.assertTrue(batch["target_mask"][0, 7])
         self.assertTrue(batch["target_mask"][1, 4])
 
-    def test_clear_three_state_patterns_can_be_overfit(self) -> None:
+    def test_clear_four_state_patterns_can_be_overfit(self) -> None:
         sequences = [
-            learnable_sequence(str(index), target_offset=index % 3)
-            for index in range(12)
+            learnable_sequence(str(index), target_offset=index % 4)
+            for index in range(16)
         ]
         model = ModelConfig(
             max_profile_bins=32,
@@ -242,7 +242,7 @@ class TrainerTests(unittest.TestCase):
             model,
             TrainerConfig(
                 epochs=200,
-                batch_size=12,
+                batch_size=16,
                 learning_rate=0.003,
                 weight_decay=0.0,
                 kl_weight=0.0,

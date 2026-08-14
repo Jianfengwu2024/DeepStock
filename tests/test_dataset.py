@@ -67,8 +67,8 @@ class ProfileDatasetTests(unittest.TestCase):
         observations = ProfileLabelBuilder(LabelConfig(forward_sessions=1)).build(states)
 
         self.assertEqual(len(observations), 10)
-        np.testing.assert_array_equal(observations.targets[:5], [0, 0, 0, 1, 1])
-        np.testing.assert_array_equal(observations.targets[5:], [2, 2, 2, 1, 1])
+        np.testing.assert_array_equal(observations.targets[:5], [0, 0, 0, 2, 2])
+        np.testing.assert_array_equal(observations.targets[5:], [3, 3, 3, 2, 2])
         self.assertTrue(
             np.all(observations.execution_times > observations.signal_times)
         )

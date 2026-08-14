@@ -57,7 +57,7 @@ class BNHMMNetworkTests(unittest.TestCase):
                 output.latent_probabilities.sum(dim=-1), torch.ones(2, 6), atol=1e-5
             )
         )
-        targets = torch.randint(0, 3, (2, 6))
+        targets = torch.randint(0, 4, (2, 6))
         returns = torch.randn(2, 6) * 0.01
         loss = return_distribution_loss(output, returns, targets)
         loss.total.backward()
@@ -84,9 +84,9 @@ class BNHMMNetworkTests(unittest.TestCase):
         )
         self.assertTrue(torch.all(posterior.aleatoric_variance >= 0))
         self.assertTrue(torch.all(posterior.epistemic_variance >= 0))
-        self.assertTrue(torch.all(posterior.expected_score <= 1.0))
-        self.assertTrue(torch.all(posterior.expected_score >= -1.0))
-        self.assertEqual(self.model.regime_scores.tolist(), [-1.0, 0.0, 1.0])
+        self.assertTrue(torch.all(posterior.expected_score <= 2.0))
+        self.assertTrue(torch.all(posterior.expected_score >= -2.0))
+        self.assertEqual(self.model.regime_scores.tolist(), [-2.0, -1.0, 1.0, 2.0])
 
     def test_low_rank_transition_dimensions_match_configuration(self) -> None:
         self.assertEqual(self.model.transition_rank, 4)
@@ -130,8 +130,9 @@ class BNHMMNetworkTests(unittest.TestCase):
         )
 
         self.assertTrue(torch.allclose(probability.sum(dim=-1), torch.ones(1)))
-        self.assertTrue(torch.allclose(probability[:, 0], probability[:, 2]))
-        self.assertEqual(int(probability.argmax(dim=-1)), 1)
+        self.assertTrue(torch.allclose(probability[:, 0], probability[:, 3]))
+        self.assertTrue(torch.allclose(probability[:, 1], probability[:, 2]))
+        self.assertIn(int(probability.argmax(dim=-1)), (1, 2))
 
     def test_continuous_head_starts_centered_with_low_sampling_noise(self) -> None:
         self.assertTrue(torch.equal(

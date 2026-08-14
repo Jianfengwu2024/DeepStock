@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BNHMM Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.9.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.10.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.9.0" defer></script>
+  <script src="/static/app.js?v=0.10.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -96,14 +96,14 @@
             <div class="fixed-spec"><span>多日记忆</span><strong id="memory-length-spec">最近 5 个交易日</strong></div>
             <div class="fixed-spec"><span>预测目标</span><strong>下一交易日</strong></div>
             <div class="fixed-spec"><span>窗口更新</span><strong>每个交易日滚动 1 日</strong></div>
-            <div class="fixed-spec"><span>输出状态</span><strong>收益后验派生空 / 平 / 多</strong></div>
-            <div class="fixed-spec"><span>平状态区间</span><strong id="flat-threshold-spec">-0.50% ～ +0.50%</strong></div>
+            <div class="fixed-spec"><span>输出状态</span><strong>强空 / 弱空 / 弱多 / 强多</strong></div>
+            <div class="fixed-spec"><span>强弱分界</span><strong id="strong-threshold-spec">-1.50% / 0 / +1.50%</strong></div>
             <div class="fixed-spec"><span>收益后验</span><strong>Student-t（df=4）</strong></div>
             <div class="fixed-spec"><span>特征骨干</span><strong>确定性 Transformer</strong></div>
             <div class="fixed-spec"><span>贝叶斯部分</span><strong>发射、转移、直接收益后验头</strong></div>
           </div>
           <div class="parameter-group-title">输出定义</div>
-          <label>平状态范围（±%）<input name="flat_threshold_percent" type="number" min="0.01" max="10" step="0.01"></label>
+          <label>强弱状态分界（±%）<input name="strong_threshold_percent" type="number" min="0.01" max="10" step="0.01"></label>
           <div class="parameter-group-title">近期记忆</div>
           <label>多日记忆长度（2–20 个交易日）<input name="sequence_length" type="number" min="2" max="20"></label>
           <div class="parameter-group-title">网络结构</div>
@@ -126,7 +126,7 @@
             <label>认知不确定性惩罚<input name="uncertainty_aversion" type="number" min="0" step="0.1"></label>
             <label>交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
           </div>
-          <div class="device-note">看多开仓或持有，看平保持原仓位，看空平仓；策略不做空。</div>
+          <div class="device-note">弱多半仓、强多满仓；弱空或强空平仓，策略不做空。</div>
         </details>
 
         <div class="form-actions">

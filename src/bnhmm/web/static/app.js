@@ -11,7 +11,7 @@ const state = {
 };
 
 const numberFields = new Set([
-  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions", "flat_threshold_percent",
+  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions", "strong_threshold_percent",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
   "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
   "minimum_sequence_length", "d_model", "latent_states", "transition_rank", "motif_dim", "heads", "layers",
@@ -60,7 +60,7 @@ function syncModelConstraints() {
   const latentField = document.querySelector("[name=latent_states]");
   const transitionRankField = document.querySelector("[name=transition_rank]");
   const sequenceLengthField = document.querySelector("[name=sequence_length]");
-  const flatThresholdField = document.querySelector("[name=flat_threshold_percent]");
+  const strongThresholdField = document.querySelector("[name=strong_threshold_percent]");
   const widthField = document.querySelector("[name=d_model]");
   const headsField = document.querySelector("[name=heads]");
   const velocityBins = Number(velocityField.value || 3);
@@ -83,10 +83,10 @@ function syncModelConstraints() {
   const memorySpec = document.querySelector("#memory-length-spec");
   if (memorySpec) memorySpec.textContent = `最近 ${memoryLength} 个交易日`;
 
-  const flatThreshold = Number(flatThresholdField.value || 0.5);
-  const flatSpec = document.querySelector("#flat-threshold-spec");
-  if (flatSpec) {
-    flatSpec.textContent = `-${flatThreshold.toFixed(2)}% ～ +${flatThreshold.toFixed(2)}%`;
+  const strongThreshold = Number(strongThresholdField.value || 1.5);
+  const strongSpec = document.querySelector("#strong-threshold-spec");
+  if (strongSpec) {
+    strongSpec.textContent = `-${strongThreshold.toFixed(2)}% / 0 / +${strongThreshold.toFixed(2)}%`;
   }
 
   const width = Number(widthField.value);
@@ -272,12 +272,18 @@ function renderJob(job) {
     "legacy-entangled": "旧混合特征",
   })[job.request.feature_mode] || "旧混合特征";
   const outputMode = job.request.profile_protocol === "phase-space-joint-return-v6"
-    ? "连续收益后验 → 空/平/多"
+    ? ((job.summary?.class_support?.length ?? 4) === 3
+      ? "连续收益后验 → 空/平/多（旧）"
+      : "连续收益后验 → 强空/弱空/弱多/强多")
     : "旧三分类证据头";
   const outputHead = job.summary?.model_config?.output_hidden_states
     ? `${job.summary.model_config.output_hidden_states} 隐藏节点（旧）`
     : "直接收益后验头";
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → ${outputHead} · ${outputMode} · 平状态 ±${Number(job.request.flat_threshold_percent ?? 0.5).toFixed(2)}% · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  const thresholds = job.summary?.regime_protocol?.thresholds || [];
+  const thresholdText = thresholds.length === 2
+    ? `平状态 ${formatPercent(Math.abs(Number(thresholds[1])))}`
+    : `强弱分界 ±${Number(job.request.strong_threshold_percent ?? 1.5).toFixed(2)}%`;
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → ${outputHead} · ${outputMode} · ${thresholdText} · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
@@ -444,17 +450,28 @@ function renderInsight(summary) {
   const brier = Number(summary.brier_score);
   const logLoss = Number(summary.log_loss);
   const baseline = classificationBaseline(summary);
+  const majority = Number(summary.majority_baseline);
+  const balanced = Number(summary.balanced_accuracy);
+  const comparisons = summary.baselines || {};
+  const priorBrier = Number(comparisons.class_prior_brier);
+  const priorLogLoss = Number(comparisons.class_prior_log_loss);
+  const correlation = Number(summary.return_residual?.correlation);
   let level = "weak";
   let title = "只有微弱信号，暂不足以用于实盘";
-  let detail = `${baseline.label}分类随机命中率是 ${formatPercent(baseline.accuracy)}。本次命中率 ${formatPercent(accuracy)}，虽略高于随机，但概率误差仍较大。`;
-  if (brier >= baseline.brier - 0.01 || logLoss >= baseline.logLoss - 0.02 || accuracy <= baseline.accuracy + 0.01) {
+  let detail = `命中率必须超过多数类基线，均衡命中率必须显著超过 ${formatPercent(baseline.accuracy)}，才能说明模型具有分类能力。`;
+  if (accuracy <= majority || balanced <= baseline.accuracy + 0.01 || correlation <= 0) {
     level = "poor";
-    title = "模型输出接近随机猜测";
-    detail = `${baseline.label}分类随机基准为：命中率 ${formatPercent(baseline.accuracy)}、Brier 约 ${formatNumber(baseline.brier, 2)}、Log Loss 约 ${formatNumber(baseline.logLoss, 2)}。本次结果与随机基准非常接近，当前模型尚未学到稳定规律。`;
-  } else if (accuracy >= baseline.accuracy + 0.08 && brier <= baseline.brier - 0.06 && logLoss <= baseline.logLoss - 0.10) {
+    title = accuracy <= majority ? "模型未超过多数类基线" : "模型没有稳定的方向区分能力";
+    detail = `本次命中率 ${formatPercent(accuracy)}，多数类基线 ${formatPercent(majority)}，均衡命中率 ${formatPercent(balanced)}，收益相关性 ${formatNumber(correlation, 4)}。较高的普通命中率可能只是类别不均衡造成的。`;
+  } else if (
+    accuracy >= majority + 0.03
+    && balanced >= baseline.accuracy + 0.05
+    && Number.isFinite(priorBrier) && brier <= priorBrier - 0.02
+    && Number.isFinite(priorLogLoss) && logLoss <= priorLogLoss - 0.03
+  ) {
     level = "promising";
     title = "模型出现初步区分能力，仍需扩大样本验证";
-    detail = `本次三个分类指标均明显优于随机基准，但仍需更多标的独立模型和更多滚动窗口确认稳定性。`;
+    detail = `命中率和均衡命中率均超过基线，概率误差也优于按真实类别比例预测的基线，但仍需更多标的和滚动窗口确认稳定性。`;
   }
   const gate = summary.validation_gate;
   if (gate && !gate.passed) {
@@ -498,9 +515,9 @@ function renderMetrics(summary) {
     ["均衡命中率", formatPercent(summary.balanced_accuracy), `${baseline.label}种状态分别计算召回率后取平均`],
     ["多数类基线", formatPercent(summary.majority_baseline), "始终猜样本最多状态的命中率"],
     ["状态持续基线", comparisons.persistence_accuracy == null ? "—" : formatPercent(comparisons.persistence_accuracy), "直接沿用上一交易日状态"],
-    ["状态反转基线", comparisons.reversal_accuracy == null ? "—" : formatPercent(comparisons.reversal_accuracy), "多空反转、平保持不变"],
-    ["概率误差 Brier", formatNumber(summary.brier_score, 4), `0 最好，随机约 ${formatNumber(baseline.brier, 2)}`],
-    ["概率损失 Log Loss", formatNumber(summary.log_loss, 4), `0 最好，随机约 ${formatNumber(baseline.logLoss, 2)}`],
+    ["状态反转基线", comparisons.reversal_accuracy == null ? "—" : formatPercent(comparisons.reversal_accuracy), "强空↔强多、弱空↔弱多"],
+    ["概率误差 Brier", formatNumber(summary.brier_score, 4), `类别比例基线 ${formatNumber(comparisons.class_prior_brier, 4)}`],
+    ["概率损失 Log Loss", formatNumber(summary.log_loss, 4), `类别比例基线 ${formatNumber(comparisons.class_prior_log_loss, 4)}`],
     ["有序概率误差 RPS", formatNumber(summary.ranked_probability_score, 4), "越低越好，距离更远的错判惩罚更大"],
     ["收益相关性", formatNumber(summary.return_residual?.correlation, 4), "预测收益与实际收益的样本外相关性"],
     ["收益 RMSE", formatPercent(summary.return_residual?.rmse), `零收益基线 ${formatPercent(comparisons.zero_return_rmse)}`],

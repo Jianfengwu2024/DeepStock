@@ -1,10 +1,10 @@
 # Bayesian Model Core
 
-The default padded input tensor has shape `[batch, sequence, bins, 14]`, where
+The default padded input tensor has shape `[batch, sequence, bins, 13]`, where
 `bins` varies by batch. Four scalar channels contain price occupancy,
 relative-volume shape, normalized relative-volume level, and normalized log-price
-location. Five channels encode the normalized price-velocity joint distribution
-and five encode the normalized volume-velocity joint distribution. Each velocity
+location. Nine channels encode the normalized 3-by-3 joint price/volume velocity
+distribution. Each velocity
 row receives additive smoothing and is multiplied by its share of the session's
 samples. A one-observation row therefore has little mass instead of looking as
 confident as a densely observed row. The relative-volume level is also shrunk by
@@ -32,18 +32,18 @@ Fifty unnamed latent probabilities are filtered sequentially by default using a
 Bayesian base transition matrix plus a context-dependent transition delta. The
 filtered latent state feeds directly into a Bayesian Student-t return posterior.
 The hidden-state count is configurable but cannot fall below the profile channel
-count. A configurable symmetric threshold (0.5% by default) separates bearish,
-flat, and bullish forward returns.
+count. Configurable symmetric thresholds (1.5% by default) separate strong from
+weak returns, while zero separates bearish from bullish returns.
 
 Monte Carlo prediction returns:
 
-- three-state posterior probability means;
+- four-state posterior probability means;
 - aleatoric Dirichlet variance;
 - epistemic variance across sampled weights;
 - total variance;
 - 50 latent-state posterior probabilities by default;
-- expected regime score in `[-1, 1]`.
+- expected regime score in `[-2, 2]`.
 
 These outputs are model indicators. Position sizing remains in a separate long-only
-policy layer: bull opens or maintains a long, flat preserves the prior position,
-and bear closes it. It must not be embedded in model training.
+policy layer: weak-bull targets half size, strong-bull targets full size, and
+either bearish state closes the position. It must not be embedded in model training.

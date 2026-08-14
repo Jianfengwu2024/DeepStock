@@ -17,12 +17,12 @@
    Every symbol owns a complete model instance; Transformer weights, hidden-state
    transitions, evidence heads, and return moments are never shared across symbols.
 4. The filtered latent state feeds directly into a Bayesian Student-t return
-   posterior. Bearish, flat, and bullish probabilities are derived from that
-   posterior, including aleatoric and epistemic uncertainty. Flat uses a
-   configurable symmetric forward-return threshold with a default half-width
-   of 0.5%.
-5. The long-only policy layer opens on bullish, keeps the previous position on flat,
-   and closes on bearish independently of the model.
+   posterior. Strong-bear, weak-bear, weak-bull, and strong-bull probabilities
+   are derived from that posterior, including aleatoric and epistemic
+   uncertainty. Configurable symmetric thresholds separate strong from weak
+   returns; zero separates bearish from bullish.
+5. The long-only policy targets half size on weak-bull, full size on strong-bull,
+   and closes on either bearish state independently of the model.
 6. Walk-forward evaluation publishes only point-in-time-correct predictions.
    Each model is trained on one symbol's past and tested only on that same
    symbol's future. Multi-symbol runs are orchestration and portfolio aggregation.

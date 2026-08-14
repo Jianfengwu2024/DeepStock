@@ -95,11 +95,11 @@ def _train(args: argparse.Namespace) -> int:
     source = DuckDBBarSource(args.duckdb_path)
     bars = source.fetch(args.symbol, "1m", args.start, args.end)
     states = PriceVolumeProfileBuilder(profile_config).build(bars)
-    flat_threshold = args.flat_threshold_percent / 100.0
+    strong_threshold = args.strong_threshold_percent / 100.0
     label_config = LabelConfig(
         forward_sessions=args.forward_sessions,
-        bear_threshold=-flat_threshold,
-        bull_threshold=flat_threshold,
+        strong_bear_threshold=-strong_threshold,
+        strong_bull_threshold=strong_threshold,
     )
     observations = ProfileLabelBuilder(label_config).build(states)
     sessions = np.unique(observations.signal_times.astype("datetime64[D]"))
@@ -119,8 +119,9 @@ def _train(args: argparse.Namespace) -> int:
         profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
         transition_rank=args.transition_rank,
-        bear_threshold=label_config.bear_threshold,
-        bull_threshold=label_config.bull_threshold,
+        strong_bear_threshold=label_config.strong_bear_threshold,
+        direction_threshold=label_config.direction_threshold,
+        strong_bull_threshold=label_config.strong_bull_threshold,
         feature_mode=args.feature_mode,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
@@ -273,11 +274,11 @@ def _walk_forward(args: argparse.Namespace) -> int:
         velocity_clip=args.velocity_clip,
         velocity_smoothing=args.velocity_smoothing,
     )
-    flat_threshold = args.flat_threshold_percent / 100.0
+    strong_threshold = args.strong_threshold_percent / 100.0
     label_config = LabelConfig(
         forward_sessions=args.forward_sessions,
-        bear_threshold=-flat_threshold,
-        bull_threshold=flat_threshold,
+        strong_bear_threshold=-strong_threshold,
+        strong_bull_threshold=strong_threshold,
     )
     for symbol in symbols:
         bars = source.fetch(symbol, "1m", args.start, args.end)
@@ -306,8 +307,9 @@ def _walk_forward(args: argparse.Namespace) -> int:
         profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
         transition_rank=args.transition_rank,
-        bear_threshold=label_config.bear_threshold,
-        bull_threshold=label_config.bull_threshold,
+        strong_bear_threshold=label_config.strong_bear_threshold,
+        direction_threshold=label_config.direction_threshold,
+        strong_bull_threshold=label_config.strong_bull_threshold,
         feature_mode=args.feature_mode,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
@@ -431,6 +433,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "brier_score": report["brier_score"],
         "log_loss": report["log_loss"],
         "ranked_probability_score": report["ranked_probability_score"],
+        "baselines": report["baselines"],
+        "validation_gate": report["validation_gate"],
         "return_residual": report["return_residual"],
         "standardized_residual": report["standardized_residual"],
         "backtest": {
@@ -486,7 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--deterministic-training", action="store_true")
     train.add_argument("--train-fraction", type=float, default=0.8)
     train.add_argument("--forward-sessions", type=int, default=1)
-    train.add_argument("--flat-threshold-percent", type=float, default=0.5)
+    train.add_argument("--strong-threshold-percent", type=float, default=1.5)
     train.add_argument("--bin-width-bps", type=float, default=10.0)
     train.add_argument("--max-profile-bins", type=int, default=512)
     train.add_argument("--normalization-lookback-sessions", type=int, default=10)
@@ -536,7 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     walk.add_argument("--deterministic-training", action="store_true")
     walk.add_argument("--forward-sessions", type=int, default=1)
-    walk.add_argument("--flat-threshold-percent", type=float, default=0.5)
+    walk.add_argument("--strong-threshold-percent", type=float, default=1.5)
     walk.add_argument("--minimum-train-sessions", type=int, default=252)
     walk.add_argument("--tuning-sessions", type=int, default=60)
     walk.add_argument("--test-sessions", type=int, default=60)

@@ -16,13 +16,16 @@ from bnhmm import (
 
 
 class ConfigTests(unittest.TestCase):
-    def test_model_defaults_to_fifty_hidden_states_and_three_outputs(self) -> None:
+    def test_model_defaults_to_fifty_hidden_states_and_four_outputs(self) -> None:
         config = BNHMMConfig()
         self.assertEqual(config.latent_states, 50)
-        self.assertEqual(len(config.output_states), 3)
-        self.assertEqual(REGIME_NAMES, ("bear", "flat", "bull"))
+        self.assertEqual(len(config.output_states), 4)
         self.assertEqual(
-            REGIME_PROTOCOL, "continuous-return-posterior-v2"
+            REGIME_NAMES,
+            ("strong_bear", "weak_bear", "weak_bull", "strong_bull"),
+        )
+        self.assertEqual(
+            REGIME_PROTOCOL, "continuous-return-posterior-v3"
         )
         with self.assertRaises(ValueError):
             BNHMMConfig(latent_states=PROFILE_CHANNELS - 1)
@@ -54,8 +57,8 @@ class ConfigTests(unittest.TestCase):
 
     def test_label_thresholds_must_be_ordered(self) -> None:
         with self.assertRaises(ValueError):
-            LabelConfig(bear_threshold=0.01, bull_threshold=0.005)
-        self.assertEqual(LabelConfig().thresholds, (-0.005, 0.005))
+            LabelConfig(strong_bear_threshold=0.01, strong_bull_threshold=0.005)
+        self.assertEqual(LabelConfig().thresholds, (-0.015, 0.0, 0.015))
 
     def test_sequence_defaults_to_five_recent_trading_days(self) -> None:
         config = SequenceConfig()

@@ -33,9 +33,10 @@ feeds directly into a Bayesian continuous future-return head. The hidden-state
 count defaults to 50 and cannot be smaller than the input channel count.
 
 Training uses a robust Student-t return likelihood with four degrees of freedom.
-Bearish, flat, and bullish probabilities are derived from the same Student-t
-posterior using its exact CDF at configurable symmetric return thresholds
-(0.5% by default); they are not trained as a direct three-class head.
+Strong-bear, weak-bear, weak-bull, and strong-bull probabilities are derived
+from the same Student-t posterior using its exact CDF at zero and configurable
+symmetric strength thresholds (1.5% by default); they are not trained as a
+direct classification head.
 `predict_posterior()` uses Monte Carlo weight sampling to report expected return,
 predictive variance, and separate aleatoric and epistemic uncertainty.
 
@@ -124,7 +125,7 @@ python -m bnhmm.cli walk-forward \
   --device cuda:0 --state-timeframe daily
 ```
 
-Reports include out-of-sample bearish/flat/bullish predictions, Brier score, log loss,
+Reports include out-of-sample four-directional predictions, Brier score, log loss,
 calibration, probability/return/standardized residuals, residual
 autocorrelation, posterior predictive checks, and policy equity/drawdown. The
 report also compares the model with majority-class, prior-state persistence,
@@ -132,9 +133,9 @@ state reversal, zero-return, and prior-return baselines. A model remains marked
 `research-only` unless it beats the majority and zero-return baselines, has
 positive return correlation, exceeds random balanced accuracy, and contains at
 least 200 out-of-sample observations. The
-policy is a separate consumer of the model posterior. It opens or holds a long
-position on bullish signals, preserves the prior position on flat signals, and
-closes on bearish signals; it never opens short positions. Only epistemic model
+policy is a separate consumer of the model posterior. It targets half size on
+weak-bull and full size on strong-bull signals, and closes on either bearish
+signal; it never opens short positions. Only epistemic model
 uncertainty reduces position confidence; irreducible aleatoric class overlap
 remains a reported risk diagnostic. Completed daily signals
 execute at the first continuous-trading bar of the next session.

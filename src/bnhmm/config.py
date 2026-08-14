@@ -7,16 +7,17 @@ from enum import IntEnum
 
 
 class RegimeState(IntEnum):
-    BEAR = -1
-    FLAT = 0
-    BULL = 1
+    STRONG_BEAR = -2
+    WEAK_BEAR = -1
+    WEAK_BULL = 1
+    STRONG_BULL = 2
 
 
 REGIME_STATES = tuple(RegimeState)
 REGIME_COUNT = len(REGIME_STATES)
 REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
-REGIME_PROTOCOL = "continuous-return-posterior-v2"
+REGIME_PROTOCOL = "continuous-return-posterior-v3"
 PROFILE_PROTOCOL = "phase-space-joint-return-v6"
 SEQUENCE_PROTOCOL = "fixed-recent-endpoint-v1"
 DEFAULT_VELOCITY_BINS = 3
@@ -77,11 +78,12 @@ class ProfileConfig:
 
 @dataclass(frozen=True, slots=True)
 class LabelConfig:
-    """Forward-return definition for bearish, flat, and bullish regimes."""
+    """Forward-return definition for four directional regimes."""
 
     forward_sessions: int = 1
-    bear_threshold: float = -0.005
-    bull_threshold: float = 0.005
+    strong_bear_threshold: float = -0.015
+    direction_threshold: float = 0.0
+    strong_bull_threshold: float = 0.015
 
     def __post_init__(self) -> None:
         if self.forward_sessions < 1:
@@ -91,8 +93,12 @@ class LabelConfig:
             raise ValueError("regime thresholds must be strictly increasing")
 
     @property
-    def thresholds(self) -> tuple[float, float]:
-        return (self.bear_threshold, self.bull_threshold)
+    def thresholds(self) -> tuple[float, float, float]:
+        return (
+            self.strong_bear_threshold,
+            self.direction_threshold,
+            self.strong_bull_threshold,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,5 +132,7 @@ class BNHMMConfig:
         if self.latent_states > 512:
             raise ValueError("latent states cannot exceed 512")
         if tuple(self.output_states) != REGIME_STATES:
-            raise ValueError("output_states must contain bear, flat, and bull")
+            raise ValueError(
+                "output_states must contain strong bear, weak bear, weak bull, and strong bull"
+            )
 

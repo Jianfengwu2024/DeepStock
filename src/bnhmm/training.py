@@ -32,8 +32,9 @@ class ModelConfig:
     feature_mode: str = "gated-full"
     bayesian_backbone: bool = False
     transition_rank: int = 4
-    bear_threshold: float = -0.005
-    bull_threshold: float = 0.005
+    strong_bear_threshold: float = -0.015
+    direction_threshold: float = 0.0
+    strong_bull_threshold: float = 0.015
     d_model: int = 96
     motif_dim: int = 32
     heads: int = 4
@@ -474,8 +475,9 @@ class BNHMMTrainer:
                     ordinal_weight=self.config.ordinal_weight,
                     latent_balance_weight=self.config.latent_balance_weight,
                     student_df=self.config.student_df,
-                    bear_threshold=self.model.bear_threshold,
-                    bull_threshold=self.model.bull_threshold,
+                    strong_bear_threshold=self.model.strong_bear_threshold,
+                    direction_threshold=self.model.direction_threshold,
+                    strong_bull_threshold=self.model.strong_bull_threshold,
                 )
                 if optimizer is not None:
                     loss.total.backward()
@@ -486,8 +488,9 @@ class BNHMMTrainer:
             probability = student_t_regime_probabilities(
                 output.return_mean,
                 output.return_log_variance.exp(),
-                self.model.bear_threshold,
-                self.model.bull_threshold,
+                self.model.strong_bear_threshold,
+                self.model.direction_threshold,
+                self.model.strong_bull_threshold,
                 self.config.student_df,
             )
             correct = (
@@ -525,7 +528,7 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 10,
+            "format_version": 11,
             "regime_protocol": REGIME_PROTOCOL,
             "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),

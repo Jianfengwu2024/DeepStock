@@ -48,7 +48,7 @@ class DecisionPolicyConfig:
 
 
 class DecisionPolicy:
-    """Apply a stateful long-only policy to the three-state posterior."""
+    """Apply a stateful long-only policy to the four-state posterior."""
 
     def __init__(self, config: DecisionPolicyConfig | None = None) -> None:
         self.config = config or DecisionPolicyConfig()
@@ -66,11 +66,11 @@ class DecisionPolicy:
             np.clip(1.0 - self.config.uncertainty_aversion * uncertainty, 0.0, 1.0)
         )
         predicted_state = int(np.argmax(prediction.probability_mean))
-        if predicted_state == 2:  # Bull: open or add, never reduce an existing long.
-            return max(float(np.clip(previous_position, 0.0, 1.0)), confidence)
-        if predicted_state == 1:  # Flat: retain the existing position.
-            return float(np.clip(previous_position, 0.0, 1.0))
-        return 0.0  # Bear: close; it never opens a short position.
+        if predicted_state >= 2:
+            strength = 0.5 if predicted_state == 2 else 1.0
+            target = confidence * strength
+            return max(float(np.clip(previous_position, 0.0, 1.0)), target)
+        return 0.0
 
 
 def infer_sequences(
@@ -164,9 +164,9 @@ def evaluate_predictions(
     targets = np.asarray([item.target for item in predictions], dtype=np.int64)
     returns = np.asarray([item.forward_return for item in predictions])
     if probability.ndim != 2 or probability.shape[1] != REGIME_COUNT:
-        raise ValueError("predictions must contain three-state probabilities")
+        raise ValueError("predictions must contain four-state probabilities")
     if np.any((targets < 0) | (targets >= REGIME_COUNT)):
-        raise ValueError("prediction targets must use three-state indices")
+        raise ValueError("prediction targets must use four-state indices")
     return_mean_rows = _moment_rows(
         regime_return_means, predictions, "regime return means"
     )
@@ -291,6 +291,21 @@ def _prediction_baselines(
     returns: np.ndarray,
 ) -> dict[str, object]:
     """Calculate point-in-time baselines without crossing symbol boundaries."""
+    class_prior = np.bincount(targets, minlength=REGIME_COUNT).astype(np.float64)
+    class_prior /= max(len(targets), 1)
+    one_hot = np.eye(REGIME_COUNT)[targets]
+    prior_residual = one_hot - class_prior
+    prior_rps = np.square(
+        class_prior.cumsum()[:-1] - one_hot.cumsum(axis=1)[:, :-1]
+    ).mean(axis=1)
+    class_prior_metrics = {
+        "class_prior": class_prior.tolist(),
+        "class_prior_brier": float(np.square(prior_residual).sum(axis=1).mean()),
+        "class_prior_log_loss": float(
+            -np.log(np.clip(class_prior[targets], 1e-12, 1.0)).mean()
+        ),
+        "class_prior_rps": float(prior_rps.mean()),
+    }
     previous_indices: list[int] = []
     current_indices: list[int] = []
     latest: dict[tuple[str, int], int] = {}
@@ -306,6 +321,7 @@ def _prediction_baselines(
     zero_mae = float(np.abs(returns).mean())
     if not current_indices:
         return {
+            **class_prior_metrics,
             "comparison_count": 0,
             "persistence_accuracy": None,
             "reversal_accuracy": None,
@@ -328,9 +344,12 @@ def _prediction_baselines(
         else 0.0
     )
     return {
+        **class_prior_metrics,
         "comparison_count": int(len(current_index)),
         "persistence_accuracy": float((previous_targets == current_targets).mean()),
-        "reversal_accuracy": float(((2 - previous_targets) == current_targets).mean()),
+        "reversal_accuracy": float(
+            ((REGIME_COUNT - 1 - previous_targets) == current_targets).mean()
+        ),
         "prior_return_correlation": correlation,
         "prior_return_rmse": float(
             np.sqrt(np.square(current_returns - previous_returns).mean())
@@ -379,10 +398,10 @@ def _moment_rows(
     else:
         vector = np.asarray(values, dtype=np.float64)
         if vector.shape != (REGIME_COUNT,):
-            raise ValueError(f"{name} must contain three values")
+            raise ValueError(f"{name} must contain four values")
         rows = np.broadcast_to(vector, (len(predictions), REGIME_COUNT))
     if rows.shape != (len(predictions), REGIME_COUNT):
-        raise ValueError(f"{name} must contain three values per symbol")
+        raise ValueError(f"{name} must contain four values per symbol")
     return rows
 
 

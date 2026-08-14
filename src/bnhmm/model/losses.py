@@ -34,8 +34,9 @@ def return_distribution_loss(
     ordinal_weight: float = 0.0,
     latent_balance_weight: float = 0.05,
     student_df: float = 4.0,
-    bear_threshold: float = -0.005,
-    bull_threshold: float = 0.005,
+    strong_bear_threshold: float = -0.015,
+    direction_threshold: float = 0.0,
+    strong_bull_threshold: float = 0.015,
 ) -> LossBreakdown:
     if forward_returns.shape != output.return_mean.shape:
         raise ValueError("forward returns must match posterior mean dimensions")
@@ -70,8 +71,9 @@ def return_distribution_loss(
     probability = student_t_regime_probabilities(
         output.return_mean,
         variance,
-        bear_threshold,
-        bull_threshold,
+        strong_bear_threshold,
+        direction_threshold,
+        strong_bull_threshold,
         student_df,
     )
     one_hot = F.one_hot(targets, num_classes=probability.shape[-1]).to(

@@ -21,8 +21,9 @@ from .transformer import BayesianTransformerBlock
 def student_t_regime_probabilities(
     mean: Tensor,
     variance: Tensor,
-    bear_threshold: float = -0.005,
-    bull_threshold: float = 0.005,
+    strong_bear_threshold: float = -0.015,
+    direction_threshold: float = 0.0,
+    strong_bull_threshold: float = 0.015,
     degrees_of_freedom: float = 4.0,
 ) -> Tensor:
     """Convert a Student-t(4) return posterior into regime probabilities."""
@@ -35,11 +36,15 @@ def student_t_regime_probabilities(
         sine = standardized / torch.sqrt(standardized.square() + 4.0)
         return 0.5 + 0.75 * sine - 0.25 * sine.pow(3)
 
-    bear = cdf(bear_threshold)
-    below_bull = cdf(bull_threshold)
-    flat = (below_bull - bear).clamp_min(0.0)
-    bull = (1.0 - below_bull).clamp_min(0.0)
-    probability = torch.stack((bear, flat, bull), dim=-1)
+    strong_bear = cdf(strong_bear_threshold)
+    below_direction = cdf(direction_threshold)
+    below_strong_bull = cdf(strong_bull_threshold)
+    weak_bear = (below_direction - strong_bear).clamp_min(0.0)
+    weak_bull = (below_strong_bull - below_direction).clamp_min(0.0)
+    strong_bull = (1.0 - below_strong_bull).clamp_min(0.0)
+    probability = torch.stack(
+        (strong_bear, weak_bear, weak_bull, strong_bull), dim=-1
+    )
     return probability / probability.sum(dim=-1, keepdim=True).clamp_min(1e-12)
 
 
@@ -330,8 +335,9 @@ class BNHMMNetwork(nn.Module):
         feature_mode: str = "gated-full",
         bayesian_backbone: bool = False,
         transition_rank: int = 4,
-        bear_threshold: float = -0.005,
-        bull_threshold: float = 0.005,
+        strong_bear_threshold: float = -0.015,
+        direction_threshold: float = 0.0,
+        strong_bull_threshold: float = 0.015,
         d_model: int = 96,
         motif_dim: int = 32,
         heads: int = 4,
@@ -346,12 +352,12 @@ class BNHMMNetwork(nn.Module):
         if latent_states > 512:
             raise ValueError("latent states cannot exceed 512")
         if output_states != REGIME_COUNT:
-            raise ValueError("BNHMM requires bear, flat, and bull output regimes")
+            raise ValueError("BNHMM requires four directional output regimes")
         if max_sequence_length < 2:
             raise ValueError("max_sequence_length must be at least two")
         if transition_rank < 1 or transition_rank > latent_states:
             raise ValueError("transition rank must be between one and latent states")
-        if bear_threshold >= bull_threshold:
+        if not strong_bear_threshold < direction_threshold < strong_bull_threshold:
             raise ValueError("return regime thresholds must be ordered")
         self.max_profile_bins = max_profile_bins
         self.profile_channels = profile_channels
@@ -361,8 +367,9 @@ class BNHMMNetwork(nn.Module):
         self.feature_mode = feature_mode
         self.bayesian_backbone = bayesian_backbone
         self.transition_rank = transition_rank
-        self.bear_threshold = float(bear_threshold)
-        self.bull_threshold = float(bull_threshold)
+        self.strong_bear_threshold = float(strong_bear_threshold)
+        self.direction_threshold = float(direction_threshold)
+        self.strong_bull_threshold = float(strong_bull_threshold)
         self.max_sequence_length = max_sequence_length
         self.d_model = d_model
 
@@ -588,8 +595,9 @@ class BNHMMNetwork(nn.Module):
             probability = student_t_regime_probabilities(
                 output.return_mean,
                 return_variance,
-                self.bear_threshold,
-                self.bull_threshold,
+                self.strong_bear_threshold,
+                self.direction_threshold,
+                self.strong_bull_threshold,
             )
             probability_samples.append(probability)
             return_means.append(output.return_mean)
