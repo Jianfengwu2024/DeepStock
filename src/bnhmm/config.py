@@ -17,8 +17,8 @@ REGIME_COUNT = len(REGIME_STATES)
 REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
 REGIME_PROTOCOL = "bear-flat-bull-v1"
-PROFILE_PROTOCOL = "phase-space-log-v3"
-DEFAULT_VELOCITY_BINS = 9
+PROFILE_PROTOCOL = "phase-space-gated-v4"
+DEFAULT_VELOCITY_BINS = 5
 PROFILE_CHANNELS = 4 + 2 * DEFAULT_VELOCITY_BINS
 OUTPUT_HIDDEN_STATES = 9
 
@@ -35,6 +35,7 @@ class ProfileConfig:
     trading_minutes_per_session: int = 240
     velocity_bins: int = DEFAULT_VELOCITY_BINS
     velocity_clip: float = 4.0
+    velocity_smoothing: float = 0.25
     feature_clip: float = 4.0
     minimum_hour_bars: int = 20
     minimum_day_bars: int = 120
@@ -65,6 +66,8 @@ class ProfileConfig:
             raise ValueError("velocity bins must be an odd integer of at least three")
         if self.velocity_clip <= 0 or self.feature_clip <= 0:
             raise ValueError("phase-space clipping limits must be positive")
+        if self.velocity_smoothing < 0:
+            raise ValueError("velocity smoothing cannot be negative")
 
     @property
     def profile_channels(self) -> int:

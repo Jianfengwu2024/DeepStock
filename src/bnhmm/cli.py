@@ -85,6 +85,7 @@ def _train(args: argparse.Namespace) -> int:
         relative_volume_min_observations=args.normalization_lookback_sessions,
         velocity_bins=args.velocity_bins,
         velocity_clip=args.velocity_clip,
+        velocity_smoothing=args.velocity_smoothing,
     )
     sequence_config = SequenceConfig(
         length=args.sequence_length,
@@ -112,6 +113,7 @@ def _train(args: argparse.Namespace) -> int:
         max_profile_bins=args.max_profile_bins,
         profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
+        feature_mode=args.feature_mode,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -155,6 +157,8 @@ def _train(args: argparse.Namespace) -> int:
         "normalization_lookback_sessions": args.normalization_lookback_sessions,
         "velocity_bins": args.velocity_bins,
         "velocity_clip": args.velocity_clip,
+        "velocity_smoothing": args.velocity_smoothing,
+        "feature_mode": args.feature_mode,
         "regime_protocol": _regime_metadata(label_config),
         "bin_width_bps": args.bin_width_bps,
         "maximum_profile_bins": max((len(state.distribution) for state in states), default=0),
@@ -210,6 +214,13 @@ def _train(args: argparse.Namespace) -> int:
         .cpu()
         .tolist(),
         "checkpoint": str(checkpoint_path),
+        "auxiliary_gates": dict(
+            zip(
+                ("relative_volume", "price_velocity", "volume_velocity"),
+                model.tokenizer.effective_auxiliary_gates().detach().cpu().tolist(),
+                strict=True,
+            )
+        ),
     }
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "metrics.json").write_text(
@@ -245,6 +256,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         relative_volume_min_observations=args.normalization_lookback_sessions,
         velocity_bins=args.velocity_bins,
         velocity_clip=args.velocity_clip,
+        velocity_smoothing=args.velocity_smoothing,
     )
     label_config = LabelConfig(forward_sessions=args.forward_sessions)
     for symbol in symbols:
@@ -273,6 +285,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         max_profile_bins=args.max_profile_bins,
         profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
+        feature_mode=args.feature_mode,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -372,6 +385,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "relative_volume_baseline": "prior-mean-daily-volume/240",
             "velocity_bins": args.velocity_bins,
             "velocity_clip": args.velocity_clip,
+            "velocity_smoothing": args.velocity_smoothing,
             "price_coordinate": "log-price-relative-to-previous-close",
         },
         "regime_protocol": _regime_metadata(label_config),
@@ -454,8 +468,14 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--bin-width-bps", type=float, default=10.0)
     train.add_argument("--max-profile-bins", type=int, default=512)
     train.add_argument("--normalization-lookback-sessions", type=int, default=10)
-    train.add_argument("--velocity-bins", type=int, default=9)
+    train.add_argument("--velocity-bins", type=int, default=5)
     train.add_argument("--velocity-clip", type=float, default=4.0)
+    train.add_argument("--velocity-smoothing", type=float, default=0.25)
+    train.add_argument(
+        "--feature-mode",
+        choices=("gated-full", "price-only", "price-volume", "price-velocity"),
+        default="gated-full",
+    )
     train.add_argument(
         "--state-timeframe",
         choices=("daily", "mixed"),
@@ -501,8 +521,14 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--bin-width-bps", type=float, default=10.0)
     walk.add_argument("--max-profile-bins", type=int, default=512)
     walk.add_argument("--normalization-lookback-sessions", type=int, default=10)
-    walk.add_argument("--velocity-bins", type=int, default=9)
+    walk.add_argument("--velocity-bins", type=int, default=5)
     walk.add_argument("--velocity-clip", type=float, default=4.0)
+    walk.add_argument("--velocity-smoothing", type=float, default=0.25)
+    walk.add_argument(
+        "--feature-mode",
+        choices=("gated-full", "price-only", "price-volume", "price-velocity"),
+        default="gated-full",
+    )
     walk.add_argument(
         "--state-timeframe",
         choices=("daily", "mixed"),

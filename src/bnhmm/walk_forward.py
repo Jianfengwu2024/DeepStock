@@ -272,6 +272,16 @@ def _run_symbol_walk_forward(
             "pretest_sequences": len(pretest_sequences),
             "outer_test_predictions": len(predictions),
             "tuning_best_validation_loss": tuning_result.best_validation_loss,
+            "auxiliary_gates": dict(
+                zip(
+                    ("relative_volume", "price_velocity", "volume_velocity"),
+                    final_model.tokenizer.effective_auxiliary_gates()
+                    .detach()
+                    .cpu()
+                    .tolist(),
+                    strict=True,
+                )
+            ),
         }
         (fold_dir / "summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"

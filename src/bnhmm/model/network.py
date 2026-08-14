@@ -40,8 +40,74 @@ class PosteriorOutput:
         return self.probability_mean.argmax(dim=-1)
 
 
+class BayesianMotifBranch(nn.Module):
+    """Encode single, pair, and triple motifs for one feature family."""
+
+    def __init__(
+        self,
+        channels: int,
+        d_model: int,
+        motif_dim: int,
+        *,
+        include_coordinates: bool,
+        bias: bool,
+    ) -> None:
+        super().__init__()
+        self.include_coordinates = include_coordinates
+        coordinate_features = 5 if include_coordinates else 0
+        self.single = BayesianLinear(
+            channels + coordinate_features, motif_dim, bias=bias
+        )
+        self.pair = BayesianLinear(
+            channels * 2 + coordinate_features, motif_dim, bias=bias
+        )
+        self.triple = BayesianLinear(
+            channels * 3 + coordinate_features, motif_dim, bias=bias
+        )
+        self.output = BayesianLinear(motif_dim * 3, d_model, bias=bias)
+        self.output_norm = nn.LayerNorm(d_model)
+
+    def forward(
+        self,
+        values: Tensor,
+        positions: Tensor,
+        pair_positions: Tensor,
+        triple_positions: Tensor,
+        *,
+        sample: bool,
+    ) -> Tensor:
+        single = F.gelu(
+            self.single(self._input(values, positions), sample=sample)
+        )
+        pair_values = values.unfold(-2, 2, 1).transpose(-1, -2).flatten(-2)
+        pairs = F.gelu(
+            self.pair(
+                self._input(pair_values, pair_positions), sample=sample
+            )
+        )
+        pairs = F.pad(pairs, (0, 0, 0, 1))
+        triple_values = values.unfold(-2, 3, 1).transpose(-1, -2).flatten(-2)
+        triples = F.gelu(
+            self.triple(
+                self._input(triple_values, triple_positions), sample=sample
+            )
+        )
+        triples = F.pad(triples, (0, 0, 1, 1))
+        output = F.gelu(
+            self.output(torch.cat((single, pairs, triples), dim=-1), sample=sample)
+        )
+        return self.output_norm(output)
+
+    def _input(self, values: Tensor, positions: Tensor) -> Tensor:
+        return (
+            torch.cat((values, positions), dim=-1)
+            if self.include_coordinates
+            else values
+        )
+
+
 class BayesianMotifTokenizer(nn.Module):
-    """Encode position-aligned bin motifs without averaging their locations away."""
+    """Use price as the backbone and auxiliary families as gated residuals."""
 
     def __init__(
         self,
@@ -50,22 +116,56 @@ class BayesianMotifTokenizer(nn.Module):
         state_feature_dim: int,
         d_model: int,
         motif_dim: int,
+        feature_mode: str,
     ) -> None:
         super().__init__()
+        if profile_channels < 10 or (profile_channels - 4) % 2:
+            raise ValueError("profile channels must contain paired velocity families")
+        if feature_mode not in {
+            "gated-full",
+            "price-only",
+            "price-volume",
+            "price-velocity",
+        }:
+            raise ValueError("unsupported feature mode")
         self.max_profile_bins = max_profile_bins
         self.profile_channels = profile_channels
         self.state_feature_dim = state_feature_dim
-        coordinate_features = 5
-        self.single = BayesianLinear(
-            profile_channels + coordinate_features, motif_dim
+        self.feature_mode = feature_mode
+        self.velocity_channels = (profile_channels - 4) // 2
+        self.price_branch = BayesianMotifBranch(
+            2, d_model, motif_dim, include_coordinates=True, bias=True
         )
-        self.pair = BayesianLinear(
-            profile_channels * 2 + coordinate_features, motif_dim
+        self.volume_branch = BayesianMotifBranch(
+            2, d_model, motif_dim, include_coordinates=False, bias=False
         )
-        self.triple = BayesianLinear(
-            profile_channels * 3 + coordinate_features, motif_dim
+        self.price_velocity_branch = BayesianMotifBranch(
+            self.velocity_channels,
+            d_model,
+            motif_dim,
+            include_coordinates=False,
+            bias=False,
         )
-        self.output = BayesianLinear(motif_dim * 3, d_model)
+        self.volume_velocity_branch = BayesianMotifBranch(
+            self.velocity_channels,
+            d_model,
+            motif_dim,
+            include_coordinates=False,
+            bias=False,
+        )
+        self.auxiliary_gate_logits = nn.Parameter(torch.full((3,), -3.0))
+        enabled = {
+            "gated-full": (1.0, 1.0, 1.0),
+            "price-only": (0.0, 0.0, 0.0),
+            "price-volume": (1.0, 0.0, 0.0),
+            "price-velocity": (0.0, 1.0, 0.0),
+        }[feature_mode]
+        self.enabled_auxiliary_indices = tuple(
+            index for index, value in enumerate(enabled) if value
+        )
+        self.register_buffer(
+            "auxiliary_enabled", torch.tensor(enabled), persistent=True
+        )
         self.pool_score = BayesianLinear(d_model, 1)
         self.metadata = BayesianLinear(state_feature_dim, d_model)
         self.combine = BayesianLinear(d_model * 2, d_model)
@@ -107,46 +207,61 @@ class BayesianMotifTokenizer(nn.Module):
             raise ValueError("state_features must match batch, sequence, and feature dimensions")
 
         positions = self._coordinate_features(bin_coordinates, profiles.dtype)
-        single = F.gelu(
-            self.single(torch.cat((profiles, positions), dim=-1), sample=sample)
-        )
-
-        pair_values = profiles.unfold(-2, 2, 1).transpose(-1, -2).flatten(-2)
         pair_coordinates = (
             bin_coordinates[..., :-1] + bin_coordinates[..., 1:]
         ) / 2.0
         pair_positions = self._coordinate_features(pair_coordinates, profiles.dtype)
-        pairs = F.gelu(
-            self.pair(
-                torch.cat((pair_values, pair_positions), dim=-1), sample=sample
-            )
-        )
-        pairs = F.pad(pairs, (0, 0, 0, 1))
-
-        triple_values = profiles.unfold(-2, 3, 1).transpose(-1, -2).flatten(-2)
         triple_positions = self._coordinate_features(
             bin_coordinates[..., 1:-1], profiles.dtype
         )
-        triples = F.gelu(
-            self.triple(
-                torch.cat((triple_values, triple_positions), dim=-1), sample=sample
+        price_values = torch.stack((profiles[..., 0], profiles[..., 3]), dim=-1)
+        volume_values = profiles[..., 1:3]
+        price_velocity_values = profiles[..., 4 : 4 + self.velocity_channels]
+        volume_velocity_values = profiles[..., 4 + self.velocity_channels :]
+        branch_inputs = (
+            volume_values,
+            price_velocity_values,
+            volume_velocity_values,
+        )
+        branches = (
+            self.volume_branch,
+            self.price_velocity_branch,
+            self.volume_velocity_branch,
+        )
+        tokens = self.price_branch(
+            price_values,
+            positions,
+            pair_positions,
+            triple_positions,
+            sample=sample,
+        )
+        gates = self.effective_auxiliary_gates()
+        for index in self.enabled_auxiliary_indices:
+            branch = branches[index]
+            values = branch_inputs[index]
+            residual = branch(
+                values,
+                positions,
+                pair_positions,
+                triple_positions,
+                sample=sample,
             )
-        )
-        triples = F.pad(triples, (0, 0, 1, 1))
-
-        tokens = F.gelu(
-            self.output(torch.cat((single, pairs, triples), dim=-1), sample=sample)
-        )
+            tokens = tokens + gates[index] * residual
         tokens = tokens * profile_mask.unsqueeze(-1)
         scores = self.pool_score(torch.tanh(tokens), sample=sample).squeeze(-1)
         scores = scores.masked_fill(~profile_mask, torch.finfo(scores.dtype).min)
         attention = F.softmax(scores, dim=-1)
         profile_summary = (tokens * attention.unsqueeze(-1)).sum(dim=-2)
-        metadata = F.gelu(self.metadata(state_features, sample=sample))
+        metadata_features = state_features.clone()
+        metadata_features[..., 6] = state_features[..., 6] * gates[0]
+        metadata = F.gelu(self.metadata(metadata_features, sample=sample))
         combined = self.combine(
             torch.cat((profile_summary, metadata), dim=-1), sample=sample
         )
         return self.output_norm(combined)
+
+    def effective_auxiliary_gates(self) -> Tensor:
+        return torch.sigmoid(self.auxiliary_gate_logits) * self.auxiliary_enabled
 
     @staticmethod
     def _coordinate_features(coordinates: Tensor, dtype: torch.dtype) -> Tensor:
@@ -172,6 +287,7 @@ class BNHMMNetwork(nn.Module):
         state_feature_dim: int = 9,
         latent_states: int = 50,
         output_states: int = REGIME_COUNT,
+        feature_mode: str = "gated-full",
         d_model: int = 96,
         motif_dim: int = 32,
         heads: int = 4,
@@ -195,6 +311,7 @@ class BNHMMNetwork(nn.Module):
         self.latent_states = latent_states
         self.output_hidden_states = OUTPUT_HIDDEN_STATES
         self.output_states = output_states
+        self.feature_mode = feature_mode
         self.max_sequence_length = max_sequence_length
         self.d_model = d_model
 
@@ -204,6 +321,7 @@ class BNHMMNetwork(nn.Module):
             state_feature_dim,
             d_model,
             motif_dim,
+            feature_mode,
         )
         self.timeframe_embedding = nn.Embedding(2, d_model)
         self.position_embedding = nn.Parameter(

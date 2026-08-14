@@ -220,8 +220,12 @@ class PriceVolumeProfileBuilder:
             out=np.zeros_like(relative_level_sum),
             where=relative_level_count > 0,
         ) / self.config.feature_clip
-        self._normalize_rows(price_velocity_histogram)
-        self._normalize_rows(volume_velocity_histogram)
+        relative_level_reliability = relative_level_count / (
+            relative_level_count + 4.0
+        )
+        normalized_relative_volume_level *= relative_level_reliability
+        self._normalize_conditional_velocity(price_velocity_histogram)
+        self._normalize_conditional_velocity(volume_velocity_histogram)
 
         relative_volume_intensity = relative_volume_histogram / max(len(bars), 1)
         self._normalize(price_histogram)
@@ -272,10 +276,22 @@ class PriceVolumeProfileBuilder:
         else:
             histogram /= total
 
-    @staticmethod
-    def _normalize_rows(histogram: NDArray[np.float64]) -> None:
-        totals = histogram.sum(axis=1, keepdims=True)
-        np.divide(histogram, totals, out=histogram, where=totals > 0)
+    def _normalize_conditional_velocity(
+        self, histogram: NDArray[np.float64]
+    ) -> None:
+        """Smooth sparse conditional rows and retain their sample reliability."""
+        counts = histogram.sum(axis=1, keepdims=True)
+        total = float(counts.sum())
+        if total <= 0:
+            histogram.fill(0.0)
+            return
+        occupied = counts[:, 0] > 0
+        smoothing = self.config.velocity_smoothing
+        histogram[occupied] = (
+            histogram[occupied] + smoothing
+        ) / (counts[occupied] + smoothing * histogram.shape[1])
+        histogram[occupied] *= counts[occupied] / total
+        histogram[~occupied] = 0.0
 
     @staticmethod
     def _bin_index(edges: NDArray[np.float64], value: float) -> int:

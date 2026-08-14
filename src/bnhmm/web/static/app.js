@@ -13,7 +13,7 @@ const state = {
 const numberFields = new Set([
   "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
-  "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "sequence_length", "sequence_stride",
+  "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
   "minimum_sequence_length", "d_model", "latent_states", "motif_dim", "heads", "layers",
   "feedforward_dim", "dropout", "mc_samples", "uncertainty_aversion",
   "transaction_cost_bps", "seed",
@@ -214,16 +214,25 @@ function renderJob(job) {
   const stateMode = job.request.state_timeframe === "mixed"
     ? "小时 + 日状态"
     : "日状态（1分钟线生成）";
-  const profileMode = job.request.profile_protocol === "phase-space-log-v3"
-    ? `${job.request.bin_width_bps} BP 对数相空间 · ${job.request.normalization_lookback_sessions}日归一化`
-    : job.request.profile_protocol === "legacy-fixed-bins"
-      ? "旧固定柱协议"
-      : `${job.request.bin_width_bps} BP 可变日态（旧）`;
+  const profileMode = job.request.profile_protocol === "phase-space-gated-v4"
+    ? `${job.request.bin_width_bps} BP 稀疏平滑相空间 · ${job.request.normalization_lookback_sessions}日归一化`
+    : job.request.profile_protocol === "phase-space-log-v3"
+      ? `${job.request.bin_width_bps} BP 旧22通道相空间`
+      : job.request.profile_protocol === "legacy-fixed-bins"
+        ? "旧固定柱协议"
+        : `${job.request.bin_width_bps} BP 可变日态（旧）`;
   const modelScope = job.request.training_scope === "per-symbol"
     ? "逐标的独立 BNHMM"
     : "多标的共享模型（旧）";
   const latentStates = job.request.latent_states ?? 10;
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${latentStates} 隐状态 → 9 隐藏节点 · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  const featureMode = ({
+    "gated-full": "价格主干 + 门控量价速度",
+    "price-only": "仅价格",
+    "price-volume": "价格 + 成交量",
+    "price-velocity": "价格 + 价格速度",
+    "legacy-entangled": "旧混合特征",
+  })[job.request.feature_mode] || "旧混合特征";
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → 9 隐藏节点 · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);

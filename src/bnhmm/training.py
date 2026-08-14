@@ -24,6 +24,7 @@ class ModelConfig:
     state_feature_dim: int = 9
     latent_states: int = 50
     output_states: int = REGIME_COUNT
+    feature_mode: str = "gated-full"
     d_model: int = 96
     motif_dim: int = 32
     heads: int = 4
@@ -423,7 +424,7 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 5,
+            "format_version": 6,
             "regime_protocol": REGIME_PROTOCOL,
             "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),

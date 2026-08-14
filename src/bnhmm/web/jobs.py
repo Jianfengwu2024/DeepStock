@@ -52,12 +52,16 @@ class WalkForwardJobRequest(BaseModel):
     bin_width_bps: float = Field(10.0, gt=0.0, le=100.0)
     max_profile_bins: int = Field(512, ge=8, le=2048)
     normalization_lookback_sessions: int = Field(10, ge=2, le=120)
-    velocity_bins: int = Field(9, ge=3, le=31)
+    velocity_bins: int = Field(5, ge=3, le=31)
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
+    velocity_smoothing: float = Field(0.25, ge=0.0, le=10.0)
     profile_protocol: Literal[
-        "phase-space-log-v3", "variable-log-bins-v2", "legacy-fixed-bins"
+        "phase-space-gated-v4",
+        "phase-space-log-v3",
+        "variable-log-bins-v2",
+        "legacy-fixed-bins",
     ] = (
-        "phase-space-log-v3"
+        "phase-space-gated-v4"
     )
     state_timeframe: Literal["daily", "mixed"] = "daily"
     sequence_length: int = Field(128, ge=8, le=2048)
@@ -65,6 +69,13 @@ class WalkForwardJobRequest(BaseModel):
     minimum_sequence_length: int = Field(32, ge=2, le=2048)
     d_model: int = Field(96, ge=8, le=2048)
     latent_states: int = Field(50, ge=1, le=512)
+    feature_mode: Literal[
+        "gated-full",
+        "price-only",
+        "price-volume",
+        "price-velocity",
+        "legacy-entangled",
+    ] = "gated-full"
     motif_dim: int = Field(32, ge=2, le=512)
     heads: int = Field(4, ge=1, le=64)
     layers: int = Field(3, ge=1, le=48)
@@ -111,6 +122,8 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("velocity_bins must be odd")
         profile_channels = 4 + 2 * self.velocity_bins
         legacy = bool((info.context or {}).get("legacy_job"))
+        if self.feature_mode == "legacy-entangled" and not legacy:
+            raise ValueError("legacy-entangled is reserved for historical jobs")
         if not legacy and self.latent_states < profile_channels:
             raise ValueError("latent_states cannot be fewer than profile channels")
         return self
@@ -216,6 +229,10 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.velocity_bins),
         "--velocity-clip",
         str(request.velocity_clip),
+        "--velocity-smoothing",
+        str(request.velocity_smoothing),
+        "--feature-mode",
+        request.feature_mode,
         "--state-timeframe",
         request.state_timeframe,
         "--sequence-length",
@@ -504,6 +521,11 @@ class JobManager:
                     and "latent_states" not in request_payload
                 ):
                     request_payload["latent_states"] = 10
+                if (
+                    isinstance(request_payload, dict)
+                    and "feature_mode" not in request_payload
+                ):
+                    request_payload["feature_mode"] = "legacy-entangled"
                 record = JobRecord.model_validate(
                     payload, context={"legacy_job": True}
                 )

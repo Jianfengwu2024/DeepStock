@@ -8,13 +8,18 @@ The first implemented vertical slice reads bounded OHLCV batches from the shared
 DuckDB broker and converts each trading session's available one-minute bars into
 one variable-length daily log-price phase-space profile. The previous close is
 coordinate zero and every log-price bin is 10 basis points wide. Each price bin
-contains price occupancy, relative-volume mass, normalized relative-volume level,
-and conditional distributions of normalized price velocity and volume velocity.
+contains price occupancy, relative-volume mass, confidence-weighted relative-volume
+level, and five-bin price/volume velocity distributions. Sparse velocity rows are
+smoothed and weighted by their real sample share instead of being normalized to
+equal confidence.
 All scalers use only the symbol's preceding ten completed sessions. Relative
 volume divides minute volume by prior ten-day mean daily volume divided by 240.
 Hourly states remain an explicit comparison mode only.
 
-The model core now includes adjacent two/three-bin motif tokenization, causal
+The model core uses price motifs as its backbone. Relative volume, price velocity,
+and volume velocity use gated residual motif branches initialized near zero, so
+adding noisy features cannot immediately overwhelm the price baseline. Four
+feature modes support controlled ablation. The temporal core includes causal
 Bayesian multi-head attention, a conditional 50-state latent transition filter,
 a fixed nine-node Bayesian output hidden layer, and a three-regime Dirichlet
 evidence head. The first hidden-state count is configurable

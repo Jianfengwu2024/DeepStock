@@ -18,7 +18,7 @@ class ProfileDatasetTests(unittest.TestCase):
         self.assertEqual(len(observations), 2)
         self.assertEqual(len(observations.profiles), 2)
         self.assertEqual(len(observations.bin_coordinates), 2)
-        self.assertTrue(all(profile.shape[1] == 22 for profile in observations.profiles))
+        self.assertTrue(all(profile.shape[1] == 14 for profile in observations.profiles))
         self.assertTrue(
             all(
                 len(profile) == len(coordinates)

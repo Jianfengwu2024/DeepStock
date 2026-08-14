@@ -59,6 +59,10 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertLess(float(loss.kl.detach()), 10.0)
         self.assertGreaterEqual(float(loss.ordinal.detach()), 0.0)
         self.assertTrue(any(parameter.grad is not None for parameter in self.model.parameters()))
+        self.assertIsNotNone(self.model.tokenizer.auxiliary_gate_logits.grad)
+        self.assertTrue(
+            torch.all(self.model.tokenizer.effective_auxiliary_gates() < 0.05)
+        )
 
     def test_posterior_separates_uncertainty(self) -> None:
         values = profiles(batch=1)
@@ -130,6 +134,56 @@ class BNHMMNetworkTests(unittest.TestCase):
         )
 
         self.assertFalse(torch.allclose(left_token, right_token, atol=1e-5))
+
+    def test_price_only_mode_ignores_volume_and_velocity_channels(self) -> None:
+        model = BNHMMNetwork(
+            max_profile_bins=32,
+            feature_mode="price-only",
+            d_model=24,
+            motif_dim=8,
+            heads=4,
+            layers=1,
+            feedforward_dim=48,
+            dropout=0.0,
+            max_sequence_length=12,
+        )
+        original = profiles(batch=1)
+        changed = original.clone()
+        changed[..., 1:3] = torch.rand_like(changed[..., 1:3])
+        changed[..., 4:] = torch.rand_like(changed[..., 4:])
+        features = state_features(batch=1)
+        changed_features = features.clone()
+        changed_features[..., 6] = changed_features[..., 6] + 100.0
+        timeframes = torch.ones(1, 6, dtype=torch.long)
+
+        first = model(original, timeframes, features, sample=False)
+        second = model(changed, timeframes, changed_features, sample=False)
+
+        self.assertTrue(torch.allclose(first.alpha, second.alpha, atol=1e-6))
+
+    def test_zero_auxiliary_features_produce_zero_residual(self) -> None:
+        values = torch.zeros(1, 1, 16, 2)
+        coordinates = torch.arange(-8, 8).view(1, 1, 16).float()
+        positions = self.model.tokenizer._coordinate_features(
+            coordinates, values.dtype
+        )
+        pair_positions = self.model.tokenizer._coordinate_features(
+            (coordinates[..., :-1] + coordinates[..., 1:]) / 2.0,
+            values.dtype,
+        )
+        triple_positions = self.model.tokenizer._coordinate_features(
+            coordinates[..., 1:-1], values.dtype
+        )
+
+        residual = self.model.tokenizer.volume_branch(
+            values,
+            positions,
+            pair_positions,
+            triple_positions,
+            sample=False,
+        )
+
+        self.assertTrue(torch.equal(residual, torch.zeros_like(residual)))
 
 
 if __name__ == "__main__":

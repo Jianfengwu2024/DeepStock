@@ -6,11 +6,12 @@
 2. The profile layer creates one variable-length daily conditional phase-space
    state from each one-minute trading session. The previous close is zero and
    fixed 10-basis-point log-price bins preserve the real daily amplitude. Each
-   price bin carries relative volume plus price-velocity and volume-velocity
-   distributions. Small source gaps do not discard the full day; hourly states
+   price bin carries relative volume plus sample-weighted, smoothed price-velocity
+   and volume-velocity distributions. Small source gaps do not discard the full day; hourly states
    are opt-in only.
-3. The model layer encodes adjacent two-bin and three-bin motifs, then
-   applies a Bayesian Transformer and a conditional 50-state transition model.
+3. The model layer encodes price motifs as the backbone. Volume and velocity
+   families enter through independently gated residual branches initialized near
+   zero. It then applies a Bayesian Transformer and a conditional 50-state transition model.
    The hidden-state count is configurable and may not be smaller than the profile
    channel count.
    Every symbol owns a complete model instance; Transformer weights, hidden-state

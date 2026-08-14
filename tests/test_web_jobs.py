@@ -31,7 +31,7 @@ class WebJobTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(velocity_bins=8)
         with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(latent_states=21)
+            WalkForwardJobRequest(latent_states=13)
 
     def test_command_contains_model_and_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(
@@ -51,6 +51,8 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--normalization-lookback-sessions", command)
         self.assertIn("--velocity-bins", command)
         self.assertIn("--velocity-clip", command)
+        self.assertIn("--velocity-smoothing", command)
+        self.assertIn("--feature-mode", command)
         self.assertIn("--kl-weight", command)
         self.assertIn("--ordinal-weight", command)
         self.assertIn("--pretrain-epochs", command)
@@ -58,7 +60,8 @@ class WebJobTests(unittest.TestCase):
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
         self.assertEqual(request.training_scope, "per-symbol")
-        self.assertEqual(request.profile_protocol, "phase-space-log-v3")
+        self.assertEqual(request.profile_protocol, "phase-space-gated-v4")
+        self.assertEqual(request.feature_mode, "gated-full")
 
         deterministic = build_command(
             request.model_copy(update={"deterministic_training": True}),
@@ -172,6 +175,7 @@ class WebJobTests(unittest.TestCase):
             request.pop("profile_protocol")
             request.pop("training_scope")
             request.pop("latent_states")
+            request.pop("feature_mode")
             request.pop("bin_width_bps")
             request.pop("max_profile_bins")
             payload = {
@@ -192,6 +196,7 @@ class WebJobTests(unittest.TestCase):
             self.assertEqual(loaded.request.profile_protocol, "legacy-fixed-bins")
             self.assertEqual(loaded.request.training_scope, "shared-legacy")
             self.assertEqual(loaded.request.latent_states, 10)
+            self.assertEqual(loaded.request.feature_mode, "legacy-entangled")
 
 
 if __name__ == "__main__":
