@@ -33,6 +33,10 @@ def prediction(day: int, target: int, probability: tuple[float, ...]) -> Predict
         aleatoric_variance=(0.01,) * 3,
         epistemic_variance=(0.001,) * 3,
         expected_score=float(np.asarray(probability) @ scores),
+        expected_return=(-0.01, 0.0, 0.01)[target],
+        return_variance=0.0001,
+        aleatoric_return_variance=0.00009,
+        epistemic_return_variance=0.00001,
         context_length=8,
     )
 
@@ -100,7 +104,7 @@ class EvaluationTests(unittest.TestCase):
         cautious = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=4.0))
         self.assertEqual(cautious.target_position(uncertain_bull, 0.7), 0.7)
 
-    def test_return_moments_are_selected_by_symbol(self) -> None:
+    def test_continuous_posterior_return_is_used_directly(self) -> None:
         first = replace(
             prediction(1, 2, (0.0, 0.0, 1.0)), symbol="000001"
         )
@@ -114,7 +118,7 @@ class EvaluationTests(unittest.TestCase):
             {"000001": (0.0001,) * 3, "000002": (0.0001,) * 3},
         )
 
-        np.testing.assert_allclose(report["series"]["return_residuals"], [0.0, -0.02])
+        np.testing.assert_allclose(report["series"]["return_residuals"], [0.0, 0.0])
 
     def test_report_chart_uses_bimonthly_date_labels(self) -> None:
         try:

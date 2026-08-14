@@ -9,6 +9,14 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 
+class DeterministicLinear(nn.Linear):
+    """Linear layer sharing the Bayesian layer call contract."""
+
+    def forward(self, values: Tensor, *, sample: bool = False) -> Tensor:
+        del sample
+        return F.linear(values, self.weight, self.bias)
+
+
 class BayesianLinear(nn.Module):
     def __init__(
         self,

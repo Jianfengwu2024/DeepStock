@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+import numpy as np
 import torch
 from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
@@ -14,7 +15,11 @@ from torch.utils.data import DataLoader, Dataset
 
 from .config import PROFILE_CHANNELS, REGIME_COUNT, REGIME_NAMES, REGIME_PROTOCOL
 from .data.dataset import ProfileSequence
-from .model import BNHMMNetwork, evidential_classification_loss
+from .model import (
+    BNHMMNetwork,
+    normal_regime_probabilities,
+    return_distribution_loss,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +30,10 @@ class ModelConfig:
     latent_states: int = 50
     output_states: int = REGIME_COUNT
     feature_mode: str = "gated-full"
+    bayesian_backbone: bool = False
+    transition_rank: int = 4
+    bear_threshold: float = -0.005
+    bull_threshold: float = 0.005
     d_model: int = 96
     motif_dim: int = 32
     heads: int = 4
@@ -51,10 +60,13 @@ class TrainerConfig:
     kl_anneal_epochs: int = 10
     brier_weight: float = 0.25
     ordinal_weight: float = 0.0
-    pretrain_epochs: int = 0
+    pretrain_epochs: int = 10
     pretrain_mask_probability: float = 0.15
     pretrain_next_weight: float = 1.0
+    pretrain_profile_weight: float = 1.0
     latent_balance_weight: float = 0.05
+    student_df: float = 4.0
+    max_tokens_per_batch: int = 256
     sample_during_training: bool = True
     gradient_clip: float = 1.0
     seed: int = 7
@@ -72,6 +84,12 @@ class TrainerConfig:
             raise ValueError("pretraining mask probability must be between zero and one")
         if self.pretrain_next_weight < 0:
             raise ValueError("next-state pretraining weight cannot be negative")
+        if self.pretrain_profile_weight < 0:
+            raise ValueError("profile pretraining weight cannot be negative")
+        if self.student_df <= 2.0:
+            raise ValueError("Student-t degrees of freedom must exceed two")
+        if self.max_tokens_per_batch < 1:
+            raise ValueError("maximum tokens per batch must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +125,7 @@ def collate_profile_sequences(items: Sequence[ProfileSequence]) -> dict[str, Ten
     state_features = torch.zeros(batch, sequence, feature_dim, dtype=torch.float32)
     timeframe_ids = torch.zeros(batch, sequence, dtype=torch.long)
     targets = torch.zeros(batch, sequence, dtype=torch.long)
+    forward_returns = torch.zeros(batch, sequence, dtype=torch.float32)
     valid_mask = torch.zeros(batch, sequence, dtype=torch.bool)
     for index, item in enumerate(items):
         if len(item.profiles) != len(item) or len(item.bin_coordinates) != len(item):
@@ -130,6 +149,9 @@ def collate_profile_sequences(items: Sequence[ProfileSequence]) -> dict[str, Ten
         state_features[index, :length] = torch.from_numpy(item.state_features)
         timeframe_ids[index, :length] = torch.from_numpy(item.timeframe_ids)
         targets[index, :length] = torch.from_numpy(item.targets)
+        forward_returns[index, :length] = torch.from_numpy(
+            item.forward_returns.astype(np.float32)
+        )
         valid_mask[index, :length] = True
     return {
         "profiles": profiles,
@@ -138,8 +160,31 @@ def collate_profile_sequences(items: Sequence[ProfileSequence]) -> dict[str, Ten
         "state_features": state_features,
         "timeframe_ids": timeframe_ids,
         "targets": targets,
+        "forward_returns": forward_returns,
         "valid_mask": valid_mask,
     }
+
+
+def profile_summary_targets(batch: dict[str, Tensor]) -> Tensor:
+    """Produce fixed-size mass/location/spread targets from variable profiles."""
+    profiles = batch["profiles"]
+    mask = batch["profile_mask"].unsqueeze(-1).to(profiles.dtype)
+    coordinates = torch.clamp(
+        batch["bin_coordinates"] / 64.0, -4.0, 4.0
+    ).unsqueeze(-1)
+    absolute = profiles.abs() * mask
+    denominator = absolute.sum(dim=-2).clamp_min(1e-8)
+    mass = torch.clamp((profiles * mask).sum(dim=-2), -4.0, 4.0)
+    location = (absolute * coordinates).sum(dim=-2) / denominator
+    spread = torch.sqrt(
+        (
+            absolute
+            * (coordinates - location.unsqueeze(-2)).square()
+        ).sum(dim=-2)
+        / denominator
+        + 1e-8
+    )
+    return torch.cat((mass, location, spread), dim=-1)
 
 
 class BNHMMTrainer:
@@ -168,23 +213,24 @@ class BNHMMTrainer:
         generator = torch.Generator().manual_seed(self.config.seed)
         pretraining_generator = torch.Generator().manual_seed(self.config.seed + 10_000)
         dataset = _SequenceDataset(train_sequences)
+        effective_batch_size = self._effective_batch_size(train_sequences)
         train_loader = DataLoader(
             dataset,
-            batch_size=self.config.batch_size,
+            batch_size=effective_batch_size,
             shuffle=True,
             collate_fn=collate_profile_sequences,
             generator=generator,
         )
         pretraining_loader = DataLoader(
             dataset,
-            batch_size=self.config.batch_size,
+            batch_size=effective_batch_size,
             shuffle=True,
             collate_fn=collate_profile_sequences,
             generator=pretraining_generator,
         )
         validation_loader = DataLoader(
             _SequenceDataset(validation_sequences),
-            batch_size=self.config.batch_size,
+            batch_size=self._effective_batch_size(validation_sequences),
             shuffle=False,
             collate_fn=collate_profile_sequences,
         )
@@ -229,16 +275,17 @@ class BNHMMTrainer:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(self.config.seed)
         dataset = _SequenceDataset(train_sequences)
+        effective_batch_size = self._effective_batch_size(train_sequences)
         loader = DataLoader(
             dataset,
-            batch_size=self.config.batch_size,
+            batch_size=effective_batch_size,
             shuffle=True,
             collate_fn=collate_profile_sequences,
             generator=torch.Generator().manual_seed(self.config.seed),
         )
         pretraining_loader = DataLoader(
             dataset,
-            batch_size=self.config.batch_size,
+            batch_size=effective_batch_size,
             shuffle=True,
             collate_fn=collate_profile_sequences,
             generator=torch.Generator().manual_seed(self.config.seed + 10_000),
@@ -264,6 +311,13 @@ class BNHMMTrainer:
             pretraining_history,
         )
 
+    def _effective_batch_size(
+        self, sequences: Sequence[ProfileSequence]
+    ) -> int:
+        longest = max(len(item) for item in sequences)
+        token_limited = max(1, self.config.max_tokens_per_batch // longest)
+        return min(self.config.batch_size, token_limited)
+
     def _pretrain(
         self, loader: DataLoader[dict[str, Tensor]]
     ) -> tuple[dict[str, float], ...]:
@@ -279,6 +333,8 @@ class BNHMMTrainer:
             self.model.train()
             masked_total = 0.0
             next_total = 0.0
+            masked_profile_total = 0.0
+            next_profile_total = 0.0
             batch_count = 0
             for cpu_batch in loader:
                 batch = {key: value.to(self.device) for key, value in cpu_batch.items()}
@@ -290,16 +346,19 @@ class BNHMMTrainer:
                     first_valid = batch["valid_mask"].nonzero()[0]
                     masked_states[first_valid[0], first_valid[1]] = True
 
+                profile_targets = profile_summary_targets(batch)
                 profiles = batch["profiles"].clone()
                 state_features = batch["state_features"].clone()
+                bin_coordinates = batch["bin_coordinates"].clone()
                 profiles[masked_states] = 0.0
                 state_features[masked_states] = 0.0
+                bin_coordinates[masked_states] = 0.0
                 optimizer.zero_grad(set_to_none=True)
                 output = self.model(
                     profiles,
                     batch["timeframe_ids"],
                     state_features,
-                    batch["bin_coordinates"],
+                    bin_coordinates,
                     batch["profile_mask"],
                     valid_mask=batch["valid_mask"],
                     sample=False,
@@ -310,27 +369,54 @@ class BNHMMTrainer:
                     reconstructed[masked_states],
                     batch["state_features"][masked_states],
                 )
+                reconstructed_profile = (
+                    self.model.masked_profile_reconstruction(features)
+                )
+                masked_profile_loss = torch.nn.functional.smooth_l1_loss(
+                    reconstructed_profile[masked_states],
+                    profile_targets[masked_states],
+                )
 
                 pair_mask = (
                     batch["valid_mask"][:, :-1] & batch["valid_mask"][:, 1:]
                 )
                 predicted_next = self.model.next_state_prediction(features[:, :-1])
-                next_loss = torch.nn.functional.smooth_l1_loss(
-                    predicted_next[pair_mask],
-                    batch["state_features"][:, 1:][pair_mask],
+                predicted_next_profile = self.model.next_profile_prediction(
+                    features[:, :-1]
                 )
-                total = masked_loss + self.config.pretrain_next_weight * next_loss
+                if pair_mask.any():
+                    next_loss = torch.nn.functional.smooth_l1_loss(
+                        predicted_next[pair_mask],
+                        batch["state_features"][:, 1:][pair_mask],
+                    )
+                    next_profile_loss = torch.nn.functional.smooth_l1_loss(
+                        predicted_next_profile[pair_mask],
+                        profile_targets[:, 1:][pair_mask],
+                    )
+                else:
+                    next_loss = predicted_next.sum() * 0.0
+                    next_profile_loss = predicted_next_profile.sum() * 0.0
+                total = (
+                    masked_loss
+                    + self.config.pretrain_next_weight * next_loss
+                    + self.config.pretrain_profile_weight
+                    * (masked_profile_loss + next_profile_loss)
+                )
                 total.backward()
                 clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
                 optimizer.step()
                 masked_total += float(masked_loss.detach())
                 next_total += float(next_loss.detach())
+                masked_profile_total += float(masked_profile_loss.detach())
+                next_profile_total += float(next_profile_loss.detach())
                 batch_count += 1
             history.append(
                 {
                     "epoch": float(epoch),
                     "masked_state_loss": masked_total / batch_count,
                     "next_state_loss": next_total / batch_count,
+                    "masked_profile_loss": masked_profile_total / batch_count,
+                    "next_profile_loss": next_profile_total / batch_count,
                 }
             )
         return tuple(history)
@@ -352,7 +438,8 @@ class BNHMMTrainer:
         totals = {
             "loss": 0.0,
             "predictive_loss": 0.0,
-            "nll": 0.0,
+            "return_nll": 0.0,
+            "return_mae": 0.0,
             "brier": 0.0,
             "ordinal": 0.0,
             "kl": 0.0,
@@ -374,14 +461,18 @@ class BNHMMTrainer:
                     valid_mask=batch["valid_mask"],
                     sample=training and self.config.sample_during_training,
                 )
-                loss = evidential_classification_loss(
+                loss = return_distribution_loss(
                     output,
+                    batch["forward_returns"],
                     batch["targets"],
                     valid_mask=batch["valid_mask"],
                     kl_weight=self.config.kl_weight * kl_scale,
                     brier_weight=self.config.brier_weight,
                     ordinal_weight=self.config.ordinal_weight,
                     latent_balance_weight=self.config.latent_balance_weight,
+                    student_df=self.config.student_df,
+                    bear_threshold=self.model.bear_threshold,
+                    bull_threshold=self.model.bull_threshold,
                 )
                 if optimizer is not None:
                     loss.total.backward()
@@ -389,18 +480,24 @@ class BNHMMTrainer:
                     optimizer.step()
 
             tokens = int(batch["valid_mask"].sum().item())
-            probability = output.alpha / output.alpha.sum(dim=-1, keepdim=True)
+            probability = normal_regime_probabilities(
+                output.return_mean,
+                output.return_log_variance.exp(),
+                self.model.bear_threshold,
+                self.model.bull_threshold,
+            )
             correct = (
                 (probability.argmax(dim=-1) == batch["targets"])
                 & batch["valid_mask"]
             ).sum()
             totals["loss"] += float(loss.total.detach()) * tokens
             predictive_loss = (
-                loss.evidential_nll + self.config.brier_weight * loss.brier
+                loss.return_nll + self.config.brier_weight * loss.brier
                 + self.config.ordinal_weight * loss.ordinal
             )
             totals["predictive_loss"] += float(predictive_loss.detach()) * tokens
-            totals["nll"] += float(loss.evidential_nll.detach()) * tokens
+            totals["return_nll"] += float(loss.return_nll.detach()) * tokens
+            totals["return_mae"] += float(loss.return_mae.detach()) * tokens
             totals["brier"] += float(loss.brier.detach()) * tokens
             totals["ordinal"] += float(loss.ordinal.detach()) * tokens
             totals["kl"] += float(loss.kl.detach()) * tokens
@@ -424,7 +521,7 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 7,
+            "format_version": 8,
             "regime_protocol": REGIME_PROTOCOL,
             "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),

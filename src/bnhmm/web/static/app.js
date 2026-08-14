@@ -214,8 +214,10 @@ function renderJob(job) {
   const stateMode = job.request.state_timeframe === "mixed"
     ? "小时 + 日状态"
     : "日状态（1分钟线生成）";
-  const profileMode = job.request.profile_protocol === "phase-space-joint-v5"
+  const profileMode = job.request.profile_protocol === "phase-space-joint-return-v6"
     ? `${job.request.bin_width_bps} BP 联合速度相空间 · ${job.request.normalization_lookback_sessions}日归一化`
+    : job.request.profile_protocol === "phase-space-joint-v5"
+      ? `${job.request.bin_width_bps} BP 旧联合速度相空间`
     : job.request.profile_protocol === "phase-space-gated-v4"
       ? `${job.request.bin_width_bps} BP 旧边际速度相空间`
     : job.request.profile_protocol === "phase-space-log-v3"
@@ -234,7 +236,10 @@ function renderJob(job) {
     "price-velocity": "价格 + 联合速度",
     "legacy-entangled": "旧混合特征",
   })[job.request.feature_mode] || "旧混合特征";
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → 9 隐藏节点 · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  const outputMode = job.request.profile_protocol === "phase-space-joint-return-v6"
+    ? "连续收益后验 → 空/平/多"
+    : "旧三分类证据头";
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → 9 隐藏节点 · ${outputMode} · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);

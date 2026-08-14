@@ -5,7 +5,12 @@ import unittest
 import torch
 
 from bnhmm import PROFILE_CHANNELS
-from bnhmm.model import BNHMMNetwork, SinglePassOutput, evidential_classification_loss
+from bnhmm.model import (
+    BNHMMNetwork,
+    SinglePassOutput,
+    normal_regime_probabilities,
+    return_distribution_loss,
+)
 
 
 def profiles(
@@ -41,19 +46,21 @@ class BNHMMNetworkTests(unittest.TestCase):
         features = state_features()
         timeframes = torch.tensor([[0, 0, 0, 1, 0, 1]]).repeat(2, 1)
         output = self.model(values, timeframes, features, sample=True)
-        self.assertEqual(output.alpha.shape, (2, 6, 3))
+        self.assertEqual(output.return_mean.shape, (2, 6))
+        self.assertEqual(output.return_log_variance.shape, (2, 6))
         self.assertEqual(output.latent_probabilities.shape, (2, 6, 50))
         self.assertEqual(self.model.output_hidden_states, 9)
         self.assertEqual(self.model.output_hidden.weight_mu.shape, (9, 50))
-        self.assertEqual(self.model.evidence.weight_mu.shape, (3, 9))
-        self.assertTrue(torch.all(output.alpha > 1.0))
+        self.assertEqual(self.model.return_distribution.weight_mu.shape, (2, 9))
+        self.assertTrue(torch.all(output.return_log_variance <= -3.0))
         self.assertTrue(
             torch.allclose(
                 output.latent_probabilities.sum(dim=-1), torch.ones(2, 6), atol=1e-5
             )
         )
         targets = torch.randint(0, 3, (2, 6))
-        loss = evidential_classification_loss(output, targets)
+        returns = torch.randn(2, 6) * 0.01
+        loss = return_distribution_loss(output, returns, targets)
         loss.total.backward()
         self.assertTrue(torch.isfinite(loss.total))
         self.assertLess(float(loss.kl.detach()), 10.0)
@@ -82,22 +89,39 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(torch.all(posterior.expected_score >= -1.0))
         self.assertEqual(self.model.regime_scores.tolist(), [-1.0, 0.0, 1.0])
 
-    def test_ordinal_loss_penalizes_distant_state_errors(self) -> None:
+    def test_low_rank_transition_dimensions_match_configuration(self) -> None:
+        self.assertEqual(self.model.transition_rank, 4)
+        self.assertEqual(
+            self.model.transition_source_context.weight_mu.shape,
+            (self.model.latent_states * 4, self.model.d_model),
+        )
+        self.assertEqual(
+            self.model.transition_destination_context.weight_mu.shape,
+            (self.model.latent_states * 4, self.model.d_model),
+        )
+        self.assertEqual(
+            self.model.transition_mu.shape,
+            (self.model.latent_states, self.model.latent_states),
+        )
+
+    def test_return_loss_penalizes_distant_errors(self) -> None:
         common = {
             "latent_probabilities": torch.full((1, 1, 50), 0.02),
             "context": torch.zeros(1, 1, 4),
             "kl_divergence": torch.tensor(0.0),
+            "return_log_variance": torch.full((1, 1), -8.0),
         }
         near = SinglePassOutput(
-            alpha=torch.tensor([[[2.0, 9.0, 2.0]]]), **common
+            return_mean=torch.tensor([[0.001]]), **common
         )
         far = SinglePassOutput(
-            alpha=torch.tensor([[[2.0, 2.0, 9.0]]]), **common
+            return_mean=torch.tensor([[0.05]]), **common
         )
-        target = torch.zeros((1, 1), dtype=torch.long)
+        targets = torch.ones((1, 1), dtype=torch.long)
+        returns = torch.zeros((1, 1))
 
-        near_loss = evidential_classification_loss(near, target).ordinal
-        far_loss = evidential_classification_loss(far, target).ordinal
+        near_loss = return_distribution_loss(near, returns, targets).return_nll
+        far_loss = return_distribution_loss(far, returns, targets).return_nll
 
         self.assertGreater(float(far_loss), float(near_loss))
 
@@ -110,7 +134,11 @@ class BNHMMNetworkTests(unittest.TestCase):
         timeframes = torch.tensor([[0, 0, 0, 1, 0, 1]])
         first = self.model(original, timeframes, features, sample=False)
         second = self.model(changed, timeframes, features, sample=False)
-        self.assertTrue(torch.allclose(first.alpha[:, :4], second.alpha[:, :4], atol=1e-6))
+        self.assertTrue(
+            torch.allclose(
+                first.return_mean[:, :4], second.return_mean[:, :4], atol=1e-6
+            )
+        )
         self.assertTrue(
             torch.allclose(
                 first.latent_probabilities[:, :4],
@@ -159,7 +187,9 @@ class BNHMMNetworkTests(unittest.TestCase):
         first = model(original, timeframes, features, sample=False)
         second = model(changed, timeframes, changed_features, sample=False)
 
-        self.assertTrue(torch.allclose(first.alpha, second.alpha, atol=1e-6))
+        self.assertTrue(
+            torch.allclose(first.return_mean, second.return_mean, atol=1e-6)
+        )
 
     def test_zero_auxiliary_features_produce_zero_residual(self) -> None:
         values = torch.zeros(1, 1, 16, 2)

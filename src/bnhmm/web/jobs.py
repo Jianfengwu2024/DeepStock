@@ -40,7 +40,7 @@ class WalkForwardJobRequest(BaseModel):
     learning_rate: float = Field(3e-4, gt=0, le=1.0)
     kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
     ordinal_weight: float = Field(0.0, ge=0.0, le=10.0)
-    pretrain_epochs: int = Field(0, ge=0, le=1000)
+    pretrain_epochs: int = Field(10, ge=0, le=1000)
     pretrain_mask_probability: float = Field(0.15, gt=0.0, lt=1.0)
     deterministic_training: bool = False
     forward_sessions: int = Field(1, ge=1, le=60)
@@ -56,13 +56,14 @@ class WalkForwardJobRequest(BaseModel):
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
     velocity_smoothing: float = Field(0.25, ge=0.0, le=10.0)
     profile_protocol: Literal[
+        "phase-space-joint-return-v6",
         "phase-space-joint-v5",
         "phase-space-gated-v4",
         "phase-space-log-v3",
         "variable-log-bins-v2",
         "legacy-fixed-bins",
     ] = (
-        "phase-space-joint-v5"
+        "phase-space-joint-return-v6"
     )
     state_timeframe: Literal["daily", "mixed"] = "daily"
     sequence_length: int = Field(128, ge=8, le=2048)

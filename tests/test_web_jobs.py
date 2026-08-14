@@ -60,7 +60,7 @@ class WebJobTests(unittest.TestCase):
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
         self.assertEqual(request.training_scope, "per-symbol")
-        self.assertEqual(request.profile_protocol, "phase-space-joint-v5")
+        self.assertEqual(request.profile_protocol, "phase-space-joint-return-v6")
         self.assertEqual(request.feature_mode, "gated-full")
 
         deterministic = build_command(

@@ -15,13 +15,35 @@ from ..config import (
     REGIME_COUNT,
     REGIME_SCORES,
 )
-from .bayesian import BayesianLinear, module_kl_divergence
+from .bayesian import BayesianLinear, DeterministicLinear, module_kl_divergence
 from .transformer import BayesianTransformerBlock
+
+
+def normal_regime_probabilities(
+    mean: Tensor,
+    variance: Tensor,
+    bear_threshold: float = -0.005,
+    bull_threshold: float = 0.005,
+) -> Tensor:
+    """Convert a Gaussian return posterior into bear/flat/bull probabilities."""
+    scale = variance.clamp_min(1e-12).sqrt()
+    denominator = scale * 2.0**0.5
+    bear = 0.5 * (
+        1.0 + torch.erf((bear_threshold - mean) / denominator)
+    )
+    below_bull = 0.5 * (
+        1.0 + torch.erf((bull_threshold - mean) / denominator)
+    )
+    flat = (below_bull - bear).clamp_min(0.0)
+    bull = (1.0 - below_bull).clamp_min(0.0)
+    probability = torch.stack((bear, flat, bull), dim=-1)
+    return probability / probability.sum(dim=-1, keepdim=True).clamp_min(1e-12)
 
 
 @dataclass(frozen=True, slots=True)
 class SinglePassOutput:
-    alpha: Tensor
+    return_mean: Tensor
+    return_log_variance: Tensor
     latent_probabilities: Tensor
     context: Tensor
     kl_divergence: Tensor
@@ -35,6 +57,10 @@ class PosteriorOutput:
     epistemic_variance: Tensor
     latent_probabilities: Tensor
     expected_score: Tensor
+    expected_return: Tensor
+    return_variance: Tensor
+    aleatoric_return_variance: Tensor
+    epistemic_return_variance: Tensor
 
     @property
     def state_index(self) -> Tensor:
@@ -52,20 +78,22 @@ class BayesianMotifBranch(nn.Module):
         *,
         include_coordinates: bool,
         bias: bool,
+        bayesian: bool,
     ) -> None:
         super().__init__()
         self.include_coordinates = include_coordinates
         coordinate_features = 5 if include_coordinates else 0
-        self.single = BayesianLinear(
+        linear = BayesianLinear if bayesian else DeterministicLinear
+        self.single = linear(
             channels + coordinate_features, motif_dim, bias=bias
         )
-        self.pair = BayesianLinear(
+        self.pair = linear(
             channels * 2 + coordinate_features, motif_dim, bias=bias
         )
-        self.triple = BayesianLinear(
+        self.triple = linear(
             channels * 3 + coordinate_features, motif_dim, bias=bias
         )
-        self.output = BayesianLinear(motif_dim * 3, d_model, bias=bias)
+        self.output = linear(motif_dim * 3, d_model, bias=bias)
         self.output_norm = nn.LayerNorm(d_model)
 
     def forward(
@@ -118,6 +146,8 @@ class BayesianMotifTokenizer(nn.Module):
         d_model: int,
         motif_dim: int,
         feature_mode: str,
+        *,
+        bayesian: bool,
     ) -> None:
         super().__init__()
         joint_velocity_channels = profile_channels - 4
@@ -138,11 +168,22 @@ class BayesianMotifTokenizer(nn.Module):
         self.state_feature_dim = state_feature_dim
         self.feature_mode = feature_mode
         self.joint_velocity_channels = joint_velocity_channels
+        linear = BayesianLinear if bayesian else DeterministicLinear
         self.price_branch = BayesianMotifBranch(
-            2, d_model, motif_dim, include_coordinates=True, bias=True
+            2,
+            d_model,
+            motif_dim,
+            include_coordinates=True,
+            bias=True,
+            bayesian=bayesian,
         )
         self.volume_branch = BayesianMotifBranch(
-            2, d_model, motif_dim, include_coordinates=False, bias=False
+            2,
+            d_model,
+            motif_dim,
+            include_coordinates=False,
+            bias=False,
+            bayesian=bayesian,
         )
         self.joint_velocity_branch = BayesianMotifBranch(
             self.joint_velocity_channels,
@@ -150,6 +191,7 @@ class BayesianMotifTokenizer(nn.Module):
             motif_dim,
             include_coordinates=False,
             bias=False,
+            bayesian=bayesian,
         )
         self.auxiliary_gate_logits = nn.Parameter(torch.full((2,), -3.0))
         enabled = {
@@ -164,9 +206,9 @@ class BayesianMotifTokenizer(nn.Module):
         self.register_buffer(
             "auxiliary_enabled", torch.tensor(enabled), persistent=True
         )
-        self.pool_score = BayesianLinear(d_model, 1)
-        self.metadata = BayesianLinear(state_feature_dim, d_model)
-        self.combine = BayesianLinear(d_model * 2, d_model)
+        self.pool_score = linear(d_model, 1)
+        self.metadata = linear(state_feature_dim, d_model)
+        self.combine = linear(d_model * 2, d_model)
         self.output_norm = nn.LayerNorm(d_model)
 
     def forward(
@@ -283,6 +325,10 @@ class BNHMMNetwork(nn.Module):
         latent_states: int = 50,
         output_states: int = REGIME_COUNT,
         feature_mode: str = "gated-full",
+        bayesian_backbone: bool = False,
+        transition_rank: int = 4,
+        bear_threshold: float = -0.005,
+        bull_threshold: float = 0.005,
         d_model: int = 96,
         motif_dim: int = 32,
         heads: int = 4,
@@ -300,6 +346,10 @@ class BNHMMNetwork(nn.Module):
             raise ValueError("BNHMM requires bear, flat, and bull output regimes")
         if max_sequence_length < 2:
             raise ValueError("max_sequence_length must be at least two")
+        if transition_rank < 1 or transition_rank > latent_states:
+            raise ValueError("transition rank must be between one and latent states")
+        if bear_threshold >= bull_threshold:
+            raise ValueError("return regime thresholds must be ordered")
         self.max_profile_bins = max_profile_bins
         self.profile_channels = profile_channels
         self.state_feature_dim = state_feature_dim
@@ -307,6 +357,10 @@ class BNHMMNetwork(nn.Module):
         self.output_hidden_states = OUTPUT_HIDDEN_STATES
         self.output_states = output_states
         self.feature_mode = feature_mode
+        self.bayesian_backbone = bayesian_backbone
+        self.transition_rank = transition_rank
+        self.bear_threshold = float(bear_threshold)
+        self.bull_threshold = float(bull_threshold)
         self.max_sequence_length = max_sequence_length
         self.d_model = d_model
 
@@ -317,6 +371,7 @@ class BNHMMNetwork(nn.Module):
             d_model,
             motif_dim,
             feature_mode,
+            bayesian=bayesian_backbone,
         )
         self.timeframe_embedding = nn.Embedding(2, d_model)
         self.position_embedding = nn.Parameter(
@@ -325,26 +380,40 @@ class BNHMMNetwork(nn.Module):
         nn.init.normal_(self.position_embedding, std=0.02)
         self.blocks = nn.ModuleList(
             BayesianTransformerBlock(
-                d_model, heads, feedforward_dim, dropout
+                d_model,
+                heads,
+                feedforward_dim,
+                dropout,
+                bayesian=bayesian_backbone,
             )
             for _ in range(layers)
         )
         self.output_norm = nn.LayerNorm(d_model)
         self.latent_emission = BayesianLinear(d_model, latent_states)
-        self.transition_context = BayesianLinear(
-            d_model, latent_states * latent_states
+        self.transition_source_context = BayesianLinear(
+            d_model, latent_states * transition_rank
+        )
+        self.transition_destination_context = BayesianLinear(
+            d_model, latent_states * transition_rank
         )
         transition = torch.eye(latent_states) * 2.0
         self.transition_mu = nn.Parameter(transition)
         self.transition_rho = nn.Parameter(torch.full_like(transition, -4.5))
         self.output_hidden = BayesianLinear(latent_states, OUTPUT_HIDDEN_STATES)
-        self.evidence = BayesianLinear(OUTPUT_HIDDEN_STATES, output_states)
+        self.return_distribution = BayesianLinear(OUTPUT_HIDDEN_STATES, 2)
         pretraining_dim = d_model + latent_states
         self.masked_state_reconstruction = nn.Linear(
             pretraining_dim, state_feature_dim
         )
         self.next_state_prediction = nn.Linear(
             pretraining_dim, state_feature_dim
+        )
+        profile_summary_dim = profile_channels * 3
+        self.masked_profile_reconstruction = nn.Linear(
+            pretraining_dim, profile_summary_dim
+        )
+        self.next_profile_prediction = nn.Linear(
+            pretraining_dim, profile_summary_dim
         )
         self.register_buffer(
             "regime_scores", torch.tensor(REGIME_SCORES), persistent=False
@@ -416,9 +485,15 @@ class BNHMMNetwork(nn.Module):
         context = self.output_norm(tokens) * valid_mask.unsqueeze(-1)
 
         emissions = F.softmax(self.latent_emission(context, sample=sample), dim=-1)
-        transition_delta = self.transition_context(context, sample=sample).view(
-            batch, sequence, self.latent_states, self.latent_states
-        )
+        transition_source = self.transition_source_context(
+            context, sample=sample
+        ).view(batch, sequence, self.latent_states, self.transition_rank)
+        transition_destination = self.transition_destination_context(
+            context, sample=sample
+        ).view(batch, sequence, self.latent_states, self.transition_rank)
+        transition_delta = torch.einsum(
+            "bsir,bsjr->bsij", transition_source, transition_destination
+        ) / self.transition_rank**0.5
         transition_std = F.softplus(self.transition_rho)
         transition_base = self.transition_mu
         if sample:
@@ -428,13 +503,23 @@ class BNHMMNetwork(nn.Module):
         latent = self._filter_latent(
             emissions, transition_base, transition_delta, valid_mask
         )
-        output_hidden = F.gelu(self.output_hidden(latent, sample=sample))
-        evidence = F.softplus(self.evidence(output_hidden, sample=sample))
-        alpha = evidence + 1.0
+        latent_features = latent * float(self.latent_states)
+        output_hidden = F.gelu(
+            self.output_hidden(latent_features, sample=sample)
+        )
+        return_parameters = self.return_distribution(
+            output_hidden, sample=sample
+        )
+        return_mean = 0.1 * torch.tanh(return_parameters[..., 0])
+        return_log_variance = torch.clamp(
+            return_parameters[..., 1] - 7.0, min=-12.0, max=-3.0
+        )
         kl = (
             module_kl_divergence(self) + self._transition_kl(transition_std)
         ) / self.kl_distribution_count
-        return SinglePassOutput(alpha, latent, context, kl)
+        return SinglePassOutput(
+            return_mean, return_log_variance, latent, context, kl
+        )
 
     def pretraining_features(self, output: SinglePassOutput) -> Tensor:
         return torch.cat((output.context, output.latent_probabilities), dim=-1)
@@ -485,8 +570,9 @@ class BNHMMNetwork(nn.Module):
             raise ValueError("mc_samples must be at least two")
         was_training = self.training
         self.eval()
-        means: list[Tensor] = []
-        aleatoric: list[Tensor] = []
+        probability_samples: list[Tensor] = []
+        return_means: list[Tensor] = []
+        return_variances: list[Tensor] = []
         latent: list[Tensor] = []
         for _ in range(mc_samples):
             output = self(
@@ -498,19 +584,29 @@ class BNHMMNetwork(nn.Module):
                 valid_mask=valid_mask,
                 sample=True,
             )
-            concentration = output.alpha.sum(dim=-1, keepdim=True)
-            mean = output.alpha / concentration
-            variance = (
-                output.alpha * (concentration - output.alpha)
-                / (concentration.square() * (concentration + 1.0))
+            return_variance = output.return_log_variance.exp()
+            probability = normal_regime_probabilities(
+                output.return_mean,
+                return_variance,
+                self.bear_threshold,
+                self.bull_threshold,
             )
-            means.append(mean)
-            aleatoric.append(variance)
+            probability_samples.append(probability)
+            return_means.append(output.return_mean)
+            return_variances.append(return_variance)
             latent.append(output.latent_probabilities)
-        mean_stack = torch.stack(means)
-        aleatoric_variance = torch.stack(aleatoric).mean(dim=0)
-        epistemic_variance = mean_stack.var(dim=0, unbiased=False)
-        probability_mean = mean_stack.mean(dim=0)
+        probability_stack = torch.stack(probability_samples)
+        probability_mean = probability_stack.mean(dim=0)
+        aleatoric_variance = (
+            probability_stack * (1.0 - probability_stack)
+        ).mean(dim=0)
+        epistemic_variance = probability_stack.var(dim=0, unbiased=False)
+        return_mean_stack = torch.stack(return_means)
+        expected_return = return_mean_stack.mean(dim=0)
+        aleatoric_return_variance = torch.stack(return_variances).mean(dim=0)
+        epistemic_return_variance = return_mean_stack.var(
+            dim=0, unbiased=False
+        )
         expected_score = (probability_mean * self.regime_scores).sum(dim=-1)
         if was_training:
             self.train()
@@ -521,5 +617,11 @@ class BNHMMNetwork(nn.Module):
             epistemic_variance=epistemic_variance,
             latent_probabilities=torch.stack(latent).mean(dim=0),
             expected_score=expected_score,
+            expected_return=expected_return,
+            return_variance=(
+                aleatoric_return_variance + epistemic_return_variance
+            ),
+            aleatoric_return_variance=aleatoric_return_variance,
+            epistemic_return_variance=epistemic_return_variance,
         )
 

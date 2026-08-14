@@ -213,6 +213,12 @@ def _train(args: argparse.Namespace) -> int:
         "latest_epistemic_variance": posterior.epistemic_variance[0, last]
         .cpu()
         .tolist(),
+        "latest_expected_return": float(
+            posterior.expected_return[0, last].cpu()
+        ),
+        "latest_return_variance": float(
+            posterior.return_variance[0, last].cpu()
+        ),
         "checkpoint": str(checkpoint_path),
         "auxiliary_gates": dict(
             zip(
@@ -460,7 +466,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--kl-weight", type=float, default=1e-3)
     train.add_argument("--ordinal-weight", type=float, default=0.0)
-    train.add_argument("--pretrain-epochs", type=int, default=0)
+    train.add_argument("--pretrain-epochs", type=int, default=10)
     train.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     train.add_argument("--deterministic-training", action="store_true")
     train.add_argument("--train-fraction", type=float, default=0.8)
@@ -509,7 +515,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--learning-rate", type=float, default=3e-4)
     walk.add_argument("--kl-weight", type=float, default=1e-3)
     walk.add_argument("--ordinal-weight", type=float, default=0.0)
-    walk.add_argument("--pretrain-epochs", type=int, default=0)
+    walk.add_argument("--pretrain-epochs", type=int, default=10)
     walk.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     walk.add_argument("--deterministic-training", action="store_true")
     walk.add_argument("--forward-sessions", type=int, default=1)

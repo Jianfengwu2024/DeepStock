@@ -6,12 +6,14 @@ import numpy as np
 import torch
 
 from bnhmm import PROFILE_CHANNELS
+from bnhmm.model import normal_regime_probabilities
 from bnhmm.data.dataset import ProfileSequence
 from bnhmm.training import (
     BNHMMTrainer,
     ModelConfig,
     TrainerConfig,
     collate_profile_sequences,
+    profile_summary_targets,
 )
 
 
@@ -77,7 +79,7 @@ def learnable_sequence(symbol: str, length: int = 25) -> ProfileSequence:
             "datetime64[ns]"
         ),
         entry_prices=np.ones(length),
-        forward_returns=np.zeros(length),
+        forward_returns=np.asarray((-0.01, 0.0, 0.01))[targets],
     )
 
 
@@ -109,6 +111,12 @@ class TrainerTests(unittest.TestCase):
         )
         self.assertGreaterEqual(
             result.pretraining_history[-1]["next_state_loss"], 0.0
+        )
+        self.assertGreaterEqual(
+            result.pretraining_history[-1]["masked_profile_loss"], 0.0
+        )
+        self.assertGreaterEqual(
+            result.pretraining_history[-1]["next_profile_loss"], 0.0
         )
 
     def test_seeded_model_build_is_reproducible(self) -> None:
@@ -149,7 +157,7 @@ class TrainerTests(unittest.TestCase):
             feedforward_dim=24,
             dropout=0.0,
             max_sequence_length=8,
-        ).build()
+        ).build(seed=7)
         calls: list[bool] = []
         original_forward = model.forward
 
@@ -162,12 +170,43 @@ class TrainerTests(unittest.TestCase):
             model,
             TrainerConfig(
                 epochs=1,
+                pretrain_epochs=0,
                 batch_size=1,
                 sample_during_training=False,
             ),
         ).fit_fixed([sequence(4)])
 
         self.assertEqual(calls, [False])
+
+    def test_profile_summaries_are_finite_and_fixed_width(self) -> None:
+        batch = collate_profile_sequences(
+            [sequence(1, length=8), sequence(2, length=5)]
+        )
+
+        summaries = profile_summary_targets(batch)
+
+        self.assertEqual(summaries.shape, (2, 8, PROFILE_CHANNELS * 3))
+        self.assertTrue(torch.isfinite(summaries).all())
+
+    def test_effective_batch_size_caps_daily_state_tokens(self) -> None:
+        model = ModelConfig(
+            max_profile_bins=32,
+            d_model=16,
+            motif_dim=4,
+            heads=4,
+            layers=1,
+            feedforward_dim=24,
+            max_sequence_length=128,
+        ).build(seed=7)
+        trainer = BNHMMTrainer(
+            model,
+            TrainerConfig(batch_size=32, max_tokens_per_batch=256),
+        )
+
+        self.assertEqual(
+            trainer._effective_batch_size([sequence(1, length=80)]),
+            3,
+        )
 
     def test_collation_masks_variable_days_and_sequence_lengths(self) -> None:
         items = [sequence(1, length=8), sequence(2, length=5)]
@@ -190,17 +229,18 @@ class TrainerTests(unittest.TestCase):
             feedforward_dim=32,
             dropout=0.0,
             max_sequence_length=25,
-        ).build()
+        ).build(seed=7)
         trainer = BNHMMTrainer(
             model,
             TrainerConfig(
-                epochs=50,
+                epochs=200,
                 batch_size=4,
-                learning_rate=0.01,
+                learning_rate=0.003,
                 weight_decay=0.0,
                 kl_weight=0.0,
                 latent_balance_weight=0.0,
                 gradient_clip=5.0,
+                sample_during_training=False,
             ),
         )
 
@@ -216,8 +256,11 @@ class TrainerTests(unittest.TestCase):
                 valid_mask=batch["valid_mask"],
                 sample=False,
             )
+        probability = normal_regime_probabilities(
+            output.return_mean, output.return_log_variance.exp()
+        )
         accuracy = (
-            (output.alpha.argmax(dim=-1) == batch["targets"])[batch["valid_mask"]]
+            (probability.argmax(dim=-1) == batch["targets"])[batch["valid_mask"]]
             .float()
             .mean()
         )

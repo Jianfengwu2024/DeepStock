@@ -30,6 +30,10 @@ class PredictionRecord:
     aleatoric_variance: tuple[float, ...]
     epistemic_variance: tuple[float, ...]
     expected_score: float
+    expected_return: float
+    return_variance: float
+    aleatoric_return_variance: float
+    epistemic_return_variance: float
     context_length: int
 
 
@@ -109,6 +113,18 @@ def infer_sequences(
                     float(value) for value in posterior.epistemic_variance[0, index].cpu()
                 ),
                 expected_score=float(posterior.expected_score[0, index].cpu()),
+                expected_return=float(
+                    posterior.expected_return[0, index].cpu()
+                ),
+                return_variance=float(
+                    posterior.return_variance[0, index].cpu()
+                ),
+                aleatoric_return_variance=float(
+                    posterior.aleatoric_return_variance[0, index].cpu()
+                ),
+                epistemic_return_variance=float(
+                    posterior.epistemic_return_variance[0, index].cpu()
+                ),
                 context_length=index + 1,
             )
             previous = selected.get(key)
@@ -162,12 +178,8 @@ def evaluate_predictions(
     ranked_probability_score = np.square(
         probability.cumsum(axis=1)[:, :-1] - one_hot.cumsum(axis=1)[:, :-1]
     ).mean(axis=1)
-    predicted_returns = (probability * return_mean_rows).sum(axis=1)
-    mixture_second_moment = (
-        probability * (return_variance_rows + return_mean_rows**2)
-    ).sum(axis=1)
-    categorical_variance = np.maximum(
-        mixture_second_moment - predicted_returns**2, 0.0
+    predicted_returns = np.asarray(
+        [item.expected_return for item in predictions], dtype=np.float64
     )
     probability_variance = np.asarray(
         [
@@ -176,9 +188,9 @@ def evaluate_predictions(
             for item in predictions
         ]
     )
-    posterior_return_variance = categorical_variance + (
-        probability_variance * return_mean_rows**2
-    ).sum(axis=1)
+    posterior_return_variance = np.asarray(
+        [item.return_variance for item in predictions], dtype=np.float64
+    )
     return_residuals = returns - predicted_returns
     standardized_residuals = return_residuals / np.sqrt(
         np.maximum(posterior_return_variance, 1e-10)
@@ -229,6 +241,12 @@ def evaluate_predictions(
             "mean": float(return_residuals.mean()),
             "std": float(return_residuals.std()),
             "rmse": float(np.sqrt(np.square(return_residuals).mean())),
+            "mae": float(np.abs(return_residuals).mean()),
+            "correlation": float(
+                np.corrcoef(predicted_returns, returns)[0, 1]
+                if predicted_returns.std() > 0 and returns.std() > 0
+                else 0.0
+            ),
         },
         "standardized_residual": {
             "mean": float(standardized_residuals.mean()),

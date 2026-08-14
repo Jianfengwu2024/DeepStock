@@ -1,28 +1,31 @@
-"""Training objective for evidential Bayesian regime classification."""
+"""Continuous posterior objectives for the Bayesian market-state model."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import torch
 from torch import Tensor
 from torch.nn import functional as F
 
-from .network import SinglePassOutput
+from .network import SinglePassOutput, normal_regime_probabilities
 
 
 @dataclass(frozen=True, slots=True)
 class LossBreakdown:
     total: Tensor
-    evidential_nll: Tensor
+    return_nll: Tensor
+    return_mae: Tensor
     brier: Tensor
     ordinal: Tensor
     kl: Tensor
     latent_balance: Tensor
 
 
-def evidential_classification_loss(
+def return_distribution_loss(
     output: SinglePassOutput,
+    forward_returns: Tensor,
     targets: Tensor,
     *,
     valid_mask: Tensor | None = None,
@@ -30,31 +33,59 @@ def evidential_classification_loss(
     brier_weight: float = 0.25,
     ordinal_weight: float = 0.0,
     latent_balance_weight: float = 0.05,
+    student_df: float = 4.0,
+    bear_threshold: float = -0.005,
+    bull_threshold: float = 0.005,
 ) -> LossBreakdown:
-    if targets.shape != output.alpha.shape[:2]:
-        raise ValueError("targets must match alpha batch and sequence dimensions")
+    if forward_returns.shape != output.return_mean.shape:
+        raise ValueError("forward returns must match posterior mean dimensions")
+    if targets.shape != forward_returns.shape:
+        raise ValueError("targets must match forward returns")
     if valid_mask is None:
         valid_mask = torch.ones_like(targets, dtype=torch.bool)
     if valid_mask.shape != targets.shape:
         raise ValueError("valid_mask must match targets")
+    if student_df <= 2.0:
+        raise ValueError("Student-t degrees of freedom must exceed two")
 
-    concentration = output.alpha.sum(dim=-1)
-    selected_alpha = output.alpha.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
-    expected_nll = torch.digamma(concentration) - torch.digamma(selected_alpha)
-    probability = output.alpha / concentration.unsqueeze(-1)
-    one_hot = F.one_hot(targets, num_classes=output.alpha.shape[-1]).to(
+    error = forward_returns - output.return_mean
+    variance = output.return_log_variance.exp().clamp_min(1e-12)
+    # The network reports predictive variance. StudentT is parameterized by
+    # scale, whose variance is scale^2 * df / (df - 2).
+    scale_squared = variance * ((student_df - 2.0) / student_df)
+    constant = (
+        torch.lgamma(torch.as_tensor(student_df / 2.0, device=error.device))
+        - torch.lgamma(
+            torch.as_tensor((student_df + 1.0) / 2.0, device=error.device)
+        )
+        + 0.5 * math.log(student_df * math.pi)
+    )
+    nll_per_item = (
+        constant
+        + 0.5 * output.return_log_variance
+        + (student_df + 1.0)
+        / 2.0
+        * torch.log1p(error.square() / (student_df * scale_squared))
+    )
+    probability = normal_regime_probabilities(
+        output.return_mean,
+        variance,
+        bear_threshold,
+        bull_threshold,
+    )
+    one_hot = F.one_hot(targets, num_classes=probability.shape[-1]).to(
         probability.dtype
     )
     brier_per_item = (probability - one_hot).square().sum(dim=-1)
-    cumulative_probability = probability.cumsum(dim=-1)[..., :-1]
-    cumulative_target = one_hot.cumsum(dim=-1)[..., :-1]
     ordinal_per_item = (
-        cumulative_probability - cumulative_target
+        probability.cumsum(dim=-1)[..., :-1]
+        - one_hot.cumsum(dim=-1)[..., :-1]
     ).square().mean(dim=-1)
 
     mask = valid_mask.to(probability.dtype)
     denominator = mask.sum().clamp_min(1.0)
-    nll = (expected_nll * mask).sum() / denominator
+    return_nll = (nll_per_item * mask).sum() / denominator
+    return_mae = (error.abs() * mask).sum() / denominator
     brier = (brier_per_item * mask).sum() / denominator
     ordinal = (ordinal_per_item * mask).sum() / denominator
 
@@ -65,11 +96,18 @@ def evidential_classification_loss(
     latent_balance = (usage - uniform).square().sum()
     kl = output.kl_divergence
     total = (
-        nll
+        return_nll
         + brier_weight * brier
         + ordinal_weight * ordinal
         + kl_weight * kl
         + latent_balance_weight * latent_balance
     )
-    return LossBreakdown(total, nll, brier, ordinal, kl, latent_balance)
-
+    return LossBreakdown(
+        total,
+        return_nll,
+        return_mae,
+        brier,
+        ordinal,
+        kl,
+        latent_balance,
+    )

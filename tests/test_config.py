@@ -7,6 +7,7 @@ from bnhmm import (
     PROFILE_PROTOCOL,
     OUTPUT_HIDDEN_STATES,
     REGIME_NAMES,
+    REGIME_PROTOCOL,
     BNHMMConfig,
     LabelConfig,
     ProfileConfig,
@@ -20,6 +21,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(len(config.output_states), 3)
         self.assertEqual(OUTPUT_HIDDEN_STATES, 9)
         self.assertEqual(REGIME_NAMES, ("bear", "flat", "bull"))
+        self.assertEqual(
+            REGIME_PROTOCOL, "continuous-return-posterior-v2"
+        )
         with self.assertRaises(ValueError):
             BNHMMConfig(latent_states=PROFILE_CHANNELS - 1)
 
@@ -43,7 +47,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.velocity_bins, 3)
         self.assertEqual(config.velocity_smoothing, 0.25)
         self.assertEqual(config.profile_channels, PROFILE_CHANNELS)
-        self.assertEqual(PROFILE_PROTOCOL, "phase-space-joint-v5")
+        self.assertEqual(PROFILE_PROTOCOL, "phase-space-joint-return-v6")
         with self.assertRaises(ValueError):
             ProfileConfig(velocity_bins=8)
 

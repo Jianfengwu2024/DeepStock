@@ -19,22 +19,32 @@ All scalers use only the symbol's preceding ten completed sessions. Relative
 volume divides minute volume by prior ten-day mean daily volume divided by 240.
 Hourly states remain an explicit comparison mode only.
 
-The model core uses price motifs as its backbone. Relative volume and paired joint
-velocity use gated residual motif branches initialized near zero, so
-adding noisy features cannot immediately overwhelm the price baseline. Four
-feature modes support controlled ablation. The temporal core includes causal
-Bayesian multi-head attention, a conditional 50-state latent transition filter,
-a fixed nine-node Bayesian output hidden layer, and a three-regime Dirichlet
-evidence head. The first hidden-state count is configurable
-but cannot be smaller than the input channel count; the second hidden layer is
-always nine nodes. `predict_posterior()` separates
-aleatoric and epistemic variance through Monte Carlo weight sampling.
+The model core uses deterministic price motifs and a deterministic causal
+Transformer backbone. Relative volume and paired joint velocity use gated
+residual motif branches initialized near zero, so adding noisy features cannot
+immediately overwhelm the price baseline. Four feature modes support controlled
+ablation. Bayesian layers begin at the emission model and feed a configurable
+latent-state filter. Its context-conditioned transition correction is low rank,
+while its base transition matrix remains Bayesian. The filtered state posterior
+passes through a fixed nine-node Bayesian hidden layer into a continuous
+future-return posterior. The first hidden-state count defaults to 50 and cannot
+be smaller than the input channel count; the second hidden layer is always nine
+nodes.
 
-Optional self-supervised pretraining uses only states available before each
-walk-forward cutoff. It reconstructs randomly masked daily state features and
-predicts the next daily state features from causal context before the noisy
-three-regime target is introduced. Pretraining and supervised fine-tuning use
-separate deterministic random streams so controlled ablations are reproducible.
+Training uses a robust Student-t return likelihood. Bearish, flat, and bullish
+probabilities are derived from the continuous posterior using -0.5% and +0.5%
+return thresholds; they are not trained as a direct three-class head.
+`predict_posterior()` uses Monte Carlo weight sampling to report expected return,
+predictive variance, and separate aleatoric and epistemic uncertainty.
+
+Self-supervised pretraining uses only states available before each walk-forward
+cutoff. It reconstructs randomly masked daily metadata and fixed-width
+mass/location/spread summaries, then predicts their next-session values from
+causal context before the noisy return target is introduced. Pretraining and
+supervised fine-tuning use separate deterministic random streams so controlled
+ablations are reproducible. Effective batches are automatically capped at 256
+daily-state tokens to preserve multiple optimizer updates on small per-symbol
+datasets and bound memory use on long sequences.
 
 The offline trainer reads bounded symbol/date slices from a static DuckDB
 replica, constructs labels from future trading-session returns, and purges any

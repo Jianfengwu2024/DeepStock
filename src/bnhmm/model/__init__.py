@@ -1,13 +1,19 @@
 """Bayesian Transformer and conditional hidden-state transition model."""
 
-from .losses import LossBreakdown, evidential_classification_loss
-from .network import BNHMMNetwork, PosteriorOutput, SinglePassOutput
+from .losses import LossBreakdown, return_distribution_loss
+from .network import (
+    BNHMMNetwork,
+    PosteriorOutput,
+    SinglePassOutput,
+    normal_regime_probabilities,
+)
 
 __all__ = [
     "BNHMMNetwork",
     "LossBreakdown",
     "PosteriorOutput",
     "SinglePassOutput",
-    "evidential_classification_loss",
+    "normal_regime_probabilities",
+    "return_distribution_loss",
 ]
 

@@ -8,21 +8,24 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from .bayesian import BayesianLinear
+from .bayesian import BayesianLinear, DeterministicLinear
 
 
 class BayesianMultiheadAttention(nn.Module):
-    def __init__(self, d_model: int, heads: int, dropout: float) -> None:
+    def __init__(
+        self, d_model: int, heads: int, dropout: float, *, bayesian: bool = True
+    ) -> None:
         super().__init__()
         if d_model % heads:
             raise ValueError("d_model must be divisible by heads")
         self.d_model = d_model
         self.heads = heads
         self.head_dim = d_model // heads
-        self.query = BayesianLinear(d_model, d_model)
-        self.key = BayesianLinear(d_model, d_model)
-        self.value = BayesianLinear(d_model, d_model)
-        self.output = BayesianLinear(d_model, d_model)
+        linear = BayesianLinear if bayesian else DeterministicLinear
+        self.query = linear(d_model, d_model)
+        self.key = linear(d_model, d_model)
+        self.value = linear(d_model, d_model)
+        self.output = linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
 
     def forward(
@@ -64,13 +67,18 @@ class BayesianTransformerBlock(nn.Module):
         heads: int,
         feedforward_dim: int,
         dropout: float,
+        *,
+        bayesian: bool = True,
     ) -> None:
         super().__init__()
         self.attention_norm = nn.LayerNorm(d_model)
-        self.attention = BayesianMultiheadAttention(d_model, heads, dropout)
+        self.attention = BayesianMultiheadAttention(
+            d_model, heads, dropout, bayesian=bayesian
+        )
         self.feedforward_norm = nn.LayerNorm(d_model)
-        self.feedforward_in = BayesianLinear(d_model, feedforward_dim)
-        self.feedforward_out = BayesianLinear(feedforward_dim, d_model)
+        linear = BayesianLinear if bayesian else DeterministicLinear
+        self.feedforward_in = linear(d_model, feedforward_dim)
+        self.feedforward_out = linear(feedforward_dim, d_model)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, values: Tensor, *, valid_mask: Tensor, sample: bool) -> Tensor:
