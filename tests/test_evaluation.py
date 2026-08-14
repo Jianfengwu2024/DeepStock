@@ -76,6 +76,15 @@ class EvaluationTests(unittest.TestCase):
         relaxed = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=0.0))
         self.assertLess(cautious.target_position(item), relaxed.target_position(item))
 
+    def test_aleatoric_class_overlap_does_not_suppress_bullish_position(self) -> None:
+        item = replace(
+            prediction(1, 2, (0.34, 0.31, 0.35)),
+            aleatoric_variance=(0.2,) * 3,
+            epistemic_variance=(0.001,) * 3,
+        )
+        policy = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=2.0))
+        self.assertGreater(policy.target_position(item), 0.8)
+
     def test_four_state_predictions_are_rejected(self) -> None:
         item = prediction(1, 2, (0.05, 0.1, 0.85))
         legacy = replace(

@@ -136,7 +136,9 @@ positive return correlation, exceeds random balanced accuracy, and contains at
 least 200 out-of-sample observations. The
 policy is a separate consumer of the model posterior. It opens or holds a long
 position on bullish signals, preserves the prior position on flat signals, and
-closes on bearish signals; it never opens short positions. Completed daily signals
+closes on bearish signals; it never opens short positions. Only epistemic model
+uncertainty reduces position confidence; irreducible aleatoric class overlap
+remains a reported risk diagnostic. Completed daily signals
 execute at the first continuous-trading bar of the next session.
 
 ## Test console

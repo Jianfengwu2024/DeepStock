@@ -56,10 +56,12 @@ class DecisionPolicy:
     def target_position(
         self, prediction: PredictionRecord, previous_position: float = 0.0
     ) -> float:
-        total_variance = np.asarray(prediction.aleatoric_variance) + np.asarray(
-            prediction.epistemic_variance
+        # Irreducible class overlap is not a model-confidence penalty. Only
+        # epistemic uncertainty should shrink an otherwise bullish position.
+        epistemic_variance = np.asarray(prediction.epistemic_variance)
+        uncertainty = float(
+            np.sqrt(np.maximum(epistemic_variance.sum(), 0.0))
         )
-        uncertainty = float(np.sqrt(np.maximum(total_variance.sum(), 0.0)))
         confidence = float(
             np.clip(1.0 - self.config.uncertainty_aversion * uncertainty, 0.0, 1.0)
         )
