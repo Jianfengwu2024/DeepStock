@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
 
 import numpy as np
 import torch
@@ -19,7 +19,13 @@ from .evaluation import (
     records_as_json,
 )
 from .model import BNHMMNetwork
-from .training import BNHMMTrainer, ModelConfig, TrainerConfig, save_checkpoint
+from .training import (
+    BNHMMTrainer,
+    ModelConfig,
+    TrainerConfig,
+    collate_profile_sequences,
+    save_checkpoint,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +112,8 @@ def run_walk_forward(
     device: str | torch.device,
     output_dir: str | Path,
     mc_samples: int = 16,
+    training_scope: Literal["per-symbol", "sector-pooled"] = "per-symbol",
+    dataset_id: str | None = None,
 ) -> WalkForwardResult:
     if not observations:
         raise ValueError("observations cannot be empty")
@@ -114,6 +122,20 @@ def run_walk_forward(
         raise ValueError("each symbol must have exactly one observation set")
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
+    if training_scope == "sector-pooled":
+        return _run_pooled_walk_forward(
+            observations,
+            model_config,
+            trainer_config,
+            sequence_config,
+            walk_forward_config,
+            device=device,
+            output_dir=destination,
+            mc_samples=mc_samples,
+            dataset_id=dataset_id,
+        )
+    if training_scope != "per-symbol":
+        raise ValueError(f"unsupported training scope: {training_scope}")
     all_predictions: list[PredictionRecord] = []
     fold_summaries: list[dict[str, object]] = []
     return_means: dict[str, tuple[float, ...]] = {}
@@ -139,6 +161,190 @@ def run_walk_forward(
     ordered_predictions = tuple(
         sorted(
             all_predictions,
+            key=lambda item: (item.signal_time, item.symbol, item.timeframe_id),
+        )
+    )
+    (destination / "predictions.json").write_text(
+        json.dumps(records_as_json(ordered_predictions), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return WalkForwardResult(
+        folds=tuple(fold_summaries),
+        predictions=ordered_predictions,
+        regime_return_means=return_means,
+        regime_return_variances=return_variances,
+    )
+
+
+def _run_pooled_walk_forward(
+    observations: Sequence[ProfileObservations],
+    model_config: ModelConfig,
+    trainer_config: TrainerConfig,
+    sequence_config: SequenceConfig,
+    walk_forward_config: WalkForwardConfig,
+    *,
+    device: str | torch.device,
+    output_dir: str | Path,
+    mc_samples: int,
+    dataset_id: str | None,
+) -> WalkForwardResult:
+    """Train one shared model per fold from independently-built symbol profiles."""
+    folds = build_walk_forward_folds(observations, walk_forward_config)
+    if not folds:
+        raise ValueError("sector dataset does not have enough common sessions")
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    window_builder = SequenceWindowBuilder(sequence_config)
+    all_predictions: dict[tuple[str, int, int], PredictionRecord] = {}
+    fold_summaries: list[dict[str, object]] = []
+    return_means: dict[str, tuple[float, ...]] = {}
+    return_variances: dict[str, tuple[float, ...]] = {}
+    symbols = [item.symbol for item in observations]
+
+    for fold in folds:
+        fit_observations = _select(observations, target_before=fold.tuning_start)
+        tune_observations = _select(
+            observations,
+            signal_at_or_after=fold.tuning_start,
+            signal_before=fold.test_start,
+            target_before=fold.test_start,
+        )
+        pretest_observations = _select(observations, target_before=fold.test_start)
+        test_context = _test_context(observations, fold, sequence_config.length)
+        fit_sequences = _windows(fit_observations, window_builder)
+        tune_sequences = _windows(tune_observations, window_builder)
+        pretest_sequences = _windows(pretest_observations, window_builder)
+        test_sequences = _windows(test_context, window_builder)
+        if not all((fit_sequences, tune_sequences, pretest_sequences, test_sequences)):
+            raise ValueError(
+                f"sector fold {fold.index} contains an empty sequence partition"
+            )
+
+        tuning_model = model_config.build(seed=trainer_config.seed + fold.index * 2)
+        tuning_trainer = BNHMMTrainer(tuning_model, trainer_config, device=device)
+        tuning_result = tuning_trainer.fit(fit_sequences, tune_sequences)
+        selected_epochs = max(tuning_result.best_epoch, 1)
+        del tuning_trainer, tuning_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        final_config = replace(trainer_config, epochs=selected_epochs)
+        final_model = model_config.build(seed=trainer_config.seed + fold.index * 2 + 1)
+        final_trainer = BNHMMTrainer(final_model, final_config, device=device)
+        final_result = final_trainer.fit_fixed(pretest_sequences)
+        inference_seed = trainer_config.seed + 100_000 + fold.index
+        torch.manual_seed(inference_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(inference_seed)
+        predictions = infer_sequences(
+            final_model,
+            test_sequences,
+            device=device,
+            mc_samples=mc_samples,
+            batch_size=max(1, min(trainer_config.batch_size, 64)),
+        )
+        predictions = [
+            item
+            for item in predictions
+            if item.signal_time >= fold.test_start and item.signal_time < fold.test_end
+        ]
+        if not predictions:
+            raise ValueError(
+                f"sector fold {fold.index} produced no outer-test predictions"
+            )
+        for prediction in predictions:
+            key = (
+                prediction.symbol,
+                int(prediction.signal_time.astype(np.int64)),
+                prediction.timeframe_id,
+            )
+            all_predictions.setdefault(key, prediction)
+
+        if not return_means:
+            pooled_means, pooled_variances = estimate_regime_return_moments(
+                pretest_observations
+            )
+            for item in pretest_observations:
+                means, variances = estimate_regime_return_moments([item])
+                return_means[item.symbol] = tuple(float(value) for value in means)
+                return_variances[item.symbol] = tuple(
+                    float(value) for value in variances
+                )
+            # Newly listed constituents may first appear inside the outer test.
+            # They still use the shared sector model; sector moments are the
+            # leakage-free fallback until that symbol has pre-test history.
+            for symbol in symbols:
+                return_means.setdefault(
+                    symbol, tuple(float(value) for value in pooled_means)
+                )
+                return_variances.setdefault(
+                    symbol, tuple(float(value) for value in pooled_variances)
+                )
+        fold_dir = destination / f"fold-{fold.index:02d}"
+        metadata = {
+            "dataset_id": dataset_id,
+            "model_scope": "sector-pooled",
+            "fold": fold.index,
+            "tuning_start": str(fold.tuning_start),
+            "test_start": str(fold.test_start),
+            "test_end": str(fold.test_end),
+            "selected_epochs": selected_epochs,
+            "pretrain_epochs": trainer_config.pretrain_epochs,
+            "symbols": symbols,
+            "training_cutoff": str(fold.test_start),
+        }
+        save_checkpoint(
+            fold_dir / "model.pt",
+            final_model,
+            model_config,
+            final_config,
+            final_result,
+            metadata,
+        )
+        summary = {
+            **metadata,
+            "symbol": f"sector:{dataset_id or 'pooled'}",
+            "fit_symbols": len({item.symbol for item in fit_observations}),
+            "tune_symbols": len({item.symbol for item in tune_observations}),
+            "test_symbols": len({item.symbol for item in test_context}),
+            "fit_sequences": len(fit_sequences),
+            "tune_sequences": len(tune_sequences),
+            "pretest_sequences": len(pretest_sequences),
+            "outer_test_predictions": len(predictions),
+            "tuning_best_validation_loss": tuning_result.best_validation_loss,
+            "training_class_prior": final_model.class_prior.detach().cpu().tolist(),
+            "training_class_weights": final_model.class_weights.detach().cpu().tolist(),
+            "tuning_history": list(tuning_result.history),
+            "final_training_history": list(final_result.history),
+            "transition_diagnostics": _transition_diagnostics(final_model),
+            "state_diagnostics": _state_diagnostics(
+                final_model,
+                test_sequences,
+                predictions,
+                device=device,
+            ),
+            "auxiliary_gates": dict(
+                zip(
+                    ("relative_volume", "joint_price_volume_velocity"),
+                    final_model.tokenizer.effective_auxiliary_gates()
+                    .detach()
+                    .cpu()
+                    .tolist(),
+                    strict=True,
+                )
+            ),
+        }
+        (fold_dir / "summary.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        fold_summaries.append(summary)
+        del final_trainer, final_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    ordered_predictions = tuple(
+        sorted(
+            all_predictions.values(),
             key=lambda item: (item.signal_time, item.symbol, item.timeframe_id),
         )
     )
@@ -278,6 +484,12 @@ def _run_symbol_walk_forward(
             "tuning_history": list(tuning_result.history),
             "final_training_history": list(final_result.history),
             "transition_diagnostics": _transition_diagnostics(final_model),
+            "state_diagnostics": _state_diagnostics(
+                final_model,
+                test_sequences,
+                predictions,
+                device=device,
+            ),
             "auxiliary_gates": dict(
                 zip(
                     ("relative_volume", "joint_price_volume_velocity"),
@@ -335,6 +547,62 @@ def _transition_diagnostics(model: BNHMMNetwork) -> dict[str, float]:
         "regime_evidence_weight_norm": float(
             model.regime_evidence.weight_mu.detach().norm().cpu()
         ),
+        "return_autoregression_weight_norm": float(
+            model.return_autoregression.weight.detach().norm().cpu()
+        ),
+        "regime_autoregression_weight_norm": float(
+            model.regime_autoregression.weight.detach().norm().cpu()
+        ),
+    }
+
+
+@torch.no_grad()
+def _state_diagnostics(
+    model: BNHMMNetwork,
+    sequences: Sequence[ProfileSequence],
+    predictions: Sequence[PredictionRecord],
+    *,
+    device: str | torch.device,
+) -> dict[str, float | int]:
+    latent_rows: list[np.ndarray] = []
+    model.eval()
+    for offset in range(0, len(sequences), 64):
+        items = sequences[offset : offset + 64]
+        batch = collate_profile_sequences(items)
+        output = model(
+            batch["profiles"].to(device),
+            batch["timeframe_ids"].to(device),
+            batch["state_features"].to(device),
+            batch["bin_coordinates"].to(device),
+            batch["profile_mask"].to(device),
+            valid_mask=batch["valid_mask"].to(device),
+            sample=False,
+        )
+        latent_rows.extend(
+            output.latent_probabilities[index, len(sequence) - 1]
+            .detach()
+            .cpu()
+            .numpy()
+            for index, sequence in enumerate(items)
+        )
+    latent = np.asarray(latent_rows, dtype=np.float64)
+    mean_usage = latent.mean(axis=0)
+    entropy = -(latent * np.log(np.clip(latent, 1e-12, 1.0))).sum(axis=1)
+    probability = np.asarray(
+        [item.probability_mean for item in predictions], dtype=np.float64
+    )
+    prior = np.asarray(
+        [item.prior_probability for item in predictions], dtype=np.float64
+    )
+    return {
+        "mean_effective_latent_states": float(np.exp(entropy).mean()),
+        "mean_max_latent_probability": float(latent.max(axis=1).mean()),
+        "used_dominant_latent_states": int(len(np.unique(latent.argmax(axis=1)))),
+        "mean_latent_temporal_std": float(latent.std(axis=0).mean()),
+        "mean_regime_temporal_std": float(probability.std(axis=0).mean()),
+        "mean_regime_evidence_l1": float(np.abs(probability - prior).sum(axis=1).mean()),
+        "minimum_mean_latent_usage": float(mean_usage.min()),
+        "maximum_mean_latent_usage": float(mean_usage.max()),
     }
 
 

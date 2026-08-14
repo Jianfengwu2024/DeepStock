@@ -84,11 +84,18 @@ def infer_sequences(
     *,
     device: str | torch.device,
     mc_samples: int = 16,
+    batch_size: int = 32,
 ) -> list[PredictionRecord]:
     """Predict one next-session return from each fixed recent-state window."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
     selected: dict[tuple[str, int, int], PredictionRecord] = {}
-    for sequence in sequences:
-        batch = collate_profile_sequences([sequence])
+    prior_probability = tuple(
+        float(value) for value in model.class_prior.detach().cpu()
+    )
+    for offset in range(0, len(sequences), batch_size):
+        items = sequences[offset : offset + batch_size]
+        batch = collate_profile_sequences(items)
         posterior = model.predict_posterior(
             batch["profiles"].to(device),
             batch["timeframe_ids"].to(device),
@@ -98,7 +105,8 @@ def infer_sequences(
             valid_mask=batch["valid_mask"].to(device),
             mc_samples=mc_samples,
         )
-        for index in (len(sequence) - 1,):
+        for batch_index, sequence in enumerate(items):
+            index = len(sequence) - 1
             signal_time = sequence.signal_times[index]
             timeframe_id = int(sequence.timeframe_ids[index])
             key = (sequence.symbol, int(signal_time.astype(np.int64)), timeframe_id)
@@ -113,36 +121,39 @@ def infer_sequences(
                 standardized_return=float(sequence.standardized_returns[index]),
                 return_location=float(sequence.return_locations[index]),
                 return_scale=float(sequence.return_scales[index]),
-                prior_probability=tuple(
-                    float(value) for value in model.class_prior.detach().cpu()
-                ),
+                prior_probability=prior_probability,
                 probability_mean=tuple(
-                    float(value) for value in posterior.probability_mean[0, index].cpu()
+                    float(value)
+                    for value in posterior.probability_mean[batch_index, index].cpu()
                 ),
                 aleatoric_variance=tuple(
-                    float(value) for value in posterior.aleatoric_variance[0, index].cpu()
+                    float(value)
+                    for value in posterior.aleatoric_variance[batch_index, index].cpu()
                 ),
                 epistemic_variance=tuple(
-                    float(value) for value in posterior.epistemic_variance[0, index].cpu()
+                    float(value)
+                    for value in posterior.epistemic_variance[batch_index, index].cpu()
                 ),
-                expected_score=float(posterior.expected_score[0, index].cpu()),
+                expected_score=float(
+                    posterior.expected_score[batch_index, index].cpu()
+                ),
                 expected_return=float(
                     sequence.return_scales[index]
-                    * float(posterior.expected_return[0, index].cpu())
+                    * float(posterior.expected_return[batch_index, index].cpu())
                 ),
                 expected_standardized_return=float(
-                    posterior.expected_return[0, index].cpu()
+                    posterior.expected_return[batch_index, index].cpu()
                 ),
                 return_variance=float(
-                    posterior.return_variance[0, index].cpu()
+                    posterior.return_variance[batch_index, index].cpu()
                     * sequence.return_scales[index] ** 2
                 ),
                 aleatoric_return_variance=float(
-                    posterior.aleatoric_return_variance[0, index].cpu()
+                    posterior.aleatoric_return_variance[batch_index, index].cpu()
                     * sequence.return_scales[index] ** 2
                 ),
                 epistemic_return_variance=float(
-                    posterior.epistemic_return_variance[0, index].cpu()
+                    posterior.epistemic_return_variance[batch_index, index].cpu()
                     * sequence.return_scales[index] ** 2
                 ),
                 context_length=index + 1,

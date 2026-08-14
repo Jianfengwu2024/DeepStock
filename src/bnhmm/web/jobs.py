@@ -35,7 +35,10 @@ class WalkForwardJobRequest(BaseModel):
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
-    training_scope: Literal["per-symbol", "shared-legacy"] = "per-symbol"
+    dataset_id: str | None = None
+    training_scope: Literal[
+        "per-symbol", "sector-pooled", "shared-legacy"
+    ] = "per-symbol"
     start: date = date(2024, 1, 1)
     end: date = date(2026, 8, 5)
     device: str = "cuda:0"
@@ -134,8 +137,10 @@ class WalkForwardJobRequest(BaseModel):
         if self.sequence_stride > self.sequence_length:
             raise ValueError("sequence_stride cannot exceed sequence_length")
         if not legacy:
-            if self.training_scope != "per-symbol":
-                raise ValueError("current jobs require independent per-symbol models")
+            if self.training_scope not in {"per-symbol", "sector-pooled"}:
+                raise ValueError("unsupported current training scope")
+            if self.training_scope == "sector-pooled" and not self.dataset_id:
+                raise ValueError("sector-pooled jobs require a sector dataset")
             if self.profile_protocol != "phase-space-joint-return-v6":
                 raise ValueError("current jobs require the v6 phase-space profile")
             if self.sequence_protocol != "fixed-recent-endpoint-v1":
@@ -220,6 +225,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         request.database_path,
         "--symbols",
         ",".join(request.symbols),
+        "--training-scope",
+        request.training_scope,
         "--start",
         request.start.isoformat(),
         "--end",
@@ -307,6 +314,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         "--seed",
         str(request.seed),
     ]
+    if request.dataset_id:
+        command.extend(("--dataset-id", request.dataset_id))
     if request.max_folds is not None:
         command.extend(("--max-folds", str(request.max_folds)))
     if request.deterministic_training:

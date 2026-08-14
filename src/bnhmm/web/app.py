@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
+from ..data.sector_dataset import SectorDatasetCatalog
 from ..data.source import DuckDBBarSource
 from .jobs import (
     ActiveJobDeletionError,
@@ -27,6 +28,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parents[2]
 STATIC_ROOT = PACKAGE_ROOT / "static"
 DEFAULT_JOB_ROOT = "/home/wujianfeng/private/bnhmm-storage/ui-runs"
+DEFAULT_SECTOR_DATASET_ROOT = "/home/share/data/sectors"
 
 
 @asynccontextmanager
@@ -36,6 +38,9 @@ async def lifespan(app: FastAPI):
         os.getenv("BNHMM_PROJECT_ROOT", str(PROJECT_ROOT)),
     )
     app.state.jobs = manager
+    app.state.sector_datasets = SectorDatasetCatalog(
+        os.getenv("BNHMM_SECTOR_DATASET_ROOT", DEFAULT_SECTOR_DATASET_ROOT)
+    )
     yield
     manager.close()
 
@@ -69,11 +74,27 @@ def health() -> dict[str, str]:
 @app.get("/api/config")
 def config(request: Request) -> dict[str, Any]:
     jobs = manager(request).list()
+    datasets = request.app.state.sector_datasets.list()
+    defaults = WalkForwardJobRequest().model_dump(mode="json")
+    if datasets:
+        selected = next(
+            (item for item in datasets if item.dataset_id == "semiconductor"),
+            datasets[0],
+        )
+        defaults.update(
+            {
+                "database_path": selected.database_path,
+                "symbols": list(selected.symbols),
+                "dataset_id": selected.dataset_id,
+                "training_scope": "sector-pooled",
+            }
+        )
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
         "active_jobs": sum(item.status in {"queued", "running"} for item in jobs),
-        "defaults": WalkForwardJobRequest().model_dump(mode="json"),
+        "defaults": defaults,
+        "datasets": [item.as_json() for item in datasets],
     }
 
 
@@ -94,6 +115,15 @@ def symbols(
     return {"symbols": values}
 
 
+@app.get("/api/datasets")
+def datasets(request: Request) -> dict[str, list[dict[str, object]]]:
+    return {
+        "datasets": [
+            item.as_json() for item in request.app.state.sector_datasets.list()
+        ]
+    }
+
+
 @app.get("/api/jobs")
 def list_jobs(request: Request) -> list[dict[str, Any]]:
     return [_job_payload(manager(request), record, detail=False) for record in manager(request).list()]
@@ -101,6 +131,17 @@ def list_jobs(request: Request) -> list[dict[str, Any]]:
 
 @app.post("/api/jobs", status_code=201)
 def submit_job(payload: WalkForwardJobRequest, request: Request) -> dict[str, Any]:
+    if payload.training_scope == "sector-pooled":
+        dataset = request.app.state.sector_datasets.get(payload.dataset_id or "")
+        if dataset is None:
+            raise HTTPException(status_code=400, detail="sector dataset not found")
+        payload = payload.model_copy(
+            update={
+                "database_path": dataset.database_path,
+                "symbols": list(dataset.symbols),
+                "dataset_id": dataset.dataset_id,
+            }
+        )
     try:
         record = manager(request).submit(payload)
     except DuplicateJobNameError as exc:

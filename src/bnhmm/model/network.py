@@ -415,6 +415,18 @@ class BNHMMNetwork(nn.Module):
         self.regime_evidence = BayesianLinear(latent_states, output_states)
         nn.init.normal_(self.regime_evidence.weight_mu, std=0.01)
         nn.init.zeros_(self.regime_evidence.bias_mu)
+        # A small direct path preserves the weak short-memory signal instead of
+        # forcing it through the discrete latent-state simplex. The BNHMM still
+        # learns the nonlinear residual; zero initialization keeps the initial
+        # prediction identical to the latent-only model.
+        self.return_autoregression = nn.Linear(
+            max_sequence_length, 1, bias=False
+        )
+        self.regime_autoregression = nn.Linear(
+            max_sequence_length, output_states, bias=False
+        )
+        nn.init.zeros_(self.return_autoregression.weight)
+        nn.init.zeros_(self.regime_autoregression.weight)
         self.register_buffer(
             "class_prior", torch.full((output_states,), 1.0 / output_states)
         )
@@ -522,16 +534,28 @@ class BNHMMNetwork(nn.Module):
             emissions, transition_base, transition_delta, valid_mask
         )
         latent_features = latent * float(self.latent_states)
+        recent_returns = self._recent_return_features(
+            state_features[..., 2], valid_mask
+        )
         return_parameters = self.return_distribution(
             latent_features, sample=sample
         )
-        return_mean = 4.0 * torch.tanh(return_parameters[..., 0])
+        autoregressive_return = 2.0 * torch.tanh(
+            self.return_autoregression(recent_returns).squeeze(-1)
+        )
+        return_mean = torch.clamp(
+            4.0 * torch.tanh(return_parameters[..., 0])
+            + autoregressive_return,
+            min=-4.0,
+            max=4.0,
+        )
         return_log_variance = torch.clamp(
             return_parameters[..., 1], min=-6.0, max=4.0
         )
         regime_logits = (
             self.class_prior.clamp_min(1e-6).log()
             + self.regime_evidence(latent_features, sample=sample)
+            + self.regime_autoregression(recent_returns)
         )
         kl = (
             module_kl_divergence(self) + self._transition_kl(transition_std)
@@ -553,6 +577,24 @@ class BNHMMNetwork(nn.Module):
 
     def pretraining_features(self, output: SinglePassOutput) -> Tensor:
         return torch.cat((output.context, output.latent_probabilities), dim=-1)
+
+    def _recent_return_features(
+        self, returns: Tensor, valid_mask: Tensor
+    ) -> Tensor:
+        """Build causal current-to-oldest return lags for every sequence token."""
+        lags: list[Tensor] = []
+        for lag in range(self.max_sequence_length):
+            if lag == 0:
+                shifted = returns
+                shifted_mask = valid_mask
+            elif lag >= returns.shape[1]:
+                shifted = torch.zeros_like(returns)
+                shifted_mask = torch.zeros_like(valid_mask)
+            else:
+                shifted = F.pad(returns[:, :-lag], (lag, 0))
+                shifted_mask = F.pad(valid_mask[:, :-lag], (lag, 0))
+            lags.append(shifted * shifted_mask.to(returns.dtype))
+        return torch.stack(lags, dim=-1)
 
     def _filter_latent(
         self,

@@ -66,6 +66,12 @@ class WebJobTests(unittest.TestCase):
 
     def test_request_checks_related_model_and_window_values(self) -> None:
         with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(training_scope="sector-pooled")
+        sector_request = WalkForwardJobRequest(
+            training_scope="sector-pooled", dataset_id="semiconductor"
+        )
+        self.assertEqual(sector_request.dataset_id, "semiconductor")
+        with self.assertRaises(ValidationError):
             WalkForwardJobRequest(d_model=95, heads=4)
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(minimum_train_sessions=50, tuning_sessions=60)
@@ -123,6 +129,15 @@ class WebJobTests(unittest.TestCase):
         self.assertEqual(request.strong_threshold_sigma, 0.75)
         self.assertIn("--strong-threshold-sigma", command)
         self.assertIn("--return-standardization-lookback", command)
+
+        sector = WalkForwardJobRequest(
+            training_scope="sector-pooled", dataset_id="semiconductor"
+        )
+        sector_command = build_command(sector, Path("/tmp/result"))
+        self.assertIn("--training-scope", sector_command)
+        self.assertIn("sector-pooled", sector_command)
+        self.assertIn("--dataset-id", sector_command)
+        self.assertIn("semiconductor", sector_command)
 
         custom_threshold = WalkForwardJobRequest(strong_threshold_sigma=1.0)
         custom_command = build_command(custom_threshold, Path("/tmp/result"))

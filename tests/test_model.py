@@ -178,6 +178,26 @@ class BNHMMNetworkTests(unittest.TestCase):
         )
         self.assertLess(float(posterior_std.max().detach()), 0.003)
 
+    def test_autoregressive_path_starts_neutral_and_uses_causal_lags(self) -> None:
+        features = torch.zeros(1, 3, 9)
+        features[0, :, 2] = torch.tensor([0.25, -0.5, 1.0])
+        mask = torch.ones(1, 3, dtype=torch.bool)
+
+        recent = self.model._recent_return_features(features[..., 2], mask)
+
+        self.assertEqual(recent.shape, (1, 3, 12))
+        self.assertTrue(torch.equal(
+            recent[0, 2, :4], torch.tensor([1.0, -0.5, 0.25, 0.0])
+        ))
+        self.assertTrue(torch.equal(
+            self.model.return_autoregression.weight,
+            torch.zeros_like(self.model.return_autoregression.weight),
+        ))
+        self.assertTrue(torch.equal(
+            self.model.regime_autoregression.weight,
+            torch.zeros_like(self.model.regime_autoregression.weight),
+        ))
+
     def test_future_profile_does_not_change_past_output(self) -> None:
         self.model.eval()
         original = profiles(batch=1)

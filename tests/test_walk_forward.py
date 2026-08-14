@@ -85,6 +85,44 @@ class WalkForwardTests(unittest.TestCase):
             ],
         )
 
+    def test_sector_scope_builds_one_shared_pipeline(self) -> None:
+        states = PriceVolumeProfileBuilder().build(synthetic_sessions(33))
+        first = ProfileLabelBuilder(
+            LabelConfig(standardization_min_observations=2)
+        ).build(states)
+        second = replace(first, symbol="000002")
+        expected = SimpleNamespace(
+            folds=({"model_scope": "sector-pooled", "fold": 0},),
+            predictions=(),
+            regime_return_means={first.symbol: (-0.03, -0.005, 0.005, 0.03)},
+            regime_return_variances={first.symbol: (0.0001,) * 4},
+        )
+
+        with TemporaryDirectory() as directory, patch(
+            "bnhmm.walk_forward._run_pooled_walk_forward",
+            return_value=expected,
+        ) as pooled_run, patch(
+            "bnhmm.walk_forward._run_symbol_walk_forward"
+        ) as symbol_run:
+            result = run_walk_forward(
+                [first, second],
+                ModelConfig(),
+                TrainerConfig(),
+                SequenceConfig(),
+                WalkForwardConfig(),
+                device="cpu",
+                output_dir=directory,
+                training_scope="sector-pooled",
+                dataset_id="semiconductor",
+            )
+
+        self.assertIs(result, expected)
+        pooled_run.assert_called_once()
+        self.assertEqual(
+            pooled_run.call_args.kwargs["dataset_id"], "semiconductor"
+        )
+        symbol_run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

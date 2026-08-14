@@ -4,6 +4,7 @@ const state = {
   jobs: [],
   selectedId: null,
   symbols: [],
+  datasets: [],
   dialogSelected: new Set(),
   resultScopeByJob: new Map(),
   symbolReportCache: new Map(),
@@ -54,6 +55,52 @@ function fillForm(defaults) {
     else field.value = value ?? "";
   }
   syncModelConstraints();
+  syncDatasetSelection();
+}
+
+function setupDatasets(datasets) {
+  state.datasets = datasets || [];
+  const select = document.querySelector("#dataset-select");
+  select.replaceChildren(...state.datasets.map(dataset => {
+    const option = document.createElement("option");
+    option.value = dataset.dataset_id;
+    option.textContent = dataset.name;
+    return option;
+  }));
+}
+
+function syncDatasetSelection() {
+  const form = document.querySelector("#experiment-form");
+  const sectorMode = form.elements.training_scope.value === "sector-pooled";
+  const datasetFields = document.querySelector("#sector-dataset-fields");
+  const datasetSelect = document.querySelector("#dataset-select");
+  const databaseField = form.elements.database_path;
+  const symbolsField = form.elements.symbols;
+  const chooseButton = document.querySelector("#choose-symbols");
+  datasetFields.classList.toggle("hidden", !sectorMode);
+  datasetSelect.disabled = !sectorMode;
+  databaseField.readOnly = sectorMode;
+  symbolsField.readOnly = sectorMode;
+  chooseButton.disabled = sectorMode;
+  if (!sectorMode) {
+    document.querySelector("#dataset-summary").textContent = "";
+    return;
+  }
+  const dataset = state.datasets.find(item => item.dataset_id === datasetSelect.value)
+    || state.datasets[0];
+  if (!dataset) {
+    document.querySelector("#dataset-summary").textContent = "尚未发现板块数据集";
+    return;
+  }
+  datasetSelect.value = dataset.dataset_id;
+  databaseField.value = dataset.database_path;
+  symbolsField.value = dataset.symbols.join(", ");
+  state.symbols = [...dataset.symbols];
+  document.querySelector("#dataset-summary").innerHTML = `
+    <strong>${escapeHtml(dataset.name)}</strong>
+    <span>${dataset.available_member_count} / ${dataset.member_count} 只股票可用</span>
+    <span>${escapeHtml(dataset.data_start || "-")} 至 ${escapeHtml(dataset.data_end || "-")}</span>
+    <span>${escapeHtml(dataset.source)} · ${escapeHtml(dataset.source_code)}</span>`;
 }
 
 function syncModelConstraints() {
@@ -268,9 +315,14 @@ function renderJob(job) {
       : job.request.profile_protocol === "legacy-fixed-bins"
         ? "旧固定柱协议"
         : `${job.request.bin_width_bps} BP 可变日态（旧）`;
-  const modelScope = job.request.training_scope === "per-symbol"
-    ? "逐标的独立 BNHMM"
-    : "多标的共享模型（旧）";
+  const dataset = state.datasets.find(
+    item => item.dataset_id === job.request.dataset_id,
+  );
+  const modelScope = ({
+    "per-symbol": "逐标的独立 BNHMM",
+    "sector-pooled": `${dataset?.name || job.request.dataset_id || "板块"}联合 BNHMM`,
+    "shared-legacy": "多标的共享模型（旧）",
+  })[job.request.training_scope] || job.request.training_scope;
   const latentStates = job.request.latent_states ?? 10;
   const featureMode = ({
     "gated-full": "价格主干 + 门控成交量/联合速度",
@@ -508,6 +560,7 @@ function renderInsight(summary) {
     : Math.abs(Number(backtest.total_return || 0)) < 0.001 && Math.abs(Number(backtest.max_drawdown || 0)) < 0.002;
   if (inactive) detail += " 蓝色净值几乎不动，表示不确定性过滤后仓位接近零。";
   if (summary.model_scope === "per-symbol") detail += " 顶部指标是各标的独立模型的组合汇总，单股结论请查看滚动验证页。";
+  if (summary.model_scope === "sector-pooled") detail += " 各股票独立构造日态并独立归一化，只在严格按日期切分后共享板块模型。";
   if (summary.model_scope === "single-symbol") detail += ` 当前页面只统计 ${summary.symbol}，没有混入其他股票。`;
   panel.className = `result-insight ${level}`;
   document.querySelector("#insight-title").textContent = title;
@@ -629,6 +682,8 @@ function setupEvents() {
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);
   document.querySelector("#choose-symbols").addEventListener("click", openSymbolDialog);
+  document.querySelector("#training-scope").addEventListener("change", syncDatasetSelection);
+  document.querySelector("#dataset-select").addEventListener("change", syncDatasetSelection);
   document.querySelector("#apply-symbols").addEventListener("click", applySymbols);
   document.querySelector("#symbol-search").addEventListener("input", event => renderSymbolOptions(event.target.value));
   document.querySelector("#select-all").addEventListener("click", () => { document.querySelectorAll("#symbol-list input").forEach(item => { item.checked = true; state.dialogSelected.add(item.value); }); updateSelectedCount(); });
@@ -674,6 +729,7 @@ function escapeHtml(value) { return String(value).replace(/[&<>"]/g, character =
 async function initialize() {
   setupEvents();
   state.config = await api("/api/config");
+  setupDatasets(state.config.datasets);
   fillForm(state.config.defaults);
   setupDevices(state.config.devices);
   await refreshAll();

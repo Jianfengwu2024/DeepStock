@@ -361,6 +361,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
         device=device,
         output_dir=args.output_dir,
         mc_samples=args.mc_samples,
+        training_scope=args.training_scope,
+        dataset_id=args.dataset_id,
     )
     policy = DecisionPolicy(
         DecisionPolicyConfig(
@@ -412,7 +414,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
         )
     summary = {
         "symbols": list(data_summary),
-        "model_scope": "per-symbol",
+        "model_scope": args.training_scope,
+        "dataset_id": args.dataset_id,
         "state_timeframe": args.state_timeframe,
         "profile_protocol": {
             "version": PROFILE_PROTOCOL,
@@ -551,6 +554,12 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--duckdb-path", required=True)
     walk.add_argument("--symbols", default="")
     walk.add_argument("--symbol-limit", type=int, default=10)
+    walk.add_argument(
+        "--training-scope",
+        choices=("per-symbol", "sector-pooled"),
+        default="per-symbol",
+    )
+    walk.add_argument("--dataset-id")
     walk.add_argument("--start", required=True)
     walk.add_argument("--end", required=True)
     walk.add_argument("--output-dir", required=True)

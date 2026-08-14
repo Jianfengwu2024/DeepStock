@@ -25,6 +25,16 @@
         <section class="form-section">
           <h2>实验</h2>
           <label>名称<input name="name" required maxlength="64"></label>
+          <label>训练范围
+            <select name="training_scope" id="training-scope">
+              <option value="sector-pooled">概念板块联合训练</option>
+              <option value="per-symbol">单股独立训练</option>
+            </select>
+          </label>
+          <div id="sector-dataset-fields">
+            <label>板块数据集<select name="dataset_id" id="dataset-select"></select></label>
+            <div class="dataset-summary" id="dataset-summary"></div>
+          </div>
           <label>数据文件<input name="database_path" required></label>
           <div class="field-head"><span>股票</span><button class="mini-button" type="button" id="choose-symbols"><i data-lucide="list-filter"></i>选择</button></div>
           <textarea name="symbols" rows="3" required spellcheck="false"></textarea>
