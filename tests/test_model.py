@@ -146,7 +146,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         posterior_std = torch.nn.functional.softplus(
             self.model.return_distribution.weight_rho
         )
-        self.assertLess(float(posterior_std.max()), 0.003)
+        self.assertLess(float(posterior_std.max().detach()), 0.003)
 
     def test_future_profile_does_not_change_past_output(self) -> None:
         self.model.eval()
