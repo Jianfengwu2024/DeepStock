@@ -43,11 +43,25 @@ class WebJobTests(unittest.TestCase):
                 manager.submit(WalkForwardJobRequest(name="experiment"))
 
             self.assertTrue(manager.delete(record.id))
-            with patch("bnhmm.web.jobs.build_command", return_value=[sys.executable, "-c", ""]):
+            def fake_command(_request, output_dir):
+                script = (
+                    "from pathlib import Path; "
+                    f"Path({str(output_dir / 'run-summary.json')!r}).write_text("
+                    "'{}', encoding='utf-8')"
+                )
+                return [sys.executable, "-c", script]
+
+            with patch("bnhmm.web.jobs.build_command", side_effect=fake_command):
                 replacement = manager.submit(
                     WalkForwardJobRequest(name="experiment")
                 )
-                manager.cancel(replacement.id)
+                deadline = time.time() + 10
+                while time.time() < deadline:
+                    current = manager.get(replacement.id)
+                    if current and current.status in {"completed", "failed"}:
+                        break
+                    time.sleep(0.01)
+            self.assertEqual(current.status, "completed")
             manager.close()
 
     def test_request_checks_related_model_and_window_values(self) -> None:
