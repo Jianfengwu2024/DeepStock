@@ -36,7 +36,7 @@ def sequence(seed: int, length: int = 8, bins: int = 16) -> ProfileSequence:
         bin_coordinates=tuple(coordinates),
         state_features=state_features,
         timeframe_ids=np.arange(length, dtype=np.int64) % 2,
-        targets=random.integers(0, 4, length, dtype=np.int64),
+        targets=random.integers(0, 3, length, dtype=np.int64),
         signal_times=signal_times.astype("datetime64[ns]"),
         execution_times=(signal_times + np.timedelta64(1, "h")).astype("datetime64[ns]"),
         target_times=(signal_times + np.timedelta64(1, "D")).astype("datetime64[ns]"),
@@ -46,7 +46,7 @@ def sequence(seed: int, length: int = 8, bins: int = 16) -> ProfileSequence:
 
 
 def learnable_sequence(symbol: str, length: int = 25) -> ProfileSequence:
-    targets = np.arange(length, dtype=np.int64) % 4
+    targets = np.arange(length, dtype=np.int64) % 3
     profiles: list[np.ndarray] = []
     coordinates: list[np.ndarray] = []
     state_features = np.zeros((length, 9), dtype=np.float32)
@@ -179,7 +179,7 @@ class TrainerTests(unittest.TestCase):
         self.assertFalse(batch["profile_mask"][1, 5:].any())
         self.assertFalse(batch["valid_mask"][1, 5:].any())
 
-    def test_clear_four_state_patterns_can_be_overfit(self) -> None:
+    def test_clear_three_state_patterns_can_be_overfit(self) -> None:
         sequences = [learnable_sequence(str(index)) for index in range(4)]
         model = ModelConfig(
             max_profile_bins=32,

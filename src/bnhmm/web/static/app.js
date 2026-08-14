@@ -14,7 +14,7 @@ const numberFields = new Set([
   "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
   "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "sequence_length", "sequence_stride",
-  "minimum_sequence_length", "d_model", "motif_dim", "heads", "layers",
+  "minimum_sequence_length", "d_model", "latent_states", "motif_dim", "heads", "layers",
   "feedforward_dim", "dropout", "mc_samples", "uncertainty_aversion",
   "transaction_cost_bps", "seed",
 ]);
@@ -52,6 +52,15 @@ function fillForm(defaults) {
     else if (field.type === "checkbox") field.checked = Boolean(value);
     else field.value = value ?? "";
   }
+  syncLatentStateMinimum();
+}
+
+function syncLatentStateMinimum() {
+  const velocityBins = Number(document.querySelector("[name=velocity_bins]").value || 9);
+  const minimum = 4 + 2 * velocityBins;
+  const field = document.querySelector("[name=latent_states]");
+  field.min = String(minimum);
+  if (Number(field.value) < minimum) field.value = String(minimum);
 }
 
 function setupDevices(devices) {
@@ -118,7 +127,6 @@ function formPayload() {
       payload[name] = value;
     }
   }
-  payload.allow_short = form.elements.allow_short.checked;
   payload.deterministic_training = form.elements.deterministic_training.checked;
   return payload;
 }
@@ -214,7 +222,8 @@ function renderJob(job) {
   const modelScope = job.request.training_scope === "per-symbol"
     ? "逐标的独立 BNHMM"
     : "多标的共享模型（旧）";
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  const latentStates = job.request.latent_states ?? 10;
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${latentStates} 隐状态 · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
@@ -361,7 +370,7 @@ function classificationBaseline(summary) {
     ? summary.regime_protocol.states.length
     : 0;
   const count = reportedCount >= 2 ? reportedCount : (protocolCount >= 2 ? protocolCount : 5);
-  const label = ({ 4: "四", 5: "五" })[count] || String(count);
+  const label = ({ 3: "三", 4: "四", 5: "五" })[count] || String(count);
   return {
     count,
     label,
@@ -508,6 +517,7 @@ function applySymbols() {
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
+  document.querySelector("[name=velocity_bins]").addEventListener("input", syncLatentStateMinimum);
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);
   document.querySelector("#choose-symbols").addEventListener("click", openSymbolDialog);
   document.querySelector("#apply-symbols").addEventListener("click", applySymbols);

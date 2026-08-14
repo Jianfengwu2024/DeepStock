@@ -20,23 +20,22 @@ All query, key, value, attention-output, feed-forward, motif, transition-context
 latent-emission, and evidence projections use variational Gaussian weights. The
 temporal attention mask is causal.
 
-Ten unnamed latent probabilities are filtered sequentially using a Bayesian base
+Fifty unnamed latent probabilities are filtered sequentially by default using a Bayesian base
 transition matrix plus a context-dependent transition delta. The output head
-maps the filtered latent state and Transformer context to four Dirichlet
-concentrations ordered as strong bear, weak bear, weak bull, and strong bull.
-Forward returns use `[-2%, 0%, +2%]` as the three boundaries. There is no
-neutral output: low-conviction cases remain expressible through balanced
-directional probabilities and posterior uncertainty, which the separate policy
-may convert to a near-zero position.
+maps the filtered latent state and Transformer context to three Dirichlet
+concentrations ordered as bear, flat, and bull. The count is configurable but
+cannot fall below the 22 input channels. Forward returns below -0.5% are bearish,
+returns in `[-0.5%, +0.5%]` are flat, and returns above +0.5% are bullish.
 
 Monte Carlo prediction returns:
 
-- four-state posterior probability means, with no neutral class;
+- three-state posterior probability means;
 - aleatoric Dirichlet variance;
 - epistemic variance across sampled weights;
 - total variance;
-- ten latent-state posterior probabilities;
-- expected regime score in `[-2, 2]`.
+- 50 latent-state posterior probabilities by default;
+- expected regime score in `[-1, 1]`.
 
-These outputs are model indicators. Position sizing remains in a separate policy
-layer and must not be embedded in model training.
+These outputs are model indicators. Position sizing remains in a separate long-only
+policy layer: bull opens or maintains a long, flat preserves the prior position,
+and bear closes it. It must not be embedded in model training.

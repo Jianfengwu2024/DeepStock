@@ -28,10 +28,10 @@ def prediction(day: int, target: int, probability: tuple[float, ...]) -> Predict
             "datetime64[ns]"
         ),
         target=target,
-        forward_return=(-0.03, -0.008, 0.008, 0.03)[target],
+        forward_return=(-0.01, 0.0, 0.01)[target],
         probability_mean=probability,
-        aleatoric_variance=(0.01,) * 4,
-        epistemic_variance=(0.001,) * 4,
+        aleatoric_variance=(0.01,) * 3,
+        epistemic_variance=(0.001,) * 3,
         expected_score=float(np.asarray(probability) @ scores),
         context_length=8,
     )
@@ -40,13 +40,13 @@ def prediction(day: int, target: int, probability: tuple[float, ...]) -> Predict
 class EvaluationTests(unittest.TestCase):
     def test_report_contains_probabilistic_and_strategy_diagnostics(self) -> None:
         predictions = [
-            prediction(index, index % 4, tuple(np.eye(4)[index % 4] * 0.6 + 0.1))
+            prediction(index, index % 3, tuple(np.eye(3)[index % 3] * 0.7 + 0.1))
             for index in range(12)
         ]
         report = evaluate_predictions(
             predictions,
-            np.asarray([-0.03, -0.01, 0.01, 0.03]),
-            np.full(4, 0.0001),
+            np.asarray([-0.01, 0.0, 0.01]),
+            np.full(3, 0.0001),
         )
 
         self.assertLess(report["log_loss"], 1.0)
@@ -57,42 +57,64 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(report["observation_count"], 12)
         self.assertEqual(report["balanced_accuracy"], 1.0)
         self.assertEqual(report["macro_f1"], 1.0)
-        self.assertEqual(report["class_support"], [3, 3, 3, 3])
-        self.assertEqual(report["confusion_matrix"], (np.eye(4, dtype=int) * 3).tolist())
+        self.assertEqual(report["class_support"], [4, 4, 4])
+        self.assertEqual(report["confusion_matrix"], (np.eye(3, dtype=int) * 4).tolist())
         self.assertLess(report["ranked_probability_score"], 0.1)
 
     def test_uncertainty_reduces_position(self) -> None:
-        item = prediction(1, 3, (0.02, 0.03, 0.2, 0.75))
+        item = prediction(1, 2, (0.05, 0.1, 0.85))
         cautious = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=4.0))
         relaxed = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=0.0))
         self.assertLess(cautious.target_position(item), relaxed.target_position(item))
 
-    def test_five_state_predictions_are_rejected(self) -> None:
-        item = prediction(1, 3, (0.02, 0.03, 0.2, 0.75))
+    def test_four_state_predictions_are_rejected(self) -> None:
+        item = prediction(1, 2, (0.05, 0.1, 0.85))
         legacy = replace(
             item,
-            probability_mean=(0.1, 0.1, 0.6, 0.1, 0.1),
-            aleatoric_variance=(0.01,) * 5,
-            epistemic_variance=(0.001,) * 5,
+            probability_mean=(0.1, 0.1, 0.7, 0.1),
+            aleatoric_variance=(0.01,) * 4,
+            epistemic_variance=(0.001,) * 4,
         )
-        with self.assertRaisesRegex(ValueError, "four-state"):
-            evaluate_predictions([legacy], np.zeros(4), np.ones(4))
+        with self.assertRaisesRegex(ValueError, "three-state"):
+            evaluate_predictions([legacy], np.zeros(3), np.ones(3))
+
+    def test_long_only_policy_opens_holds_and_closes_by_state(self) -> None:
+        policy = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=0.0))
+        bullish = prediction(1, 2, (0.05, 0.1, 0.85))
+        flat = prediction(2, 1, (0.05, 0.9, 0.05))
+        bearish = prediction(3, 0, (0.85, 0.1, 0.05))
+
+        opened = policy.target_position(bullish, 0.0)
+        held = policy.target_position(flat, opened)
+        closed = policy.target_position(bearish, held)
+
+        self.assertEqual(opened, 1.0)
+        self.assertEqual(held, opened)
+        self.assertEqual(closed, 0.0)
+
+        uncertain_bull = replace(
+            bullish,
+            aleatoric_variance=(0.08,) * 3,
+            epistemic_variance=(0.02,) * 3,
+        )
+        cautious = DecisionPolicy(DecisionPolicyConfig(uncertainty_aversion=4.0))
+        self.assertEqual(cautious.target_position(uncertain_bull, 0.7), 0.7)
 
     def test_return_moments_are_selected_by_symbol(self) -> None:
         first = replace(
-            prediction(1, 3, (0.0, 0.0, 0.0, 1.0)), symbol="000001"
+            prediction(1, 2, (0.0, 0.0, 1.0)), symbol="000001"
         )
         second = replace(first, symbol="000002")
         report = evaluate_predictions(
             [first, second],
             {
-                "000001": (-0.03, -0.01, 0.01, 0.03),
-                "000002": (-0.02, -0.005, 0.005, 0.01),
+                "000001": (-0.01, 0.0, 0.01),
+                "000002": (-0.02, 0.0, 0.03),
             },
-            {"000001": (0.0001,) * 4, "000002": (0.0001,) * 4},
+            {"000001": (0.0001,) * 3, "000002": (0.0001,) * 3},
         )
 
-        np.testing.assert_allclose(report["series"]["return_residuals"], [0.0, 0.02])
+        np.testing.assert_allclose(report["series"]["return_residuals"], [0.0, -0.02])
 
     def test_report_chart_uses_bimonthly_date_labels(self) -> None:
         try:

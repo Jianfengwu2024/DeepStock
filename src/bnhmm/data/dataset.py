@@ -119,7 +119,12 @@ class ProfileLabelBuilder:
             if execution_state.period_start > target_state.period_end:
                 continue
             forward_return = target_state.end_price / execution_state.start_price - 1.0
-            regime = int(np.digitize(forward_return, self.config.thresholds))
+            if forward_return < self.config.bear_threshold:
+                regime = 0
+            elif forward_return <= self.config.bull_threshold:
+                regime = 1
+            else:
+                regime = 2
             rows.append(
                 (state, execution_state, target_state, forward_return, regime)
             )

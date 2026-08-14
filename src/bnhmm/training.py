@@ -22,6 +22,7 @@ class ModelConfig:
     max_profile_bins: int = 512
     profile_channels: int = PROFILE_CHANNELS
     state_feature_dim: int = 9
+    latent_states: int = 50
     output_states: int = REGIME_COUNT
     d_model: int = 96
     motif_dim: int = 32

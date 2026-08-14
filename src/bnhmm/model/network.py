@@ -1,4 +1,4 @@
-"""Bayesian profile Transformer with ten conditional latent states."""
+"""Bayesian profile Transformer with configurable conditional latent states."""
 
 from __future__ import annotations
 
@@ -165,7 +165,7 @@ class BNHMMNetwork(nn.Module):
         max_profile_bins: int = 512,
         profile_channels: int = PROFILE_CHANNELS,
         state_feature_dim: int = 9,
-        latent_states: int = 10,
+        latent_states: int = 50,
         output_states: int = REGIME_COUNT,
         d_model: int = 96,
         motif_dim: int = 32,
@@ -176,10 +176,12 @@ class BNHMMNetwork(nn.Module):
         max_sequence_length: int = 512,
     ) -> None:
         super().__init__()
-        if latent_states != 10:
-            raise ValueError("BNHMM v2 requires ten unnamed latent states")
+        if latent_states < profile_channels:
+            raise ValueError("latent states cannot be fewer than profile channels")
+        if latent_states > 512:
+            raise ValueError("latent states cannot exceed 512")
         if output_states != REGIME_COUNT:
-            raise ValueError("BNHMM v2 requires four output regimes")
+            raise ValueError("BNHMM requires bear, flat, and bull output regimes")
         if max_sequence_length < 2:
             raise ValueError("max_sequence_length must be at least two")
         self.max_profile_bins = max_profile_bins

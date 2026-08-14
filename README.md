@@ -15,14 +15,15 @@ volume divides minute volume by prior ten-day mean daily volume divided by 240.
 Hourly states remain an explicit comparison mode only.
 
 The model core now includes adjacent two/three-bin motif tokenization, causal
-Bayesian multi-head attention, a conditional ten-state latent transition filter,
-and a four-regime Dirichlet evidence head. `predict_posterior()` separates
+Bayesian multi-head attention, a conditional 50-state latent transition filter,
+and a three-regime Dirichlet evidence head. The hidden-state count is configurable
+but cannot be smaller than the input channel count. `predict_posterior()` separates
 aleatoric and epistemic variance through Monte Carlo weight sampling.
 
 Optional self-supervised pretraining uses only states available before each
 walk-forward cutoff. It reconstructs randomly masked daily state features and
 predicts the next daily state features from causal context before the noisy
-four-regime target is introduced. Pretraining and supervised fine-tuning use
+three-regime target is introduced. Pretraining and supervised fine-tuning use
 separate deterministic random streams so controlled ablations are reproducible.
 
 The offline trainer reads bounded symbol/date slices from a static DuckDB
@@ -101,10 +102,12 @@ python -m bnhmm.cli walk-forward \
   --device cuda:0 --state-timeframe daily
 ```
 
-Reports include out-of-sample four-state directional predictions, Brier score, log loss,
+Reports include out-of-sample bearish/flat/bullish predictions, Brier score, log loss,
 calibration, probability/return/standardized residuals, residual
 autocorrelation, posterior predictive checks, and policy equity/drawdown. The
-policy is a separate consumer of the model posterior. Completed daily signals
+policy is a separate consumer of the model posterior. It opens or holds a long
+position on bullish signals, preserves the prior position on flat signals, and
+closes on bearish signals; it never opens short positions. Completed daily signals
 execute at the first continuous-trading bar of the next session.
 
 ## Test console

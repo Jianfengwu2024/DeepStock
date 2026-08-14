@@ -110,6 +110,7 @@ def _train(args: argparse.Namespace) -> int:
     model_config = ModelConfig(
         max_profile_bins=args.max_profile_bins,
         profile_channels=profile_config.profile_channels,
+        latent_states=args.latent_states,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -269,6 +270,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
     model_config = ModelConfig(
         max_profile_bins=args.max_profile_bins,
         profile_channels=profile_config.profile_channels,
+        latent_states=args.latent_states,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -310,7 +312,6 @@ def _walk_forward(args: argparse.Namespace) -> int:
     )
     policy = DecisionPolicy(
         DecisionPolicyConfig(
-            allow_short=args.allow_short,
             uncertainty_aversion=args.uncertainty_aversion,
             transaction_cost_bps=args.transaction_cost_bps,
         )
@@ -460,6 +461,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--sequence-stride", type=int, default=64)
     train.add_argument("--minimum-sequence-length", type=int, default=32)
     train.add_argument("--d-model", type=int, default=96)
+    train.add_argument("--latent-states", type=int, default=50)
     train.add_argument("--motif-dim", type=int, default=32)
     train.add_argument("--heads", type=int, default=4)
     train.add_argument("--layers", type=int, default=3)
@@ -506,6 +508,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--sequence-stride", type=int, default=64)
     walk.add_argument("--minimum-sequence-length", type=int, default=32)
     walk.add_argument("--d-model", type=int, default=96)
+    walk.add_argument("--latent-states", type=int, default=50)
     walk.add_argument("--motif-dim", type=int, default=32)
     walk.add_argument("--heads", type=int, default=4)
     walk.add_argument("--layers", type=int, default=3)
@@ -514,7 +517,6 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--mc-samples", type=int, default=16)
     walk.add_argument("--uncertainty-aversion", type=float, default=2.0)
     walk.add_argument("--transaction-cost-bps", type=float, default=10.0)
-    walk.add_argument("--allow-short", action="store_true")
     walk.add_argument("--seed", type=int, default=7)
     walk.set_defaults(handler=_walk_forward)
     return parser

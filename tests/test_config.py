@@ -13,11 +13,13 @@ from bnhmm import (
 
 
 class ConfigTests(unittest.TestCase):
-    def test_model_shape_is_fixed(self) -> None:
+    def test_model_defaults_to_fifty_hidden_states_and_three_outputs(self) -> None:
         config = BNHMMConfig()
-        self.assertEqual(config.latent_states, 10)
-        self.assertEqual(len(config.output_states), 4)
-        self.assertNotIn("neutral", REGIME_NAMES)
+        self.assertEqual(config.latent_states, 50)
+        self.assertEqual(len(config.output_states), 3)
+        self.assertEqual(REGIME_NAMES, ("bear", "flat", "bull"))
+        with self.assertRaises(ValueError):
+            BNHMMConfig(latent_states=PROFILE_CHANNELS - 1)
 
     def test_invalid_profile_scale_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -44,8 +46,8 @@ class ConfigTests(unittest.TestCase):
 
     def test_label_thresholds_must_be_ordered(self) -> None:
         with self.assertRaises(ValueError):
-            LabelConfig(direction_threshold=0.03)
-        self.assertEqual(LabelConfig().thresholds, (-0.02, 0.0, 0.02))
+            LabelConfig(bear_threshold=0.01, bull_threshold=0.005)
+        self.assertEqual(LabelConfig().thresholds, (-0.005, 0.005))
 
 
 if __name__ == "__main__":

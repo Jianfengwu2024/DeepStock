@@ -10,13 +10,16 @@
    distributions. Small source gaps do not discard the full day; hourly states
    are opt-in only.
 3. The model layer encodes adjacent two-bin and three-bin motifs, then
-   applies a Bayesian Transformer and a conditional ten-state transition model.
+   applies a Bayesian Transformer and a conditional 50-state transition model.
+   The hidden-state count is configurable and may not be smaller than the profile
+   channel count.
    Every symbol owns a complete model instance; Transformer weights, hidden-state
    transitions, evidence heads, and return moments are never shared across symbols.
-4. The output layer emits four directional posterior means and variances, including
-   aleatoric and epistemic uncertainty.
-5. The policy layer maps posterior output to target positions independently of
-   the model.
+4. The output layer emits bearish, flat, and bullish posterior means and variances,
+   including aleatoric and epistemic uncertainty. Flat covers forward returns from
+   -0.5% through +0.5%.
+5. The long-only policy layer opens on bullish, keeps the previous position on flat,
+   and closes on bearish independently of the model.
 6. Walk-forward evaluation publishes only point-in-time-correct predictions.
    Each model is trained on one symbol's past and tested only on that same
    symbol's future. Multi-symbol runs are orchestration and portfolio aggregation.

@@ -35,7 +35,6 @@ class PredictionRecord:
 
 @dataclass(frozen=True, slots=True)
 class DecisionPolicyConfig:
-    allow_short: bool = False
     uncertainty_aversion: float = 2.0
     transaction_cost_bps: float = 10.0
 
@@ -45,12 +44,14 @@ class DecisionPolicyConfig:
 
 
 class DecisionPolicy:
-    """Convert four-state posteriors into positions without entering the model."""
+    """Apply a stateful long-only policy to the three-state posterior."""
 
     def __init__(self, config: DecisionPolicyConfig | None = None) -> None:
         self.config = config or DecisionPolicyConfig()
 
-    def target_position(self, prediction: PredictionRecord) -> float:
+    def target_position(
+        self, prediction: PredictionRecord, previous_position: float = 0.0
+    ) -> float:
         total_variance = np.asarray(prediction.aleatoric_variance) + np.asarray(
             prediction.epistemic_variance
         )
@@ -58,10 +59,12 @@ class DecisionPolicy:
         confidence = float(
             np.clip(1.0 - self.config.uncertainty_aversion * uncertainty, 0.0, 1.0)
         )
-        position = float(np.clip(prediction.expected_score / 2.0, -1.0, 1.0))
-        if not self.config.allow_short:
-            position = max(position, 0.0)
-        return position * confidence
+        predicted_state = int(np.argmax(prediction.probability_mean))
+        if predicted_state == 2:  # Bull: open or add, never reduce an existing long.
+            return max(float(np.clip(previous_position, 0.0, 1.0)), confidence)
+        if predicted_state == 1:  # Flat: retain the existing position.
+            return float(np.clip(previous_position, 0.0, 1.0))
+        return 0.0  # Bear: close; it never opens a short position.
 
 
 def infer_sequences(
@@ -145,9 +148,9 @@ def evaluate_predictions(
     targets = np.asarray([item.target for item in predictions], dtype=np.int64)
     returns = np.asarray([item.forward_return for item in predictions])
     if probability.ndim != 2 or probability.shape[1] != REGIME_COUNT:
-        raise ValueError("predictions must contain four-state probabilities")
+        raise ValueError("predictions must contain three-state probabilities")
     if np.any((targets < 0) | (targets >= REGIME_COUNT)):
-        raise ValueError("prediction targets must use four-state indices")
+        raise ValueError("prediction targets must use three-state indices")
     return_mean_rows = _moment_rows(
         regime_return_means, predictions, "regime return means"
     )
@@ -274,10 +277,10 @@ def _moment_rows(
     else:
         vector = np.asarray(values, dtype=np.float64)
         if vector.shape != (REGIME_COUNT,):
-            raise ValueError(f"{name} must contain four values")
+            raise ValueError(f"{name} must contain three values")
         rows = np.broadcast_to(vector, (len(predictions), REGIME_COUNT))
     if rows.shape != (len(predictions), REGIME_COUNT):
-        raise ValueError(f"{name} must contain four values per symbol")
+        raise ValueError(f"{name} must contain three values per symbol")
     return rows
 
 
@@ -353,8 +356,9 @@ def _backtest(
     turnovers: list[float] = []
     cost_rate = policy.config.transaction_cost_bps / 10_000.0
     for item in daily:
-        position = policy.target_position(item)
-        turnover = abs(position - prior_position.get(item.symbol, 0.0))
+        previous_position = prior_position.get(item.symbol, 0.0)
+        position = policy.target_position(item, previous_position)
+        turnover = abs(position - previous_position)
         net_return = position * item.forward_return - turnover * cost_rate
         positions.append(position)
         turnovers.append(turnover)

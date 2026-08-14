@@ -41,15 +41,15 @@ class BNHMMNetworkTests(unittest.TestCase):
         features = state_features()
         timeframes = torch.tensor([[0, 0, 0, 1, 0, 1]]).repeat(2, 1)
         output = self.model(values, timeframes, features, sample=True)
-        self.assertEqual(output.alpha.shape, (2, 6, 4))
-        self.assertEqual(output.latent_probabilities.shape, (2, 6, 10))
+        self.assertEqual(output.alpha.shape, (2, 6, 3))
+        self.assertEqual(output.latent_probabilities.shape, (2, 6, 50))
         self.assertTrue(torch.all(output.alpha > 1.0))
         self.assertTrue(
             torch.allclose(
                 output.latent_probabilities.sum(dim=-1), torch.ones(2, 6), atol=1e-5
             )
         )
-        targets = torch.randint(0, 4, (2, 6))
+        targets = torch.randint(0, 3, (2, 6))
         loss = evidential_classification_loss(output, targets)
         loss.total.backward()
         self.assertTrue(torch.isfinite(loss.total))
@@ -71,21 +71,21 @@ class BNHMMNetworkTests(unittest.TestCase):
         )
         self.assertTrue(torch.all(posterior.aleatoric_variance >= 0))
         self.assertTrue(torch.all(posterior.epistemic_variance >= 0))
-        self.assertTrue(torch.all(posterior.expected_score <= 2.0))
-        self.assertTrue(torch.all(posterior.expected_score >= -2.0))
-        self.assertEqual(self.model.regime_scores.tolist(), [-2.0, -1.0, 1.0, 2.0])
+        self.assertTrue(torch.all(posterior.expected_score <= 1.0))
+        self.assertTrue(torch.all(posterior.expected_score >= -1.0))
+        self.assertEqual(self.model.regime_scores.tolist(), [-1.0, 0.0, 1.0])
 
     def test_ordinal_loss_penalizes_distant_state_errors(self) -> None:
         common = {
-            "latent_probabilities": torch.full((1, 1, 10), 0.1),
+            "latent_probabilities": torch.full((1, 1, 50), 0.02),
             "context": torch.zeros(1, 1, 4),
             "kl_divergence": torch.tensor(0.0),
         }
         near = SinglePassOutput(
-            alpha=torch.tensor([[[2.0, 9.0, 2.0, 2.0]]]), **common
+            alpha=torch.tensor([[[2.0, 9.0, 2.0]]]), **common
         )
         far = SinglePassOutput(
-            alpha=torch.tensor([[[2.0, 2.0, 2.0, 9.0]]]), **common
+            alpha=torch.tensor([[[2.0, 2.0, 9.0]]]), **common
         )
         target = torch.zeros((1, 1), dtype=torch.long)
 

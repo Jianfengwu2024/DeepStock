@@ -49,8 +49,8 @@ class WalkForwardTests(unittest.TestCase):
             return SimpleNamespace(
                 folds=({"symbol": observation.symbol, "fold": 0},),
                 predictions=(),
-                regime_return_means=(-0.03, -0.01, 0.01, 0.03),
-                regime_return_variances=(0.0001,) * 4,
+                regime_return_means=(-0.01, 0.0, 0.01),
+                regime_return_variances=(0.0001,) * 3,
             )
 
         with TemporaryDirectory() as directory, patch(

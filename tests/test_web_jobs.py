@@ -30,15 +30,19 @@ class WebJobTests(unittest.TestCase):
             WalkForwardJobRequest(minimum_train_sessions=50, tuning_sessions=60)
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(velocity_bins=8)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(latent_states=21)
 
-    def test_command_contains_optional_policy_parameters(self) -> None:
+    def test_command_contains_model_and_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(
-            symbols=["000001", "000002"], max_folds=3, allow_short=True
+            symbols=["000001", "000002"], max_folds=3
         )
         command = build_command(request, Path("/tmp/result"))
         self.assertIn("000001,000002", command)
         self.assertIn("--max-folds", command)
-        self.assertIn("--allow-short", command)
+        self.assertNotIn("--allow-short", command)
+        self.assertIn("--latent-states", command)
+        self.assertIn("50", command)
         self.assertEqual(request.state_timeframe, "daily")
         self.assertIn("--state-timeframe", command)
         self.assertIn("daily", command)
@@ -167,6 +171,7 @@ class WebJobTests(unittest.TestCase):
             request.pop("state_timeframe")
             request.pop("profile_protocol")
             request.pop("training_scope")
+            request.pop("latent_states")
             request.pop("bin_width_bps")
             request.pop("max_profile_bins")
             payload = {
@@ -186,6 +191,7 @@ class WebJobTests(unittest.TestCase):
             self.assertEqual(loaded.request.state_timeframe, "mixed")
             self.assertEqual(loaded.request.profile_protocol, "legacy-fixed-bins")
             self.assertEqual(loaded.request.training_scope, "shared-legacy")
+            self.assertEqual(loaded.request.latent_states, 10)
 
 
 if __name__ == "__main__":

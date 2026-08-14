@@ -16,7 +16,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled", "interrupted"]
@@ -64,6 +64,7 @@ class WalkForwardJobRequest(BaseModel):
     sequence_stride: int = Field(64, ge=1, le=2048)
     minimum_sequence_length: int = Field(32, ge=2, le=2048)
     d_model: int = Field(96, ge=8, le=2048)
+    latent_states: int = Field(50, ge=1, le=512)
     motif_dim: int = Field(32, ge=2, le=512)
     heads: int = Field(4, ge=1, le=64)
     layers: int = Field(3, ge=1, le=48)
@@ -72,7 +73,6 @@ class WalkForwardJobRequest(BaseModel):
     mc_samples: int = Field(16, ge=2, le=256)
     uncertainty_aversion: float = Field(2.0, ge=0.0, le=100.0)
     transaction_cost_bps: float = Field(10.0, ge=0.0, le=1000.0)
-    allow_short: bool = False
     seed: int = Field(7, ge=0, le=2**31 - 1)
 
     @field_validator("name")
@@ -96,7 +96,7 @@ class WalkForwardJobRequest(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_relationships(self) -> "WalkForwardJobRequest":
+    def validate_relationships(self, info: ValidationInfo) -> "WalkForwardJobRequest":
         if self.end <= self.start:
             raise ValueError("end must be later than start")
         if self.minimum_train_sessions <= self.tuning_sessions:
@@ -109,6 +109,10 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
             raise ValueError("velocity_bins must be odd")
+        profile_channels = 4 + 2 * self.velocity_bins
+        legacy = bool((info.context or {}).get("legacy_job"))
+        if not legacy and self.latent_states < profile_channels:
+            raise ValueError("latent_states cannot be fewer than profile channels")
         return self
 
 
@@ -222,6 +226,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.minimum_sequence_length),
         "--d-model",
         str(request.d_model),
+        "--latent-states",
+        str(request.latent_states),
         "--motif-dim",
         str(request.motif_dim),
         "--heads",
@@ -243,8 +249,6 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
     ]
     if request.max_folds is not None:
         command.extend(("--max-folds", str(request.max_folds)))
-    if request.allow_short:
-        command.append("--allow-short")
     if request.deterministic_training:
         command.append("--deterministic-training")
     return command
@@ -495,7 +499,14 @@ class JobManager:
                     and "training_scope" not in request_payload
                 ):
                     request_payload["training_scope"] = "shared-legacy"
-                record = JobRecord.model_validate(payload)
+                if (
+                    isinstance(request_payload, dict)
+                    and "latent_states" not in request_payload
+                ):
+                    request_payload["latent_states"] = 10
+                record = JobRecord.model_validate(
+                    payload, context={"legacy_job": True}
+                )
             except Exception:
                 continue
             if record.status in {"running", "queued"}:
