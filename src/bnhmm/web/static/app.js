@@ -610,7 +610,7 @@ function applySymbols() {
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
-  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "flat_threshold_percent", "d_model", "heads"]) {
+  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_percent", "d_model", "heads"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);
