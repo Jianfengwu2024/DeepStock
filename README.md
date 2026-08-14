@@ -29,14 +29,16 @@ immediately overwhelm the price baseline. Four feature modes support controlled
 ablation. Bayesian layers begin at the emission model and feed a configurable
 latent-state filter. Its context-conditioned transition correction is low rank,
 while its base transition matrix remains Bayesian. The filtered state posterior
-feeds directly into a Bayesian continuous future-return head. The hidden-state
-count defaults to 50 and cannot be smaller than the input channel count.
+  feeds a Bayesian standardized-return head and a Bayesian four-state evidence
+  head. The hidden-state count defaults to 20 and cannot be smaller than the
+  input channel count.
 
-Training uses a robust Student-t return likelihood with four degrees of freedom.
-Strong-bear, weak-bear, weak-bull, and strong-bull probabilities are derived
-from the same Student-t posterior using its exact CDF at zero and configurable
-symmetric strength thresholds (1.5% by default); they are not trained as a
-direct classification head.
+The target return is centered and scaled using only the preceding 20 known
+sessions. Training combines a robust Student-t likelihood with a direct ordinal
+four-state objective. The evidence head starts from the symbol/fold training
+prior, then learns only the information contributed by the current state.
+Strong and weak states are separated at 0.75 rolling standard deviations by
+default; zero separates bearish from bullish.
 `predict_posterior()` uses Monte Carlo weight sampling to report expected return,
 predictive variance, and separate aleatoric and epistemic uncertainty.
 

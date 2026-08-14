@@ -272,6 +272,10 @@ def _run_symbol_walk_forward(
             "pretest_sequences": len(pretest_sequences),
             "outer_test_predictions": len(predictions),
             "tuning_best_validation_loss": tuning_result.best_validation_loss,
+            "training_class_prior": final_model.class_prior.detach().cpu().tolist(),
+            "training_class_weights": final_model.class_weights.detach().cpu().tolist(),
+            "tuning_history": list(tuning_result.history),
+            "final_training_history": list(final_result.history),
             "auxiliary_gates": dict(
                 zip(
                     ("relative_volume", "joint_price_volume_velocity"),

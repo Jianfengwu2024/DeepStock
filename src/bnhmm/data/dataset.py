@@ -28,6 +28,9 @@ class ProfileObservations:
     target_times: NDArray[np.datetime64]
     entry_prices: NDArray[np.float64]
     forward_returns: NDArray[np.float64]
+    standardized_returns: NDArray[np.float64]
+    return_locations: NDArray[np.float64]
+    return_scales: NDArray[np.float64]
 
     def __len__(self) -> int:
         return len(self.targets)
@@ -47,6 +50,9 @@ class ProfileObservations:
             target_times=self.target_times[indices],
             entry_prices=self.entry_prices[indices],
             forward_returns=self.forward_returns[indices],
+            standardized_returns=self.standardized_returns[indices],
+            return_locations=self.return_locations[indices],
+            return_scales=self.return_scales[indices],
         )
 
     def temporal_split(
@@ -72,13 +78,16 @@ class ProfileSequence:
     target_times: NDArray[np.datetime64]
     entry_prices: NDArray[np.float64]
     forward_returns: NDArray[np.float64]
+    standardized_returns: NDArray[np.float64]
+    return_locations: NDArray[np.float64]
+    return_scales: NDArray[np.float64]
 
     def __len__(self) -> int:
         return len(self.targets)
 
 
 class ProfileLabelBuilder:
-    """Map state-end prices to future-session return regimes."""
+    """Map future returns to regimes standardized by information known at signal time."""
 
     def __init__(self, config: LabelConfig | None = None) -> None:
         self.config = config or LabelConfig()
@@ -99,7 +108,13 @@ class ProfileLabelBuilder:
             state.period_start.astype("datetime64[D]"): index
             for index, state in enumerate(daily)
         }
-        rows: list[tuple[ProfileState, ProfileState, ProfileState, float, int]] = []
+        daily_returns = np.asarray(
+            [state.end_price / state.start_price - 1.0 for state in daily],
+            dtype=np.float64,
+        )
+        rows: list[
+            tuple[ProfileState, ProfileState, ProfileState, float, float, float, float, int]
+        ] = []
         for position, state in enumerate(ordered):
             index = session_index.get(state.period_start.astype("datetime64[D]"))
             if index is None:
@@ -118,10 +133,35 @@ class ProfileLabelBuilder:
             target_state = daily[target_index]
             if execution_state.period_start > target_state.period_end:
                 continue
+            known = np.asarray(
+                [
+                    daily_returns[daily_index]
+                    for daily_index, daily_state in enumerate(daily)
+                    if daily_state.period_end <= state.period_end
+                ],
+                dtype=np.float64,
+            )
+            known = known[-self.config.standardization_lookback_sessions :]
+            if len(known) < self.config.standardization_min_observations:
+                continue
+            return_location = float(known.mean())
+            return_scale = max(
+                float(known.std(ddof=1)), self.config.minimum_return_scale
+            )
             forward_return = target_state.end_price / execution_state.start_price - 1.0
-            regime = int(np.digitize(forward_return, self.config.thresholds))
+            standardized_return = (forward_return - return_location) / return_scale
+            regime = int(np.digitize(standardized_return, self.config.thresholds))
             rows.append(
-                (state, execution_state, target_state, forward_return, regime)
+                (
+                    state,
+                    execution_state,
+                    target_state,
+                    forward_return,
+                    standardized_return,
+                    return_location,
+                    return_scale,
+                    regime,
+                )
             )
 
         if not rows:
@@ -139,7 +179,7 @@ class ProfileLabelBuilder:
                 [0 if row[0].timeframe == "60m" else 1 for row in rows],
                 dtype=np.int64,
             ),
-            targets=np.asarray([row[4] for row in rows], dtype=np.int64),
+            targets=np.asarray([row[7] for row in rows], dtype=np.int64),
             signal_times=np.asarray(
                 [row[0].period_end for row in rows], dtype="datetime64[ns]"
             ),
@@ -151,6 +191,9 @@ class ProfileLabelBuilder:
             ),
             entry_prices=np.asarray([row[1].start_price for row in rows]),
             forward_returns=np.asarray([row[3] for row in rows], dtype=np.float64),
+            standardized_returns=np.asarray([row[4] for row in rows], dtype=np.float64),
+            return_locations=np.asarray([row[5] for row in rows], dtype=np.float64),
+            return_scales=np.asarray([row[6] for row in rows], dtype=np.float64),
         )
 
     @staticmethod
@@ -245,6 +288,9 @@ class SequenceWindowBuilder:
                     target_times=observations.target_times[section],
                     entry_prices=observations.entry_prices[section],
                     forward_returns=observations.forward_returns[section],
+                    standardized_returns=observations.standardized_returns[section],
+                    return_locations=observations.return_locations[section],
+                    return_scales=observations.return_scales[section],
                 )
             )
         return result

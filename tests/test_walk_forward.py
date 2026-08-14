@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from bnhmm import PriceVolumeProfileBuilder, SequenceConfig
+from bnhmm import LabelConfig, PriceVolumeProfileBuilder, SequenceConfig
 from bnhmm.data.dataset import ProfileLabelBuilder
 from bnhmm.training import ModelConfig, TrainerConfig
 from bnhmm.walk_forward import (
@@ -21,7 +21,9 @@ from test_profile import synthetic_sessions
 class WalkForwardTests(unittest.TestCase):
     def test_folds_keep_inner_tuning_before_outer_test(self) -> None:
         states = PriceVolumeProfileBuilder().build(synthetic_sessions(33))
-        observations = ProfileLabelBuilder().build(states)
+        observations = ProfileLabelBuilder(
+            LabelConfig(standardization_min_observations=2)
+        ).build(states)
         config = WalkForwardConfig(
             minimum_train_sessions=10,
             tuning_sessions=3,
@@ -40,7 +42,9 @@ class WalkForwardTests(unittest.TestCase):
 
     def test_multi_symbol_run_builds_one_model_pipeline_per_symbol(self) -> None:
         states = PriceVolumeProfileBuilder().build(synthetic_sessions(33))
-        first = ProfileLabelBuilder().build(states)
+        first = ProfileLabelBuilder(
+            LabelConfig(standardization_min_observations=2)
+        ).build(states)
         second = replace(first, symbol="000002")
         destinations: list[Path] = []
 

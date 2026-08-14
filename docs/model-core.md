@@ -28,20 +28,22 @@ All query, key, value, attention-output, feed-forward, motif, transition-context
 latent-emission and return-posterior projections use variational Gaussian
 weights. The temporal attention mask is causal.
 
-Fifty unnamed latent probabilities are filtered sequentially by default using a
+Twenty unnamed latent probabilities are filtered sequentially by default using a
 Bayesian base transition matrix plus a context-dependent transition delta. The
-filtered latent state feeds directly into a Bayesian Student-t return posterior.
+filtered latent state feeds a Bayesian standardized Student-t return posterior
+and a direct four-state evidence head. The evidence logits are added to a
+training-only symbol/fold class prior.
 The hidden-state count is configurable but cannot fall below the profile channel
-count. Configurable symmetric thresholds (1.5% by default) separate strong from
-weak returns, while zero separates bearish from bullish returns.
+count. Configurable symmetric thresholds (0.75 rolling sigma by default) separate
+strong from weak returns, while zero separates bearish from bullish returns.
 
 Monte Carlo prediction returns:
 
 - four-state posterior probability means;
-- aleatoric Dirichlet variance;
+- aleatoric categorical variance;
 - epistemic variance across sampled weights;
 - total variance;
-- 50 latent-state posterior probabilities by default;
+- 20 latent-state posterior probabilities by default;
 - expected regime score in `[-2, 2]`.
 
 These outputs are model indicators. Position sizing remains in a separate long-only

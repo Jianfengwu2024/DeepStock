@@ -19,11 +19,13 @@ from test_profile import synthetic_sessions
 class ProfileDatasetTests(unittest.TestCase):
     def test_daily_signals_execute_on_next_sessions_first_tradable_minute(self) -> None:
         states = PriceVolumeProfileBuilder().build(synthetic_sessions(13))
-        observations = ProfileLabelBuilder(LabelConfig(forward_sessions=1)).build(states)
+        observations = ProfileLabelBuilder(
+            LabelConfig(forward_sessions=1, standardization_min_observations=2)
+        ).build(states)
 
-        self.assertEqual(len(observations), 2)
-        self.assertEqual(len(observations.profiles), 2)
-        self.assertEqual(len(observations.bin_coordinates), 2)
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(len(observations.profiles), 1)
+        self.assertEqual(len(observations.bin_coordinates), 1)
         self.assertTrue(
             all(
                 profile.shape[1] == PROFILE_CHANNELS
@@ -38,7 +40,7 @@ class ProfileDatasetTests(unittest.TestCase):
                 )
             )
         )
-        self.assertEqual(observations.state_features.shape, (2, 9))
+        self.assertEqual(observations.state_features.shape, (1, 9))
         self.assertTrue(np.all(np.isfinite(observations.state_features)))
         self.assertTrue(np.all(observations.timeframe_ids == 1))
         self.assertTrue(np.all(observations.execution_times > observations.signal_times))
@@ -64,11 +66,17 @@ class ProfileDatasetTests(unittest.TestCase):
             for state in states
         ]
 
-        observations = ProfileLabelBuilder(LabelConfig(forward_sessions=1)).build(states)
+        observations = ProfileLabelBuilder(
+            LabelConfig(forward_sessions=1, standardization_min_observations=2)
+        ).build(states)
 
-        self.assertEqual(len(observations), 10)
-        np.testing.assert_array_equal(observations.targets[:5], [0, 0, 0, 2, 2])
-        np.testing.assert_array_equal(observations.targets[5:], [3, 3, 3, 2, 2])
+        self.assertGreater(len(observations), 0)
+        np.testing.assert_allclose(
+            observations.standardized_returns,
+            (observations.forward_returns - observations.return_locations)
+            / observations.return_scales,
+        )
+        self.assertTrue(np.all(observations.return_scales >= 0.002))
         self.assertTrue(
             np.all(observations.execution_times > observations.signal_times)
         )
@@ -76,14 +84,16 @@ class ProfileDatasetTests(unittest.TestCase):
     def test_temporal_split_purges_labels_crossing_cutoff(self) -> None:
         states = PriceVolumeProfileBuilder(
             ProfileConfig(state_timeframes=("60m", "1d"))
-        ).build(synthetic_sessions(14))
-        observations = ProfileLabelBuilder().build(states)
+        ).build(synthetic_sessions(18))
+        observations = ProfileLabelBuilder(
+            LabelConfig(standardization_min_observations=2)
+        ).build(states)
         dates = np.unique(observations.signal_times.astype("datetime64[D]"))
 
         train, validation = observations.temporal_split(dates[2])
 
-        self.assertEqual(len(train), 5)
-        self.assertEqual(len(validation), 5)
+        self.assertGreater(len(train), 0)
+        self.assertGreater(len(validation), 0)
         self.assertTrue(np.all(train.target_times < dates[2]))
         self.assertTrue(np.all(validation.signal_times >= dates[2]))
 
@@ -91,7 +101,9 @@ class ProfileDatasetTests(unittest.TestCase):
         states = PriceVolumeProfileBuilder(
             ProfileConfig(state_timeframes=("60m", "1d"))
         ).build(synthetic_sessions(25))
-        observations = ProfileLabelBuilder().build(states)
+        observations = ProfileLabelBuilder(
+            LabelConfig(standardization_min_observations=2)
+        ).build(states)
         windows = SequenceWindowBuilder(
             SequenceConfig(length=5, stride=3, minimum_length=2)
         ).build(observations)

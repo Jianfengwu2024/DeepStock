@@ -11,16 +11,15 @@
    are opt-in only.
 3. The model layer encodes price motifs as the backbone. Volume and velocity
    families enter through independently gated residual branches initialized near
-   zero. It then applies a Bayesian Transformer and a conditional 50-state transition model.
+   zero. It then applies a causal Transformer and a conditional 20-state transition model.
    The hidden-state count is configurable and may not be smaller than the profile
    channel count.
    Every symbol owns a complete model instance; Transformer weights, hidden-state
    transitions, evidence heads, and return moments are never shared across symbols.
-4. The filtered latent state feeds directly into a Bayesian Student-t return
-   posterior. Strong-bear, weak-bear, weak-bull, and strong-bull probabilities
-   are derived from that posterior, including aleatoric and epistemic
-   uncertainty. Configurable symmetric thresholds separate strong from weak
-   returns; zero separates bearish from bullish.
+4. The filtered latent state feeds a Bayesian standardized Student-t return
+   posterior and a direct four-state evidence head. The evidence updates a
+   training-only class prior. The two heads are trained with a consistency loss,
+   and both aleatoric and epistemic uncertainty remain explicit.
 5. The long-only policy targets half size on weak-bull, full size on strong-bull,
    and closes on either bearish state independently of the model.
 6. Walk-forward evaluation publishes only point-in-time-correct predictions.
@@ -39,7 +38,9 @@ whose `training_cutoff` is no later than its signal time.
 
 Labels use the first bar strictly after the completed profile as their entry
 price. A daily state completed at 15:00 therefore enters on the first continuous
-bar of the next trading session. Walk-forward folds contain an inner tuning
+bar of the next trading session. The target is centered and scaled by the mean
+and volatility of the preceding 20 known sessions; no outer-fold observation is
+used to set labels, class priors, or class weights. Walk-forward folds contain an inner tuning
 window; after choosing the epoch count, the model is rebuilt on all information
 whose labels mature before the outer-test cutoff. The outer window never
 participates in model selection or fitting.

@@ -17,10 +17,12 @@ class LossBreakdown:
     total: Tensor
     return_nll: Tensor
     return_mae: Tensor
+    classification: Tensor
     brier: Tensor
     ordinal: Tensor
+    consistency: Tensor
     kl: Tensor
-    latent_balance: Tensor
+    latent_information: Tensor
 
 
 def return_distribution_loss(
@@ -30,13 +32,16 @@ def return_distribution_loss(
     *,
     valid_mask: Tensor | None = None,
     kl_weight: float = 1e-6,
+    classification_weight: float = 1.0,
     brier_weight: float = 0.25,
-    ordinal_weight: float = 0.0,
-    latent_balance_weight: float = 0.05,
+    ordinal_weight: float = 0.25,
+    consistency_weight: float = 0.25,
+    latent_information_weight: float = 0.05,
+    class_weights: Tensor | None = None,
     student_df: float = 4.0,
-    strong_bear_threshold: float = -0.015,
+    strong_bear_threshold: float = -0.75,
     direction_threshold: float = 0.0,
-    strong_bull_threshold: float = 0.015,
+    strong_bull_threshold: float = 0.75,
 ) -> LossBreakdown:
     if forward_returns.shape != output.return_mean.shape:
         raise ValueError("forward returns must match posterior mean dimensions")
@@ -68,7 +73,7 @@ def return_distribution_loss(
         / 2.0
         * torch.log1p(error.square() / (student_df * scale_squared))
     )
-    probability = student_t_regime_probabilities(
+    continuous_probability = student_t_regime_probabilities(
         output.return_mean,
         variance,
         strong_bear_threshold,
@@ -76,41 +81,60 @@ def return_distribution_loss(
         strong_bull_threshold,
         student_df,
     )
+    probability = F.softmax(output.regime_logits, dim=-1)
     one_hot = F.one_hot(targets, num_classes=probability.shape[-1]).to(
         probability.dtype
+    )
+    classification_per_item = F.cross_entropy(
+        output.regime_logits.transpose(1, 2),
+        targets,
+        weight=class_weights,
+        reduction="none",
     )
     brier_per_item = (probability - one_hot).square().sum(dim=-1)
     ordinal_per_item = (
         probability.cumsum(dim=-1)[..., :-1]
         - one_hot.cumsum(dim=-1)[..., :-1]
     ).square().mean(dim=-1)
+    consistency_per_item = (probability - continuous_probability).square().mean(dim=-1)
 
     mask = valid_mask.to(probability.dtype)
     denominator = mask.sum().clamp_min(1.0)
     return_nll = (nll_per_item * mask).sum() / denominator
     return_mae = (error.abs() * mask).sum() / denominator
+    classification = (classification_per_item * mask).sum() / denominator
     brier = (brier_per_item * mask).sum() / denominator
     ordinal = (ordinal_per_item * mask).sum() / denominator
+    consistency = (consistency_per_item * mask).sum() / denominator
 
     latent_mask = mask.unsqueeze(-1)
     usage = (output.latent_probabilities * latent_mask).sum(dim=(0, 1))
     usage = usage / latent_mask.sum().clamp_min(1.0)
-    uniform = torch.full_like(usage, 1.0 / usage.numel())
-    latent_balance = (usage - uniform).square().sum()
+    sample_entropy = -(
+        output.latent_probabilities.clamp_min(1e-8).log()
+        * output.latent_probabilities
+        * latent_mask
+    ).sum() / denominator
+    aggregate_entropy = -(usage * usage.clamp_min(1e-8).log()).sum()
+    latent_information = (sample_entropy - aggregate_entropy) / math.log(usage.numel())
     kl = output.kl_divergence
     total = (
         return_nll
+        + classification_weight * classification
         + brier_weight * brier
         + ordinal_weight * ordinal
+        + consistency_weight * consistency
         + kl_weight * kl
-        + latent_balance_weight * latent_balance
+        + latent_information_weight * latent_information
     )
     return LossBreakdown(
         total,
         return_nll,
         return_mae,
+        classification,
         brier,
         ordinal,
+        consistency,
         kl,
-        latent_balance,
+        latent_information,
     )

@@ -6,7 +6,6 @@ import numpy as np
 import torch
 
 from bnhmm import PROFILE_CHANNELS
-from bnhmm.model import student_t_regime_probabilities
 from bnhmm.data.dataset import ProfileSequence
 from bnhmm.training import (
     BNHMMTrainer,
@@ -31,6 +30,7 @@ def sequence(seed: int, length: int = 8, bins: int = 16) -> ProfileSequence:
             np.arange(coordinate_start, coordinate_start + state_bins, dtype=np.float32)
         )
     state_features = random.normal(0, 1, (length, 9)).astype(np.float32)
+    forward_returns = random.normal(0, 0.01, length)
     signal_times = np.arange(length).astype("timedelta64[D]") + np.datetime64("2026-01-01")
     return ProfileSequence(
         symbol="000001",
@@ -43,7 +43,10 @@ def sequence(seed: int, length: int = 8, bins: int = 16) -> ProfileSequence:
         execution_times=(signal_times + np.timedelta64(1, "h")).astype("datetime64[ns]"),
         target_times=(signal_times + np.timedelta64(1, "D")).astype("datetime64[ns]"),
         entry_prices=np.full(length, 10.0),
-        forward_returns=random.normal(0, 0.01, length),
+        forward_returns=forward_returns,
+        standardized_returns=forward_returns / 0.01,
+        return_locations=np.zeros(length),
+        return_scales=np.full(length, 0.01),
     )
 
 
@@ -81,7 +84,10 @@ def learnable_sequence(
             "datetime64[ns]"
         ),
         entry_prices=np.ones(length),
-        forward_returns=np.asarray((-0.03, -0.005, 0.005, 0.03))[targets],
+        forward_returns=np.asarray((-0.02, -0.0025, 0.0025, 0.02))[targets],
+        standardized_returns=np.asarray((-2.0, -0.25, 0.25, 2.0))[targets],
+        return_locations=np.zeros(length),
+        return_scales=np.full(length, 0.01),
     )
 
 
@@ -246,7 +252,7 @@ class TrainerTests(unittest.TestCase):
                 learning_rate=0.003,
                 weight_decay=0.0,
                 kl_weight=0.0,
-                latent_balance_weight=0.0,
+                latent_information_weight=0.0,
                 gradient_clip=5.0,
                 sample_during_training=False,
             ),
@@ -264,9 +270,7 @@ class TrainerTests(unittest.TestCase):
                 valid_mask=batch["valid_mask"],
                 sample=False,
             )
-        probability = student_t_regime_probabilities(
-            output.return_mean, output.return_log_variance.exp()
-        )
+        probability = torch.softmax(output.regime_logits, dim=-1)
         accuracy = (
             (probability.argmax(dim=-1) == batch["targets"])[batch["target_mask"]]
             .float()

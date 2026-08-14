@@ -21,9 +21,9 @@ from .transformer import BayesianTransformerBlock
 def student_t_regime_probabilities(
     mean: Tensor,
     variance: Tensor,
-    strong_bear_threshold: float = -0.015,
+    strong_bear_threshold: float = -0.75,
     direction_threshold: float = 0.0,
-    strong_bull_threshold: float = 0.015,
+    strong_bull_threshold: float = 0.75,
     degrees_of_freedom: float = 4.0,
 ) -> Tensor:
     """Convert a Student-t(4) return posterior into regime probabilities."""
@@ -52,6 +52,7 @@ def student_t_regime_probabilities(
 class SinglePassOutput:
     return_mean: Tensor
     return_log_variance: Tensor
+    regime_logits: Tensor
     latent_probabilities: Tensor
     context: Tensor
     kl_divergence: Tensor
@@ -330,19 +331,19 @@ class BNHMMNetwork(nn.Module):
         max_profile_bins: int = 512,
         profile_channels: int = PROFILE_CHANNELS,
         state_feature_dim: int = 9,
-        latent_states: int = 50,
+        latent_states: int = 20,
         output_states: int = REGIME_COUNT,
         feature_mode: str = "gated-full",
         bayesian_backbone: bool = False,
         transition_rank: int = 4,
-        strong_bear_threshold: float = -0.015,
+        strong_bear_threshold: float = -0.75,
         direction_threshold: float = 0.0,
-        strong_bull_threshold: float = 0.015,
-        d_model: int = 96,
-        motif_dim: int = 32,
+        strong_bull_threshold: float = 0.75,
+        d_model: int = 48,
+        motif_dim: int = 16,
         heads: int = 4,
-        layers: int = 3,
-        feedforward_dim: int = 192,
+        layers: int = 2,
+        feedforward_dim: int = 96,
         dropout: float = 0.1,
         max_sequence_length: int = 512,
     ) -> None:
@@ -411,6 +412,13 @@ class BNHMMNetwork(nn.Module):
         self.return_distribution = BayesianLinear(latent_states, 2)
         nn.init.zeros_(self.return_distribution.weight_mu)
         nn.init.zeros_(self.return_distribution.bias_mu)
+        self.regime_evidence = BayesianLinear(latent_states, output_states)
+        nn.init.zeros_(self.regime_evidence.weight_mu)
+        nn.init.zeros_(self.regime_evidence.bias_mu)
+        self.register_buffer(
+            "class_prior", torch.full((output_states,), 1.0 / output_states)
+        )
+        self.register_buffer("class_weights", torch.ones(output_states))
         pretraining_dim = d_model + latent_states
         self.masked_state_reconstruction = nn.Linear(
             pretraining_dim, state_feature_dim
@@ -517,16 +525,31 @@ class BNHMMNetwork(nn.Module):
         return_parameters = self.return_distribution(
             latent_features, sample=sample
         )
-        return_mean = 0.1 * torch.tanh(return_parameters[..., 0])
+        return_mean = 4.0 * torch.tanh(return_parameters[..., 0])
         return_log_variance = torch.clamp(
-            return_parameters[..., 1] - 8.4, min=-12.0, max=-3.0
+            return_parameters[..., 1], min=-6.0, max=4.0
+        )
+        regime_logits = (
+            self.class_prior.clamp_min(1e-6).log()
+            + self.regime_evidence(latent_features, sample=sample)
         )
         kl = (
             module_kl_divergence(self) + self._transition_kl(transition_std)
         ) / self.kl_distribution_count
         return SinglePassOutput(
-            return_mean, return_log_variance, latent, context, kl
+            return_mean, return_log_variance, regime_logits, latent, context, kl
         )
+
+    def set_class_prior(self, prior: Tensor) -> None:
+        """Install a training-only symbol/fold prior and conservative class weights."""
+        prior = prior.to(device=self.class_prior.device, dtype=self.class_prior.dtype)
+        if prior.shape != self.class_prior.shape or torch.any(prior <= 0):
+            raise ValueError("class prior must be a positive four-state vector")
+        prior = prior / prior.sum()
+        weights = torch.sqrt(prior.max() / prior).clamp(0.5, 2.0)
+        weights = weights / weights.mean()
+        self.class_prior.copy_(prior)
+        self.class_weights.copy_(weights)
 
     def pretraining_features(self, output: SinglePassOutput) -> Tensor:
         return torch.cat((output.context, output.latent_probabilities), dim=-1)
@@ -592,13 +615,7 @@ class BNHMMNetwork(nn.Module):
                 sample=True,
             )
             return_variance = output.return_log_variance.exp()
-            probability = student_t_regime_probabilities(
-                output.return_mean,
-                return_variance,
-                self.strong_bear_threshold,
-                self.direction_threshold,
-                self.strong_bull_threshold,
-            )
+            probability = F.softmax(output.regime_logits, dim=-1)
             probability_samples.append(probability)
             return_means.append(output.return_mean)
             return_variances.append(return_variance)

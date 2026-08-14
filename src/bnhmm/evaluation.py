@@ -26,11 +26,16 @@ class PredictionRecord:
     target_time: np.datetime64
     target: int
     forward_return: float
+    standardized_return: float
+    return_location: float
+    return_scale: float
+    prior_probability: tuple[float, ...]
     probability_mean: tuple[float, ...]
     aleatoric_variance: tuple[float, ...]
     epistemic_variance: tuple[float, ...]
     expected_score: float
     expected_return: float
+    expected_standardized_return: float
     return_variance: float
     aleatoric_return_variance: float
     epistemic_return_variance: float
@@ -105,6 +110,12 @@ def infer_sequences(
                 target_time=sequence.target_times[index],
                 target=int(sequence.targets[index]),
                 forward_return=float(sequence.forward_returns[index]),
+                standardized_return=float(sequence.standardized_returns[index]),
+                return_location=float(sequence.return_locations[index]),
+                return_scale=float(sequence.return_scales[index]),
+                prior_probability=tuple(
+                    float(value) for value in model.class_prior.detach().cpu()
+                ),
                 probability_mean=tuple(
                     float(value) for value in posterior.probability_mean[0, index].cpu()
                 ),
@@ -116,16 +127,24 @@ def infer_sequences(
                 ),
                 expected_score=float(posterior.expected_score[0, index].cpu()),
                 expected_return=float(
+                    sequence.return_locations[index]
+                    + sequence.return_scales[index]
+                    * float(posterior.expected_return[0, index].cpu())
+                ),
+                expected_standardized_return=float(
                     posterior.expected_return[0, index].cpu()
                 ),
                 return_variance=float(
                     posterior.return_variance[0, index].cpu()
+                    * sequence.return_scales[index] ** 2
                 ),
                 aleatoric_return_variance=float(
                     posterior.aleatoric_return_variance[0, index].cpu()
+                    * sequence.return_scales[index] ** 2
                 ),
                 epistemic_return_variance=float(
                     posterior.epistemic_return_variance[0, index].cpu()
+                    * sequence.return_scales[index] ** 2
                 ),
                 context_length=index + 1,
             )
@@ -224,7 +243,8 @@ def evaluate_predictions(
     report: dict[str, object] = {
         "observation_count": len(predictions),
         "accuracy": float(correct.mean()),
-        "majority_baseline": float(class_support.max() / len(targets)),
+        "majority_baseline": 0.0,
+        "oos_majority_frequency": float(class_support.max() / len(targets)),
         "balanced_accuracy": float(recall.mean()),
         "macro_f1": float(f1.mean()),
         "class_support": class_support.tolist(),
@@ -274,6 +294,13 @@ def evaluate_predictions(
         },
     }
     baselines = _prediction_baselines(predictions, targets, returns)
+    report["majority_baseline"] = baselines["class_prior_accuracy"]
+    baselines["log_information_gain"] = float(
+        baselines["class_prior_log_loss"] - report["log_loss"]
+    )
+    baselines["brier_skill"] = float(
+        baselines["class_prior_brier"] - report["brier_score"]
+    )
     report["baselines"] = baselines
     report["validation_gate"] = _validation_gate(report, baselines)
     report["backtest"] = _backtest(predictions, policy or DecisionPolicy())
@@ -291,20 +318,37 @@ def _prediction_baselines(
     returns: np.ndarray,
 ) -> dict[str, object]:
     """Calculate point-in-time baselines without crossing symbol boundaries."""
-    class_prior = np.bincount(targets, minlength=REGIME_COUNT).astype(np.float64)
-    class_prior /= max(len(targets), 1)
+    prior_probability = np.asarray(
+        [item.prior_probability for item in predictions], dtype=np.float64
+    )
+    if prior_probability.shape != (len(predictions), REGIME_COUNT):
+        raise ValueError("each prediction must contain its training-only class prior")
+    prior_probability = prior_probability / np.maximum(
+        prior_probability.sum(axis=1, keepdims=True), 1e-12
+    )
     one_hot = np.eye(REGIME_COUNT)[targets]
-    prior_residual = one_hot - class_prior
+    prior_residual = one_hot - prior_probability
     prior_rps = np.square(
-        class_prior.cumsum()[:-1] - one_hot.cumsum(axis=1)[:, :-1]
+        prior_probability.cumsum(axis=1)[:, :-1]
+        - one_hot.cumsum(axis=1)[:, :-1]
     ).mean(axis=1)
+    prior_choice = prior_probability.argmax(axis=1)
+    prior_target_probability = prior_probability[np.arange(len(targets)), targets]
+    prior_returns = np.asarray(
+        [item.return_location for item in predictions], dtype=np.float64
+    )
     class_prior_metrics = {
-        "class_prior": class_prior.tolist(),
+        "mean_training_class_prior": prior_probability.mean(axis=0).tolist(),
+        "class_prior_accuracy": float((prior_choice == targets).mean()),
         "class_prior_brier": float(np.square(prior_residual).sum(axis=1).mean()),
         "class_prior_log_loss": float(
-            -np.log(np.clip(class_prior[targets], 1e-12, 1.0)).mean()
+            -np.log(np.clip(prior_target_probability, 1e-12, 1.0)).mean()
         ),
         "class_prior_rps": float(prior_rps.mean()),
+        "dynamic_prior_return_rmse": float(
+            np.sqrt(np.square(returns - prior_returns).mean())
+        ),
+        "dynamic_prior_return_mae": float(np.abs(returns - prior_returns).mean()),
     }
     previous_indices: list[int] = []
     current_indices: list[int] = []
@@ -372,8 +416,15 @@ def _validation_gate(
         "balanced_accuracy_above_random": bool(
             float(report["balanced_accuracy"]) > 1.0 / REGIME_COUNT + 0.01
         ),
-        "beats_zero_return_rmse": bool(
-            float(residual["rmse"]) < float(baselines["zero_return_rmse"])
+        "positive_log_information_gain": bool(
+            float(baselines["class_prior_log_loss"]) > float(report["log_loss"])
+        ),
+        "beats_prior_brier": bool(
+            float(report["brier_score"]) < float(baselines["class_prior_brier"])
+        ),
+        "beats_dynamic_prior_return_rmse": bool(
+            float(residual["rmse"])
+            < float(baselines["dynamic_prior_return_rmse"])
         ),
         "positive_return_correlation": bool(float(residual["correlation"]) > 0.0),
         "minimum_oos_observations": bool(int(report["observation_count"]) >= 200),

@@ -35,6 +35,10 @@ def _regime_metadata(labels: LabelConfig) -> dict[str, object]:
         "version": REGIME_PROTOCOL,
         "states": list(REGIME_NAMES),
         "thresholds": list(labels.thresholds),
+        "threshold_unit": "rolling_sigma",
+        "standardization_lookback_sessions": labels.standardization_lookback_sessions,
+        "standardization_min_observations": labels.standardization_min_observations,
+        "minimum_return_scale": labels.minimum_return_scale,
     }
 
 
@@ -95,11 +99,12 @@ def _train(args: argparse.Namespace) -> int:
     source = DuckDBBarSource(args.duckdb_path)
     bars = source.fetch(args.symbol, "1m", args.start, args.end)
     states = PriceVolumeProfileBuilder(profile_config).build(bars)
-    strong_threshold = args.strong_threshold_percent / 100.0
     label_config = LabelConfig(
         forward_sessions=args.forward_sessions,
-        strong_bear_threshold=-strong_threshold,
-        strong_bull_threshold=strong_threshold,
+        standardization_lookback_sessions=args.return_standardization_lookback,
+        standardization_min_observations=args.return_standardization_min_observations,
+        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
+        strong_threshold_sigma=args.strong_threshold_sigma,
     )
     observations = ProfileLabelBuilder(label_config).build(states)
     sessions = np.unique(observations.signal_times.astype("datetime64[D]"))
@@ -162,7 +167,7 @@ def _train(args: argparse.Namespace) -> int:
         "profile_states": len(states),
         "profile_protocol": PROFILE_PROTOCOL,
         "profile_channels": profile_config.profile_channels,
-        "output_head": "direct-latent-return-posterior",
+        "output_head": "training-prior-plus-bayesian-evidence-and-return",
         "normalization_lookback_sessions": args.normalization_lookback_sessions,
         "velocity_bins": args.velocity_bins,
         "velocity_clip": args.velocity_clip,
@@ -223,12 +228,19 @@ def _train(args: argparse.Namespace) -> int:
         "latest_epistemic_variance": posterior.epistemic_variance[0, last]
         .cpu()
         .tolist(),
-        "latest_expected_return": float(
+        "latest_expected_standardized_return": float(
             posterior.expected_return[0, last].cpu()
+        ),
+        "latest_expected_return": float(
+            validation_sequences[-1].return_locations[last]
+            + validation_sequences[-1].return_scales[last]
+            * float(posterior.expected_return[0, last].cpu())
         ),
         "latest_return_variance": float(
             posterior.return_variance[0, last].cpu()
+            * validation_sequences[-1].return_scales[last] ** 2
         ),
+        "training_class_prior": model.class_prior.detach().cpu().tolist(),
         "checkpoint": str(checkpoint_path),
         "auxiliary_gates": dict(
             zip(
@@ -274,11 +286,12 @@ def _walk_forward(args: argparse.Namespace) -> int:
         velocity_clip=args.velocity_clip,
         velocity_smoothing=args.velocity_smoothing,
     )
-    strong_threshold = args.strong_threshold_percent / 100.0
     label_config = LabelConfig(
         forward_sessions=args.forward_sessions,
-        strong_bear_threshold=-strong_threshold,
-        strong_bull_threshold=strong_threshold,
+        standardization_lookback_sessions=args.return_standardization_lookback,
+        standardization_min_observations=args.return_standardization_min_observations,
+        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
+        strong_threshold_sigma=args.strong_threshold_sigma,
     )
     for symbol in symbols:
         bars = source.fetch(symbol, "1m", args.start, args.end)
@@ -388,6 +401,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
                 "balanced_accuracy": symbol_report["balanced_accuracy"],
                 "brier_score": symbol_report["brier_score"],
                 "log_loss": symbol_report["log_loss"],
+                "log_information_gain": symbol_report["baselines"]["log_information_gain"],
                 "ranked_probability_score": symbol_report[
                     "ranked_probability_score"
                 ],
@@ -412,6 +426,12 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "velocity_clip": args.velocity_clip,
             "velocity_smoothing": args.velocity_smoothing,
             "price_coordinate": "log-price-relative-to-previous-close",
+        },
+        "return_standardization": {
+            "lookback_sessions": label_config.standardization_lookback_sessions,
+            "minimum_observations": label_config.standardization_min_observations,
+            "minimum_scale": label_config.minimum_return_scale,
+            "definition": "(next_open_to_close_return - known_rolling_mean) / known_rolling_std",
         },
         "regime_protocol": _regime_metadata(label_config),
         "model_config": asdict(model_config),
@@ -484,13 +504,16 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--batch-size", type=int, default=8)
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--kl-weight", type=float, default=1e-3)
-    train.add_argument("--ordinal-weight", type=float, default=0.0)
+    train.add_argument("--ordinal-weight", type=float, default=0.25)
     train.add_argument("--pretrain-epochs", type=int, default=10)
     train.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     train.add_argument("--deterministic-training", action="store_true")
     train.add_argument("--train-fraction", type=float, default=0.8)
     train.add_argument("--forward-sessions", type=int, default=1)
-    train.add_argument("--strong-threshold-percent", type=float, default=1.5)
+    train.add_argument("--strong-threshold-sigma", type=float, default=0.75)
+    train.add_argument("--return-standardization-lookback", type=int, default=20)
+    train.add_argument("--return-standardization-min-observations", type=int, default=10)
+    train.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
     train.add_argument("--bin-width-bps", type=float, default=10.0)
     train.add_argument("--max-profile-bins", type=int, default=512)
     train.add_argument("--normalization-lookback-sessions", type=int, default=10)
@@ -500,7 +523,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
-        default="gated-full",
+        default="price-only",
     )
     train.add_argument(
         "--state-timeframe",
@@ -511,13 +534,13 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--sequence-length", type=int, default=5)
     train.add_argument("--sequence-stride", type=int, default=1)
     train.add_argument("--minimum-sequence-length", type=int, default=2)
-    train.add_argument("--d-model", type=int, default=96)
-    train.add_argument("--latent-states", type=int, default=50)
+    train.add_argument("--d-model", type=int, default=48)
+    train.add_argument("--latent-states", type=int, default=20)
     train.add_argument("--transition-rank", type=int, default=4)
-    train.add_argument("--motif-dim", type=int, default=32)
+    train.add_argument("--motif-dim", type=int, default=16)
     train.add_argument("--heads", type=int, default=4)
-    train.add_argument("--layers", type=int, default=3)
-    train.add_argument("--feedforward-dim", type=int, default=192)
+    train.add_argument("--layers", type=int, default=2)
+    train.add_argument("--feedforward-dim", type=int, default=96)
     train.add_argument("--dropout", type=float, default=0.1)
     train.add_argument("--mc-samples", type=int, default=8)
     train.add_argument("--seed", type=int, default=7)
@@ -535,12 +558,15 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--batch-size", type=int, default=8)
     walk.add_argument("--learning-rate", type=float, default=3e-4)
     walk.add_argument("--kl-weight", type=float, default=1e-3)
-    walk.add_argument("--ordinal-weight", type=float, default=0.0)
+    walk.add_argument("--ordinal-weight", type=float, default=0.25)
     walk.add_argument("--pretrain-epochs", type=int, default=10)
     walk.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     walk.add_argument("--deterministic-training", action="store_true")
     walk.add_argument("--forward-sessions", type=int, default=1)
-    walk.add_argument("--strong-threshold-percent", type=float, default=1.5)
+    walk.add_argument("--strong-threshold-sigma", type=float, default=0.75)
+    walk.add_argument("--return-standardization-lookback", type=int, default=20)
+    walk.add_argument("--return-standardization-min-observations", type=int, default=10)
+    walk.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
     walk.add_argument("--minimum-train-sessions", type=int, default=252)
     walk.add_argument("--tuning-sessions", type=int, default=60)
     walk.add_argument("--test-sessions", type=int, default=60)
@@ -555,7 +581,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
-        default="gated-full",
+        default="price-only",
     )
     walk.add_argument(
         "--state-timeframe",
@@ -566,13 +592,13 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--sequence-length", type=int, default=5)
     walk.add_argument("--sequence-stride", type=int, default=1)
     walk.add_argument("--minimum-sequence-length", type=int, default=2)
-    walk.add_argument("--d-model", type=int, default=96)
-    walk.add_argument("--latent-states", type=int, default=50)
+    walk.add_argument("--d-model", type=int, default=48)
+    walk.add_argument("--latent-states", type=int, default=20)
     walk.add_argument("--transition-rank", type=int, default=4)
-    walk.add_argument("--motif-dim", type=int, default=32)
+    walk.add_argument("--motif-dim", type=int, default=16)
     walk.add_argument("--heads", type=int, default=4)
-    walk.add_argument("--layers", type=int, default=3)
-    walk.add_argument("--feedforward-dim", type=int, default=192)
+    walk.add_argument("--layers", type=int, default=2)
+    walk.add_argument("--feedforward-dim", type=int, default=96)
     walk.add_argument("--dropout", type=float, default=0.1)
     walk.add_argument("--mc-samples", type=int, default=16)
     walk.add_argument("--uncertainty-aversion", type=float, default=2.0)

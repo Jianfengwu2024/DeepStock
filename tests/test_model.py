@@ -48,10 +48,11 @@ class BNHMMNetworkTests(unittest.TestCase):
         output = self.model(values, timeframes, features, sample=True)
         self.assertEqual(output.return_mean.shape, (2, 6))
         self.assertEqual(output.return_log_variance.shape, (2, 6))
-        self.assertEqual(output.latent_probabilities.shape, (2, 6, 50))
+        self.assertEqual(output.latent_probabilities.shape, (2, 6, 20))
+        self.assertEqual(output.regime_logits.shape, (2, 6, 4))
         self.assertFalse(hasattr(self.model, "output_hidden"))
-        self.assertEqual(self.model.return_distribution.weight_mu.shape, (2, 50))
-        self.assertTrue(torch.all(output.return_log_variance <= -3.0))
+        self.assertEqual(self.model.return_distribution.weight_mu.shape, (2, 20))
+        self.assertTrue(torch.all(output.return_log_variance <= 4.0))
         self.assertTrue(
             torch.allclose(
                 output.latent_probabilities.sum(dim=-1), torch.ones(2, 6), atol=1e-5
@@ -88,6 +89,23 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(torch.all(posterior.expected_score >= -2.0))
         self.assertEqual(self.model.regime_scores.tolist(), [-2.0, -1.0, 1.0, 2.0])
 
+    def test_zero_evidence_returns_the_training_class_prior(self) -> None:
+        prior = torch.tensor([0.1, 0.2, 0.5, 0.2])
+        self.model.set_class_prior(prior)
+        output = self.model(
+            profiles(batch=1),
+            torch.ones(1, 6, dtype=torch.long),
+            state_features(batch=1),
+            sample=False,
+        )
+
+        probability = torch.softmax(output.regime_logits, dim=-1)
+        self.assertTrue(
+            torch.allclose(probability, prior.view(1, 1, 4).expand_as(probability))
+        )
+        self.assertGreater(float(self.model.class_weights[0]), 1.0)
+        self.assertLess(float(self.model.class_weights[2]), 1.0)
+
     def test_low_rank_transition_dimensions_match_configuration(self) -> None:
         self.assertEqual(self.model.transition_rank, 4)
         self.assertEqual(
@@ -105,16 +123,17 @@ class BNHMMNetworkTests(unittest.TestCase):
 
     def test_return_loss_penalizes_distant_errors(self) -> None:
         common = {
-            "latent_probabilities": torch.full((1, 1, 50), 0.02),
+            "latent_probabilities": torch.full((1, 1, 20), 0.05),
+            "regime_logits": torch.zeros(1, 1, 4),
             "context": torch.zeros(1, 1, 4),
             "kl_divergence": torch.tensor(0.0),
-            "return_log_variance": torch.full((1, 1), -8.0),
+            "return_log_variance": torch.full((1, 1), 0.0),
         }
         near = SinglePassOutput(
-            return_mean=torch.tensor([[0.001]]), **common
+            return_mean=torch.tensor([[0.01]]), **common
         )
         far = SinglePassOutput(
-            return_mean=torch.tensor([[0.05]]), **common
+            return_mean=torch.tensor([[3.0]]), **common
         )
         targets = torch.ones((1, 1), dtype=torch.long)
         returns = torch.zeros((1, 1))
@@ -126,7 +145,7 @@ class BNHMMNetworkTests(unittest.TestCase):
 
     def test_student_t_probabilities_are_symmetric_and_normalized(self) -> None:
         probability = student_t_regime_probabilities(
-            torch.tensor([0.0]), torch.tensor([0.015**2])
+            torch.tensor([0.0]), torch.tensor([1.0])
         )
 
         self.assertTrue(torch.allclose(probability.sum(dim=-1), torch.ones(1)))

@@ -17,7 +17,7 @@ REGIME_STATES = tuple(RegimeState)
 REGIME_COUNT = len(REGIME_STATES)
 REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
-REGIME_PROTOCOL = "continuous-return-posterior-v3"
+REGIME_PROTOCOL = "volatility-standardized-prior-evidence-v4"
 PROFILE_PROTOCOL = "phase-space-joint-return-v6"
 SEQUENCE_PROTOCOL = "fixed-recent-endpoint-v1"
 DEFAULT_VELOCITY_BINS = 3
@@ -78,27 +78,41 @@ class ProfileConfig:
 
 @dataclass(frozen=True, slots=True)
 class LabelConfig:
-    """Forward-return definition for four directional regimes."""
+    """Leakage-safe standardized forward-return definition."""
 
     forward_sessions: int = 1
-    strong_bear_threshold: float = -0.015
-    direction_threshold: float = 0.0
-    strong_bull_threshold: float = 0.015
+    standardization_lookback_sessions: int = 20
+    standardization_min_observations: int = 10
+    minimum_return_scale: float = 0.002
+    strong_threshold_sigma: float = 0.75
 
     def __post_init__(self) -> None:
         if self.forward_sessions < 1:
             raise ValueError("forward_sessions must be positive")
-        thresholds = self.thresholds
-        if any(left >= right for left, right in zip(thresholds, thresholds[1:])):
-            raise ValueError("regime thresholds must be strictly increasing")
+        if self.standardization_lookback_sessions < 2:
+            raise ValueError("return standardization lookback must be at least two")
+        if not 2 <= self.standardization_min_observations <= self.standardization_lookback_sessions:
+            raise ValueError("return standardization observations must fit the lookback")
+        if self.minimum_return_scale <= 0:
+            raise ValueError("minimum return scale must be positive")
+        if self.strong_threshold_sigma <= 0:
+            raise ValueError("strong-state sigma threshold must be positive")
 
     @property
     def thresholds(self) -> tuple[float, float, float]:
-        return (
-            self.strong_bear_threshold,
-            self.direction_threshold,
-            self.strong_bull_threshold,
-        )
+        return (-self.strong_threshold_sigma, 0.0, self.strong_threshold_sigma)
+
+    @property
+    def strong_bear_threshold(self) -> float:
+        return -self.strong_threshold_sigma
+
+    @property
+    def direction_threshold(self) -> float:
+        return 0.0
+
+    @property
+    def strong_bull_threshold(self) -> float:
+        return self.strong_threshold_sigma
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +134,7 @@ class SequenceConfig:
 
 @dataclass(frozen=True, slots=True)
 class BNHMMConfig:
-    latent_states: int = 50
+    latent_states: int = 20
     output_states: tuple[RegimeState, ...] = field(default=REGIME_STATES)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     labels: LabelConfig = field(default_factory=LabelConfig)

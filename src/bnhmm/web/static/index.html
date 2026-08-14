@@ -75,7 +75,7 @@
           <label>输入特征组合（消融测试）
             <select name="feature_mode">
               <option value="gated-full">价格主干 + 门控成交量/联合速度</option>
-              <option value="price-only">仅价格主干</option>
+              <option value="price-only" selected>仅价格主干</option>
               <option value="price-volume">价格 + 成交量</option>
               <option value="price-velocity">价格 + 联合速度</option>
             </select>
@@ -97,13 +97,18 @@
             <div class="fixed-spec"><span>预测目标</span><strong>下一交易日</strong></div>
             <div class="fixed-spec"><span>窗口更新</span><strong>每个交易日滚动 1 日</strong></div>
             <div class="fixed-spec"><span>输出状态</span><strong>强空 / 弱空 / 弱多 / 强多</strong></div>
-            <div class="fixed-spec"><span>强弱分界</span><strong id="strong-threshold-spec">-1.50% / 0 / +1.50%</strong></div>
-            <div class="fixed-spec"><span>收益后验</span><strong>Student-t（df=4）</strong></div>
+            <div class="fixed-spec"><span>强弱分界</span><strong id="strong-threshold-spec">-0.75σ / 0 / +0.75σ</strong></div>
+            <div class="fixed-spec"><span>收益后验</span><strong>滚动标准化 Student-t（df=4）</strong></div>
             <div class="fixed-spec"><span>特征骨干</span><strong>确定性 Transformer</strong></div>
-            <div class="fixed-spec"><span>贝叶斯部分</span><strong>发射、转移、直接收益后验头</strong></div>
+            <div class="fixed-spec"><span>贝叶斯部分</span><strong>发射、转移、收益与先验证据头</strong></div>
           </div>
           <div class="parameter-group-title">输出定义</div>
-          <label>强弱状态分界（±%）<input name="strong_threshold_percent" type="number" min="0.01" max="10" step="0.01"></label>
+          <div class="two-columns">
+            <label>强弱状态分界（±σ）<input name="strong_threshold_sigma" type="number" min="0.05" max="5" step="0.05"></label>
+            <label>收益标准化回看日<input name="return_standardization_lookback" type="number" min="2" max="252"></label>
+            <label>最少标准化样本<input name="return_standardization_min_observations" type="number" min="2" max="252"></label>
+            <label>波动率下限（%）<input name="minimum_return_scale_percent" type="number" min="0.01" max="5" step="0.01"></label>
+          </div>
           <div class="parameter-group-title">近期记忆</div>
           <label>多日记忆长度（2–20 个交易日）<input name="sequence_length" type="number" min="2" max="20"></label>
           <div class="parameter-group-title">网络结构</div>
@@ -214,7 +219,7 @@
             <div class="tab-panel hidden" data-panel="folds">
               <section id="symbol-results" class="hidden">
                 <h3>逐标的样本外结果</h3>
-                <div class="table-scroll"><table><thead><tr><th>标的</th><th>OOS</th><th>命中率</th><th>均衡命中率</th><th>多数类基线</th><th>Brier</th><th>Log Loss</th><th>策略收益</th><th>最大回撤</th></tr></thead><tbody id="symbol-metrics-table"></tbody></table></div>
+                <div class="table-scroll"><table><thead><tr><th>标的</th><th>OOS</th><th>命中率</th><th>均衡命中率</th><th>训练先验</th><th>Brier</th><th>Log Loss</th><th>策略收益</th><th>最大回撤</th></tr></thead><tbody id="symbol-metrics-table"></tbody></table></div>
               </section>
               <h3>逐标的滚动窗口</h3>
               <div class="table-scroll"><table><thead><tr><th>标的</th><th>窗口</th><th>调参开始</th><th>测试区间</th><th>Epoch</th><th>训练序列</th><th>OOS 预测</th><th>验证损失</th></tr></thead><tbody id="fold-table"></tbody></table></div>

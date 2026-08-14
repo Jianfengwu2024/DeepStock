@@ -30,11 +30,16 @@ def prediction(day: int, target: int, probability: tuple[float, ...]) -> Predict
         ),
         target=target,
         forward_return=returns[target],
+        standardized_return=returns[target] / 0.02,
+        return_location=0.0,
+        return_scale=0.02,
+        prior_probability=(0.25,) * 4,
         probability_mean=probability,
         aleatoric_variance=(0.01,) * 4,
         epistemic_variance=(0.001,) * 4,
         expected_score=float(np.asarray(probability) @ scores),
         expected_return=returns[target],
+        expected_standardized_return=returns[target] / 0.02,
         return_variance=0.0001,
         aleatoric_return_variance=0.00009,
         epistemic_return_variance=0.00001,
@@ -69,7 +74,11 @@ class EvaluationTests(unittest.TestCase):
         self.assertAlmostEqual(report["baselines"]["persistence_accuracy"], 0.0)
         self.assertAlmostEqual(report["baselines"]["reversal_accuracy"], 7 / 15)
         self.assertAlmostEqual(report["baselines"]["class_prior_brier"], 0.75)
-        self.assertIn("beats_zero_return_rmse", report["validation_gate"]["checks"])
+        self.assertGreater(report["baselines"]["log_information_gain"], 0.0)
+        self.assertGreater(report["baselines"]["brier_skill"], 0.0)
+        self.assertIn(
+            "beats_dynamic_prior_return_rmse", report["validation_gate"]["checks"]
+        )
         self.assertFalse(report["validation_gate"]["passed"])
 
     def test_uncertainty_reduces_position(self) -> None:

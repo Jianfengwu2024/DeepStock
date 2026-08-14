@@ -16,16 +16,16 @@ from bnhmm import (
 
 
 class ConfigTests(unittest.TestCase):
-    def test_model_defaults_to_fifty_hidden_states_and_four_outputs(self) -> None:
+    def test_model_defaults_to_twenty_hidden_states_and_four_outputs(self) -> None:
         config = BNHMMConfig()
-        self.assertEqual(config.latent_states, 50)
+        self.assertEqual(config.latent_states, 20)
         self.assertEqual(len(config.output_states), 4)
         self.assertEqual(
             REGIME_NAMES,
             ("strong_bear", "weak_bear", "weak_bull", "strong_bull"),
         )
         self.assertEqual(
-            REGIME_PROTOCOL, "continuous-return-posterior-v3"
+            REGIME_PROTOCOL, "volatility-standardized-prior-evidence-v4"
         )
         with self.assertRaises(ValueError):
             BNHMMConfig(latent_states=PROFILE_CHANNELS - 1)
@@ -55,10 +55,15 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ProfileConfig(velocity_bins=8)
 
-    def test_label_thresholds_must_be_ordered(self) -> None:
+    def test_label_standardization_is_validated(self) -> None:
         with self.assertRaises(ValueError):
-            LabelConfig(strong_bear_threshold=0.01, strong_bull_threshold=0.005)
-        self.assertEqual(LabelConfig().thresholds, (-0.015, 0.0, 0.015))
+            LabelConfig(strong_threshold_sigma=0.0)
+        with self.assertRaises(ValueError):
+            LabelConfig(
+                standardization_lookback_sessions=5,
+                standardization_min_observations=6,
+            )
+        self.assertEqual(LabelConfig().thresholds, (-0.75, 0.0, 0.75))
 
     def test_sequence_defaults_to_five_recent_trading_days(self) -> None:
         config = SequenceConfig()

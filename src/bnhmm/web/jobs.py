@@ -43,12 +43,15 @@ class WalkForwardJobRequest(BaseModel):
     batch_size: int = Field(8, ge=1, le=512)
     learning_rate: float = Field(3e-4, gt=0, le=1.0)
     kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
-    ordinal_weight: float = Field(0.0, ge=0.0, le=10.0)
+    ordinal_weight: float = Field(0.25, ge=0.0, le=10.0)
     pretrain_epochs: int = Field(10, ge=0, le=1000)
     pretrain_mask_probability: float = Field(0.15, gt=0.0, lt=1.0)
     deterministic_training: bool = False
     forward_sessions: int = Field(1, ge=1, le=60)
-    strong_threshold_percent: float = Field(1.5, gt=0.0, le=10.0)
+    strong_threshold_sigma: float = Field(0.75, gt=0.0, le=5.0)
+    return_standardization_lookback: int = Field(20, ge=2, le=252)
+    return_standardization_min_observations: int = Field(10, ge=2, le=252)
+    minimum_return_scale_percent: float = Field(0.2, gt=0.0, le=5.0)
     minimum_train_sessions: int = Field(252, ge=10)
     tuning_sessions: int = Field(60, ge=2)
     test_sessions: int = Field(60, ge=1)
@@ -77,8 +80,8 @@ class WalkForwardJobRequest(BaseModel):
     sequence_length: int = Field(5, ge=2, le=2048)
     sequence_stride: int = Field(1, ge=1, le=2048)
     minimum_sequence_length: int = Field(2, ge=2, le=2048)
-    d_model: int = Field(96, ge=8, le=2048)
-    latent_states: int = Field(50, ge=1, le=512)
+    d_model: int = Field(48, ge=8, le=2048)
+    latent_states: int = Field(20, ge=1, le=512)
     transition_rank: int = Field(4, ge=1, le=512)
     feature_mode: Literal[
         "gated-full",
@@ -86,11 +89,11 @@ class WalkForwardJobRequest(BaseModel):
         "price-volume",
         "price-velocity",
         "legacy-entangled",
-    ] = "gated-full"
-    motif_dim: int = Field(32, ge=2, le=512)
+    ] = "price-only"
+    motif_dim: int = Field(16, ge=2, le=512)
     heads: int = Field(4, ge=1, le=64)
-    layers: int = Field(3, ge=1, le=48)
-    feedforward_dim: int = Field(192, ge=8, le=8192)
+    layers: int = Field(2, ge=1, le=48)
+    feedforward_dim: int = Field(96, ge=8, le=8192)
     dropout: float = Field(0.1, ge=0.0, lt=1.0)
     mc_samples: int = Field(16, ge=2, le=256)
     uncertainty_aversion: float = Field(2.0, ge=0.0, le=100.0)
@@ -126,6 +129,8 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("minimum_train_sessions must exceed tuning_sessions")
         if self.minimum_sequence_length > self.sequence_length:
             raise ValueError("minimum_sequence_length cannot exceed sequence_length")
+        if self.return_standardization_min_observations > self.return_standardization_lookback:
+            raise ValueError("return standardization observations cannot exceed lookback")
         if self.sequence_stride > self.sequence_length:
             raise ValueError("sequence_stride cannot exceed sequence_length")
         if not legacy:
@@ -239,8 +244,14 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.pretrain_mask_probability),
         "--forward-sessions",
         str(request.forward_sessions),
-        "--strong-threshold-percent",
-        str(request.strong_threshold_percent),
+        "--strong-threshold-sigma",
+        str(request.strong_threshold_sigma),
+        "--return-standardization-lookback",
+        str(request.return_standardization_lookback),
+        "--return-standardization-min-observations",
+        str(request.return_standardization_min_observations),
+        "--minimum-return-scale-percent",
+        str(request.minimum_return_scale_percent),
         "--minimum-train-sessions",
         str(request.minimum_train_sessions),
         "--tuning-sessions",

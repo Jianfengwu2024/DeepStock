@@ -96,7 +96,7 @@ class WebJobTests(unittest.TestCase):
         self.assertNotIn("--allow-short", command)
         self.assertIn("--latent-states", command)
         self.assertIn("--transition-rank", command)
-        self.assertIn("50", command)
+        self.assertIn("20", command)
         self.assertEqual(request.state_timeframe, "daily")
         self.assertIn("--state-timeframe", command)
         self.assertIn("daily", command)
@@ -115,18 +115,19 @@ class WebJobTests(unittest.TestCase):
         self.assertNotIn("shell=True", command)
         self.assertEqual(request.training_scope, "per-symbol")
         self.assertEqual(request.profile_protocol, "phase-space-joint-return-v6")
-        self.assertEqual(request.feature_mode, "gated-full")
+        self.assertEqual(request.feature_mode, "price-only")
         self.assertEqual(request.sequence_length, 5)
         self.assertEqual(request.sequence_stride, 1)
         self.assertEqual(request.sequence_protocol, "fixed-recent-endpoint-v1")
         self.assertEqual(request.transition_rank, 4)
-        self.assertEqual(request.strong_threshold_percent, 1.5)
-        self.assertIn("--strong-threshold-percent", command)
+        self.assertEqual(request.strong_threshold_sigma, 0.75)
+        self.assertIn("--strong-threshold-sigma", command)
+        self.assertIn("--return-standardization-lookback", command)
 
-        custom_threshold = WalkForwardJobRequest(strong_threshold_percent=2.0)
+        custom_threshold = WalkForwardJobRequest(strong_threshold_sigma=1.0)
         custom_command = build_command(custom_threshold, Path("/tmp/result"))
-        threshold_index = custom_command.index("--strong-threshold-percent") + 1
-        self.assertEqual(custom_command[threshold_index], "2.0")
+        threshold_index = custom_command.index("--strong-threshold-sigma") + 1
+        self.assertEqual(custom_command[threshold_index], "1.0")
 
         deterministic = build_command(
             request.model_copy(update={"deterministic_training": True}),
