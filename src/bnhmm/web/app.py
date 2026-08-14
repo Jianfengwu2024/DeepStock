@@ -16,6 +16,7 @@ from .. import __version__
 from ..data.source import DuckDBBarSource
 from .jobs import (
     ActiveJobDeletionError,
+    DuplicateJobNameError,
     JobManager,
     JobRecord,
     WalkForwardJobRequest,
@@ -100,7 +101,10 @@ def list_jobs(request: Request) -> list[dict[str, Any]]:
 
 @app.post("/api/jobs", status_code=201)
 def submit_job(payload: WalkForwardJobRequest, request: Request) -> dict[str, Any]:
-    record = manager(request).submit(payload)
+    try:
+        record = manager(request).submit(payload)
+    except DuplicateJobNameError as exc:
+        raise HTTPException(status_code=409, detail="实验名称已存在，请使用其他名称") from exc
     return _job_payload(manager(request), record, detail=True)
 
 

@@ -27,6 +27,10 @@ class ActiveJobDeletionError(RuntimeError):
     pass
 
 
+class DuplicateJobNameError(RuntimeError):
+    pass
+
+
 class WalkForwardJobRequest(BaseModel):
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
@@ -311,17 +315,27 @@ class JobManager:
         self._worker.start()
 
     def submit(self, request: WalkForwardJobRequest) -> JobRecord:
-        identifier = f"{utcnow():%Y%m%d-%H%M%S}-{request.name}-{uuid.uuid4().hex[:6]}"
-        output_dir = self.root / identifier
-        output_dir.mkdir(parents=True, exist_ok=False)
-        record = JobRecord(
-            id=identifier,
-            status="queued",
-            created_at=utcnow(),
-            output_dir=str(output_dir),
-            request=request,
-        )
         with self._lock:
+            normalized_name = request.name.casefold()
+            if any(
+                item.request.name.casefold() == normalized_name
+                for item in self._jobs.values()
+            ):
+                raise DuplicateJobNameError(
+                    f"job name already exists: {request.name}"
+                )
+            identifier = (
+                f"{utcnow():%Y%m%d-%H%M%S}-{request.name}-{uuid.uuid4().hex[:6]}"
+            )
+            output_dir = self.root / identifier
+            output_dir.mkdir(parents=True, exist_ok=False)
+            record = JobRecord(
+                id=identifier,
+                status="queued",
+                created_at=utcnow(),
+                output_dir=str(output_dir),
+                request=request,
+            )
             self._jobs[identifier] = record
             self._persist(record)
             self._queue.put(identifier)

@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from bnhmm.web.jobs import (
     ActiveJobDeletionError,
+    DuplicateJobNameError,
     JobManager,
     JobRecord,
     WalkForwardJobRequest,
@@ -23,6 +24,32 @@ from bnhmm.web.jobs import (
 
 
 class WebJobTests(unittest.TestCase):
+    def test_job_names_are_case_insensitive_and_unique_until_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = JobManager(directory, Path.cwd())
+            job_dir = Path(directory, "existing")
+            job_dir.mkdir()
+            record = JobRecord(
+                id="existing",
+                status="completed",
+                created_at=datetime.now(timezone.utc),
+                output_dir=str(job_dir),
+                request=WalkForwardJobRequest(name="Experiment"),
+            )
+            with manager._lock:
+                manager._jobs[record.id] = record
+
+            with self.assertRaises(DuplicateJobNameError):
+                manager.submit(WalkForwardJobRequest(name="experiment"))
+
+            self.assertTrue(manager.delete(record.id))
+            with patch("bnhmm.web.jobs.build_command", return_value=[sys.executable, "-c", ""]):
+                replacement = manager.submit(
+                    WalkForwardJobRequest(name="experiment")
+                )
+                manager.cancel(replacement.id)
+            manager.close()
+
     def test_request_checks_related_model_and_window_values(self) -> None:
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(d_model=95, heads=4)
