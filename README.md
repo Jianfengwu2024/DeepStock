@@ -39,6 +39,8 @@ as an evaluation baseline and is never subtracted from the label. Training
 combines a robust Student-t likelihood with a direct ordinal
 four-state objective. The evidence head starts from the symbol/fold training
 prior, then learns only the information contributed by the current state.
+Both supervised heads use a small nonzero centered initialization so predictive
+gradients reach the latent emissions and transition filter from the first update.
 Strong and weak states are separated at 0.75 rolling standard deviations by
 default; zero separates bearish from bullish.
 `predict_posterior()` uses Monte Carlo weight sampling to report expected return,

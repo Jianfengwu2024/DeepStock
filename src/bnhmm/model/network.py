@@ -410,10 +410,10 @@ class BNHMMNetwork(nn.Module):
         self.transition_mu = nn.Parameter(transition)
         self.transition_rho = nn.Parameter(torch.full_like(transition, -6.0))
         self.return_distribution = BayesianLinear(latent_states, 2)
-        nn.init.zeros_(self.return_distribution.weight_mu)
+        nn.init.normal_(self.return_distribution.weight_mu, std=0.01)
         nn.init.zeros_(self.return_distribution.bias_mu)
         self.regime_evidence = BayesianLinear(latent_states, output_states)
-        nn.init.zeros_(self.regime_evidence.weight_mu)
+        nn.init.normal_(self.regime_evidence.weight_mu, std=0.01)
         nn.init.zeros_(self.regime_evidence.bias_mu)
         self.register_buffer(
             "class_prior", torch.full((output_states,), 1.0 / output_states)

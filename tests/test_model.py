@@ -66,6 +66,10 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertLess(float(loss.kl.detach()), 10.0)
         self.assertGreaterEqual(float(loss.ordinal.detach()), 0.0)
         self.assertTrue(any(parameter.grad is not None for parameter in self.model.parameters()))
+        self.assertGreater(float(self.model.transition_mu.grad.norm()), 1e-4)
+        self.assertGreater(
+            float(self.model.latent_emission.weight_mu.grad.norm()), 1e-3
+        )
         self.assertIsNotNone(self.model.tokenizer.auxiliary_gate_logits.grad)
         self.assertTrue(
             torch.all(self.model.tokenizer.effective_auxiliary_gates() < 0.05)
@@ -89,7 +93,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(torch.all(posterior.expected_score >= -2.0))
         self.assertEqual(self.model.regime_scores.tolist(), [-2.0, -1.0, 1.0, 2.0])
 
-    def test_zero_evidence_returns_the_training_class_prior(self) -> None:
+    def test_initial_evidence_stays_close_to_training_class_prior(self) -> None:
         prior = torch.tensor([0.1, 0.2, 0.5, 0.2])
         self.model.set_class_prior(prior)
         output = self.model(
@@ -100,9 +104,8 @@ class BNHMMNetworkTests(unittest.TestCase):
         )
 
         probability = torch.softmax(output.regime_logits, dim=-1)
-        self.assertTrue(
-            torch.allclose(probability, prior.view(1, 1, 4).expand_as(probability))
-        )
+        expected = prior.view(1, 1, 4).expand_as(probability)
+        self.assertLess(float((probability - expected).abs().max().detach()), 0.1)
         self.assertGreater(float(self.model.class_weights[0]), 1.0)
         self.assertLess(float(self.model.class_weights[2]), 1.0)
 
@@ -153,11 +156,19 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(torch.allclose(probability[:, 1], probability[:, 2]))
         self.assertIn(int(probability.argmax(dim=-1)), (1, 2))
 
-    def test_continuous_head_starts_centered_with_low_sampling_noise(self) -> None:
-        self.assertTrue(torch.equal(
-            self.model.return_distribution.weight_mu,
-            torch.zeros_like(self.model.return_distribution.weight_mu),
-        ))
+    def test_supervised_heads_start_small_nonzero_and_centered(self) -> None:
+        self.assertGreater(
+            float(self.model.return_distribution.weight_mu.norm().detach()), 0.0
+        )
+        self.assertLess(
+            float(self.model.return_distribution.weight_mu.std().detach()), 0.02
+        )
+        self.assertGreater(
+            float(self.model.regime_evidence.weight_mu.norm().detach()), 0.0
+        )
+        self.assertLess(
+            float(self.model.regime_evidence.weight_mu.std().detach()), 0.02
+        )
         self.assertTrue(torch.equal(
             self.model.return_distribution.bias_mu,
             torch.zeros_like(self.model.return_distribution.bias_mu),

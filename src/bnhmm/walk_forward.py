@@ -18,6 +18,7 @@ from .evaluation import (
     infer_sequences,
     records_as_json,
 )
+from .model import BNHMMNetwork
 from .training import BNHMMTrainer, ModelConfig, TrainerConfig, save_checkpoint
 
 
@@ -276,6 +277,7 @@ def _run_symbol_walk_forward(
             "training_class_weights": final_model.class_weights.detach().cpu().tolist(),
             "tuning_history": list(tuning_result.history),
             "final_training_history": list(final_result.history),
+            "transition_diagnostics": _transition_diagnostics(final_model),
             "auxiliary_gates": dict(
                 zip(
                     ("relative_volume", "joint_price_volume_velocity"),
@@ -312,6 +314,28 @@ def _run_symbol_walk_forward(
         regime_return_means=tuple(float(value) for value in fixed_moments[0]),
         regime_return_variances=tuple(float(value) for value in fixed_moments[1]),
     )
+
+
+def _transition_diagnostics(model: BNHMMNetwork) -> dict[str, float]:
+    transition_mu = model.transition_mu.detach()
+    probability = torch.softmax(transition_mu, dim=-1)
+    entropy = -(probability * probability.clamp_min(1e-12).log()).sum(dim=-1)
+    initial = torch.eye(
+        model.latent_states, device=transition_mu.device, dtype=transition_mu.dtype
+    ) * 2.0
+    return {
+        "base_self_transition_probability": float(
+            probability.diagonal().mean().cpu()
+        ),
+        "base_effective_destinations": float(entropy.exp().mean().cpu()),
+        "base_parameter_delta_norm": float((transition_mu - initial).norm().cpu()),
+        "latent_emission_weight_norm": float(
+            model.latent_emission.weight_mu.detach().norm().cpu()
+        ),
+        "regime_evidence_weight_norm": float(
+            model.regime_evidence.weight_mu.detach().norm().cpu()
+        ),
+    }
 
 
 def _select(

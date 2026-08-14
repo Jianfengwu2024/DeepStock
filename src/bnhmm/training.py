@@ -564,7 +564,7 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 12,
+            "format_version": 13,
             "regime_protocol": REGIME_PROTOCOL,
             "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),
