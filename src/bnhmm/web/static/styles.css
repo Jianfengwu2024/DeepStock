@@ -49,6 +49,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .two-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .three-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.fixed-spec-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-bottom: 15px; background: var(--line); border: 1px solid var(--line); }
+.fixed-spec { display: grid; gap: 3px; min-height: 48px; padding: 8px 9px; background: var(--panel-muted); }
+.fixed-spec > span { color: var(--muted); font-size: 9px; font-weight: 650; }
+.fixed-spec > strong { color: var(--text); font-size: 11px; line-height: 1.3; }
+.parameter-group-title { margin: 14px 0 9px; padding-top: 11px; color: var(--text); border-top: 1px solid var(--line); font-size: 10px; font-weight: 750; text-transform: uppercase; }
 .device-note { min-height: 16px; margin-top: -5px; color: var(--muted); font-size: 10px; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 0; }
 input[role="switch"] { appearance: none; width: 34px; height: 19px; padding: 2px; border: 0; border-radius: 10px; background: #aab3b8; }

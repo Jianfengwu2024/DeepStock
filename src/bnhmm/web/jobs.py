@@ -74,6 +74,7 @@ class WalkForwardJobRequest(BaseModel):
     minimum_sequence_length: int = Field(2, ge=2, le=2048)
     d_model: int = Field(96, ge=8, le=2048)
     latent_states: int = Field(50, ge=1, le=512)
+    transition_rank: int = Field(4, ge=1, le=512)
     feature_mode: Literal[
         "gated-full",
         "price-only",
@@ -122,8 +123,21 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("minimum_sequence_length cannot exceed sequence_length")
         if self.sequence_stride > self.sequence_length:
             raise ValueError("sequence_stride cannot exceed sequence_length")
-        if not legacy and self.sequence_length > 20:
-            raise ValueError("recent context cannot exceed twenty trading states")
+        if not legacy:
+            if self.training_scope != "per-symbol":
+                raise ValueError("current jobs require independent per-symbol models")
+            if self.profile_protocol != "phase-space-joint-return-v6":
+                raise ValueError("current jobs require the v6 phase-space profile")
+            if self.sequence_protocol != "fixed-recent-endpoint-v1":
+                raise ValueError("current jobs require fixed recent endpoint windows")
+            if self.state_timeframe != "daily":
+                raise ValueError("current jobs require daily states built from one-minute bars")
+            if self.forward_sessions != 1:
+                raise ValueError("current jobs predict exactly the next trading session")
+            if self.sequence_stride != 1:
+                raise ValueError("current jobs require a rolling stride of one")
+            if self.sequence_length > 20:
+                raise ValueError("recent context cannot exceed twenty trading states")
         if self.d_model % self.heads:
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
@@ -133,6 +147,8 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("legacy-entangled is reserved for historical jobs")
         if not legacy and self.latent_states < profile_channels:
             raise ValueError("latent_states cannot be fewer than profile channels")
+        if not legacy and self.transition_rank > self.latent_states:
+            raise ValueError("transition_rank cannot exceed latent_states")
         return self
 
 
@@ -252,6 +268,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.d_model),
         "--latent-states",
         str(request.latent_states),
+        "--transition-rank",
+        str(request.transition_rank),
         "--motif-dim",
         str(request.motif_dim),
         "--heads",

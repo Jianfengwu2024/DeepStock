@@ -32,6 +32,14 @@ class WebJobTests(unittest.TestCase):
             WalkForwardJobRequest(velocity_bins=8)
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(latent_states=12)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(latent_states=50, transition_rank=51)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(forward_sessions=2)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(sequence_stride=2)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(state_timeframe="mixed")
 
     def test_command_contains_model_and_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(
@@ -42,6 +50,7 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--max-folds", command)
         self.assertNotIn("--allow-short", command)
         self.assertIn("--latent-states", command)
+        self.assertIn("--transition-rank", command)
         self.assertIn("50", command)
         self.assertEqual(request.state_timeframe, "daily")
         self.assertIn("--state-timeframe", command)
@@ -65,6 +74,7 @@ class WebJobTests(unittest.TestCase):
         self.assertEqual(request.sequence_length, 5)
         self.assertEqual(request.sequence_stride, 1)
         self.assertEqual(request.sequence_protocol, "fixed-recent-endpoint-v1")
+        self.assertEqual(request.transition_rank, 4)
 
         deterministic = build_command(
             request.model_copy(update={"deterministic_training": True}),

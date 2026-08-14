@@ -114,6 +114,7 @@ def _train(args: argparse.Namespace) -> int:
         max_profile_bins=args.max_profile_bins,
         profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
+        transition_rank=args.transition_rank,
         feature_mode=args.feature_mode,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
@@ -293,6 +294,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         max_profile_bins=args.max_profile_bins,
         profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
+        transition_rank=args.transition_rank,
         feature_mode=args.feature_mode,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
@@ -496,6 +498,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--minimum-sequence-length", type=int, default=2)
     train.add_argument("--d-model", type=int, default=96)
     train.add_argument("--latent-states", type=int, default=50)
+    train.add_argument("--transition-rank", type=int, default=4)
     train.add_argument("--motif-dim", type=int, default=32)
     train.add_argument("--heads", type=int, default=4)
     train.add_argument("--layers", type=int, default=3)
@@ -549,6 +552,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--minimum-sequence-length", type=int, default=2)
     walk.add_argument("--d-model", type=int, default=96)
     walk.add_argument("--latent-states", type=int, default=50)
+    walk.add_argument("--transition-rank", type=int, default=4)
     walk.add_argument("--motif-dim", type=int, default=32)
     walk.add_argument("--heads", type=int, default=4)
     walk.add_argument("--layers", type=int, default=3)

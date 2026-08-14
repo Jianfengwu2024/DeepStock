@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BNHMM Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.6.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.8.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.6.0" defer></script>
+  <script src="/static/app.js?v=0.8.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -41,7 +41,7 @@
           <div class="three-columns">
             <label>轮数<input name="epochs" type="number" min="1"></label>
             <label>预训练轮数<input name="pretrain_epochs" type="number" min="0"></label>
-            <label>批量上限（自动按日状态截断）<input name="batch_size" type="number" min="1"></label>
+            <label>批量上限（每批最多 256 个日态）<input name="batch_size" type="number" min="1"></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
           </div>
           <div class="two-columns">
@@ -54,26 +54,25 @@
         </details>
 
         <details class="form-section" open>
-          <summary>Walk-forward</summary>
+          <summary>滚动样本外验证</summary>
           <div class="two-columns">
             <label>最少训练日<input name="minimum_train_sessions" type="number"></label>
             <label>调参日<input name="tuning_sessions" type="number"></label>
             <label>测试日<input name="test_sessions" type="number"></label>
             <label>步长<input name="step_sessions" type="number"></label>
             <label>最大折数<input name="max_folds" type="number" placeholder="不限"></label>
-            <label>前瞻日<input name="forward_sessions" type="number"></label>
           </div>
         </details>
 
         <details class="form-section" open>
-          <summary>序列与模型</summary>
-          <label>状态粒度
-            <select name="state_timeframe">
-              <option value="daily">日状态（1分钟线生成）</option>
-              <option value="mixed">小时 + 日状态（对照）</option>
-            </select>
-          </label>
-          <label>特征消融
+          <summary>每日相空间态</summary>
+          <div class="fixed-spec-grid">
+            <div class="fixed-spec"><span>状态构造</span><strong>1 分钟线 → 每日态</strong></div>
+            <div class="fixed-spec"><span>价格坐标</span><strong>前收盘为零点的对数价格</strong></div>
+            <div class="fixed-spec"><span>日状态元数据</span><strong>9 个归一化特征</strong></div>
+            <div class="fixed-spec"><span>直方图输入</span><strong id="profile-channel-count">4 + 3² = 13 通道</strong></div>
+          </div>
+          <label>输入特征组合（消融测试）
             <select name="feature_mode">
               <option value="gated-full">价格主干 + 门控成交量/联合速度</option>
               <option value="price-only">仅价格主干</option>
@@ -88,16 +87,32 @@
             <label>联合速度每轴档数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
             <label>速度标准差截断<input name="velocity_clip" type="number" min="0.5" max="20" step="0.5"></label>
             <label>速度分布平滑<input name="velocity_smoothing" type="number" min="0" max="10" step="0.05"></label>
-            <label>近期上下文（日）<input name="sequence_length" type="number" min="2" max="20"></label>
-            <label>模型宽度<input name="d_model" type="number"></label>
-            <label>隐藏态节点数（可配置）<input name="latent_states" type="number" min="13" max="512"></label>
-            <label>输出前隐藏层（固定）<input type="number" value="9" disabled></label>
-            <label>形态维度<input name="motif_dim" type="number"></label>
-            <label>注意力头<input name="heads" type="number"></label>
-            <label>网络层数<input name="layers" type="number"></label>
-            <label>前馈维度<input name="feedforward_dim" type="number"></label>
+          </div>
+        </details>
+
+        <details class="form-section" open>
+          <summary>短期记忆与贝叶斯模型</summary>
+          <div class="fixed-spec-grid">
+            <div class="fixed-spec"><span>预测目标</span><strong>下一交易日</strong></div>
+            <div class="fixed-spec"><span>输出状态</span><strong>收益后验派生空 / 平 / 多</strong></div>
+            <div class="fixed-spec"><span>平状态区间</span><strong>-0.50% ～ +0.50%</strong></div>
+            <div class="fixed-spec"><span>收益后验</span><strong>Student-t（df=4）</strong></div>
+            <div class="fixed-spec"><span>特征骨干</span><strong>确定性 Transformer</strong></div>
+            <div class="fixed-spec"><span>贝叶斯部分</span><strong>发射、转移、9 节点输出层</strong></div>
+          </div>
+          <div class="parameter-group-title">近期记忆</div>
+          <label>上下文交易日<input name="sequence_length" type="number" min="2" max="20"></label>
+          <div class="parameter-group-title">网络结构</div>
+          <div class="two-columns">
+            <label>状态编码宽度<input name="d_model" type="number" min="8"></label>
+            <label>日内形态维度<input name="motif_dim" type="number" min="2"></label>
+            <label>Transformer 层数<input name="layers" type="number" min="1"></label>
+            <label>注意力头数<input name="heads" type="number" min="1"></label>
+            <label>前馈层宽度<input name="feedforward_dim" type="number" min="8"></label>
             <label>Dropout<input name="dropout" type="number" min="0" max="0.99" step="0.01"></label>
-            <label>MC 采样<input name="mc_samples" type="number"></label>
+            <label>黑盒隐藏态<input name="latent_states" type="number" min="13" max="512"></label>
+            <label>转移低秩维度<input name="transition_rank" type="number" min="1" max="512"></label>
+            <label>后验 MC 采样<input name="mc_samples" type="number" min="2"></label>
           </div>
         </details>
 

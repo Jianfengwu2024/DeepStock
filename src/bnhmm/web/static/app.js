@@ -14,7 +14,7 @@ const numberFields = new Set([
   "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
   "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
-  "minimum_sequence_length", "d_model", "latent_states", "motif_dim", "heads", "layers",
+  "minimum_sequence_length", "d_model", "latent_states", "transition_rank", "motif_dim", "heads", "layers",
   "feedforward_dim", "dropout", "mc_samples", "uncertainty_aversion",
   "transaction_cost_bps", "seed",
 ]);
@@ -52,15 +52,38 @@ function fillForm(defaults) {
     else if (field.type === "checkbox") field.checked = Boolean(value);
     else field.value = value ?? "";
   }
-  syncLatentStateMinimum();
+  syncModelConstraints();
 }
 
-function syncLatentStateMinimum() {
-  const velocityBins = Number(document.querySelector("[name=velocity_bins]").value || 3);
+function syncModelConstraints() {
+  const velocityField = document.querySelector("[name=velocity_bins]");
+  const latentField = document.querySelector("[name=latent_states]");
+  const transitionRankField = document.querySelector("[name=transition_rank]");
+  const widthField = document.querySelector("[name=d_model]");
+  const headsField = document.querySelector("[name=heads]");
+  const velocityBins = Number(velocityField.value || 3);
   const minimum = 4 + velocityBins ** 2;
-  const field = document.querySelector("[name=latent_states]");
-  field.min = String(minimum);
-  if (Number(field.value) < minimum) field.value = String(minimum);
+  latentField.min = String(minimum);
+  if (Number(latentField.value) < minimum) latentField.value = String(minimum);
+
+  const latentStates = Number(latentField.value || minimum);
+  transitionRankField.max = String(latentStates);
+  if (Number(transitionRankField.value) > latentStates) {
+    transitionRankField.value = String(latentStates);
+  }
+
+  const channelCount = document.querySelector("#profile-channel-count");
+  if (channelCount) {
+    channelCount.textContent = `4 + ${velocityBins}² = ${minimum} 通道`;
+  }
+
+  const width = Number(widthField.value);
+  const heads = Number(headsField.value);
+  headsField.setCustomValidity(
+    width && heads && width % heads !== 0
+      ? "状态编码宽度必须能被注意力头数整除"
+      : "",
+  );
 }
 
 function setupDevices(devices) {
@@ -555,7 +578,9 @@ function applySymbols() {
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
-  document.querySelector("[name=velocity_bins]").addEventListener("input", syncLatentStateMinimum);
+  for (const name of ["velocity_bins", "latent_states", "transition_rank", "d_model", "heads"]) {
+    document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
+  }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);
   document.querySelector("#choose-symbols").addEventListener("click", openSymbolDialog);
   document.querySelector("#apply-symbols").addEventListener("click", applySymbols);
