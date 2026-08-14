@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isqrt
 
 import torch
 from torch import Tensor, nn
@@ -119,8 +120,12 @@ class BayesianMotifTokenizer(nn.Module):
         feature_mode: str,
     ) -> None:
         super().__init__()
-        if profile_channels < 10 or (profile_channels - 4) % 2:
-            raise ValueError("profile channels must contain paired velocity families")
+        joint_velocity_channels = profile_channels - 4
+        velocity_bins = isqrt(joint_velocity_channels)
+        if velocity_bins < 3 or velocity_bins**2 != joint_velocity_channels:
+            raise ValueError(
+                "profile channels must contain a square joint velocity grid"
+            )
         if feature_mode not in {
             "gated-full",
             "price-only",
@@ -132,33 +137,26 @@ class BayesianMotifTokenizer(nn.Module):
         self.profile_channels = profile_channels
         self.state_feature_dim = state_feature_dim
         self.feature_mode = feature_mode
-        self.velocity_channels = (profile_channels - 4) // 2
+        self.joint_velocity_channels = joint_velocity_channels
         self.price_branch = BayesianMotifBranch(
             2, d_model, motif_dim, include_coordinates=True, bias=True
         )
         self.volume_branch = BayesianMotifBranch(
             2, d_model, motif_dim, include_coordinates=False, bias=False
         )
-        self.price_velocity_branch = BayesianMotifBranch(
-            self.velocity_channels,
+        self.joint_velocity_branch = BayesianMotifBranch(
+            self.joint_velocity_channels,
             d_model,
             motif_dim,
             include_coordinates=False,
             bias=False,
         )
-        self.volume_velocity_branch = BayesianMotifBranch(
-            self.velocity_channels,
-            d_model,
-            motif_dim,
-            include_coordinates=False,
-            bias=False,
-        )
-        self.auxiliary_gate_logits = nn.Parameter(torch.full((3,), -3.0))
+        self.auxiliary_gate_logits = nn.Parameter(torch.full((2,), -3.0))
         enabled = {
-            "gated-full": (1.0, 1.0, 1.0),
-            "price-only": (0.0, 0.0, 0.0),
-            "price-volume": (1.0, 0.0, 0.0),
-            "price-velocity": (0.0, 1.0, 0.0),
+            "gated-full": (1.0, 1.0),
+            "price-only": (0.0, 0.0),
+            "price-volume": (1.0, 0.0),
+            "price-velocity": (0.0, 1.0),
         }[feature_mode]
         self.enabled_auxiliary_indices = tuple(
             index for index, value in enumerate(enabled) if value
@@ -216,17 +214,14 @@ class BayesianMotifTokenizer(nn.Module):
         )
         price_values = torch.stack((profiles[..., 0], profiles[..., 3]), dim=-1)
         volume_values = profiles[..., 1:3]
-        price_velocity_values = profiles[..., 4 : 4 + self.velocity_channels]
-        volume_velocity_values = profiles[..., 4 + self.velocity_channels :]
+        joint_velocity_values = profiles[..., 4:]
         branch_inputs = (
             volume_values,
-            price_velocity_values,
-            volume_velocity_values,
+            joint_velocity_values,
         )
         branches = (
             self.volume_branch,
-            self.price_velocity_branch,
-            self.volume_velocity_branch,
+            self.joint_velocity_branch,
         )
         tokens = self.price_branch(
             price_values,

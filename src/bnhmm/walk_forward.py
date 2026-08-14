@@ -274,7 +274,7 @@ def _run_symbol_walk_forward(
             "tuning_best_validation_loss": tuning_result.best_validation_loss,
             "auxiliary_gates": dict(
                 zip(
-                    ("relative_volume", "price_velocity", "volume_velocity"),
+                    ("relative_volume", "joint_price_volume_velocity"),
                     final_model.tokenizer.effective_auxiliary_gates()
                     .detach()
                     .cpu()

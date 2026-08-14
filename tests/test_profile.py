@@ -6,6 +6,7 @@ from datetime import date, timedelta
 import numpy as np
 
 from bnhmm import BarBatch, PriceVolumeProfileBuilder, ProfileConfig
+from bnhmm.data.normalization import RollingPhaseSpaceNormalizer
 
 
 def synthetic_sessions(session_count: int = 2) -> BarBatch:
@@ -61,8 +62,7 @@ class ProfileBuilderTests(unittest.TestCase):
             self.assertEqual(state.price_distribution.shape, (bins,))
             self.assertEqual(state.relative_volume_intensity.shape, (bins,))
             self.assertEqual(state.normalized_relative_volume_level.shape, (bins,))
-            self.assertEqual(state.price_velocity_distribution.shape, (bins, 5))
-            self.assertEqual(state.volume_velocity_distribution.shape, (bins, 5))
+            self.assertEqual(state.joint_velocity_distribution.shape, (bins, 3, 3))
             self.assertEqual(state.bin_coordinates.shape, (bins,))
             self.assertEqual(state.normalized_bin_coordinates.shape, (bins,))
             self.assertEqual(state.adjacent_pairs.shape, (bins - 1, 2))
@@ -70,10 +70,11 @@ class ProfileBuilderTests(unittest.TestCase):
             self.assertAlmostEqual(float(state.distribution.sum()), 1.0)
             self.assertAlmostEqual(float(state.price_distribution.sum()), 1.0)
             np.testing.assert_allclose(np.diff(state.bin_coordinates), 1.0)
-            self.assertAlmostEqual(float(state.price_velocity_distribution.sum()), 1.0)
-            self.assertAlmostEqual(float(state.volume_velocity_distribution.sum()), 1.0)
-            self.assertLess(float(state.price_velocity_distribution.sum(axis=1).max()), 1.0)
-            self.assertLess(float(state.volume_velocity_distribution.sum(axis=1).max()), 1.0)
+            self.assertAlmostEqual(float(state.joint_velocity_distribution.sum()), 1.0)
+            self.assertLess(
+                float(state.joint_velocity_distribution.sum(axis=(1, 2)).max()),
+                1.0,
+            )
             self.assertGreater(state.first_bar_time, state.period_start)
             self.assertGreater(state.start_price, 0)
             self.assertGreater(state.end_price, 0)
@@ -165,6 +166,53 @@ class ProfileBuilderTests(unittest.TestCase):
             changed_state.total_relative_volume,
             original_state.total_relative_volume,
         )
+
+    def test_velocity_pair_uses_one_edge_one_anchor_and_rejects_gaps(self) -> None:
+        config = ProfileConfig(relative_volume_min_observations=1)
+        normalizer = RollingPhaseSpaceNormalizer(config)
+        history = synthetic_sessions(1)
+        normalizer.update(history)
+        normalization = normalizer.snapshot(history.symbol)
+        self.assertIsNotNone(normalization)
+
+        timestamps = np.asarray(
+            [
+                "2026-01-06T09:31:00",
+                "2026-01-06T09:32:00",
+                "2026-01-06T09:34:00",
+                "2026-01-06T09:35:00",
+            ],
+            dtype="datetime64[ns]",
+        )
+        close = np.asarray([10.0, 10.1, 9.9, 9.8])
+        bars = BarBatch(
+            symbol=history.symbol,
+            timestamp=timestamps,
+            open=close,
+            high=close,
+            low=close,
+            close=close,
+            volume=np.asarray([1000.0, 2000.0, 8000.0, 4000.0]),
+        )
+        transformed = normalizer.transform(bars, normalization)
+
+        np.testing.assert_array_equal(
+            transformed.velocity_edge_valid,
+            np.asarray([False, True, False, True]),
+        )
+        expected_anchors = (
+            np.log(close[:-1]) + np.log(close[1:])
+        ) / 2.0
+        self.assertAlmostEqual(
+            transformed.velocity_anchor_log_price[1], expected_anchors[0]
+        )
+        self.assertAlmostEqual(
+            transformed.velocity_anchor_log_price[3], expected_anchors[2]
+        )
+        self.assertGreater(transformed.price_velocity[1], 0.0)
+        self.assertGreater(transformed.volume_velocity[1], 0.0)
+        self.assertLess(transformed.price_velocity[3], 0.0)
+        self.assertLess(transformed.volume_velocity[3], 0.0)
 
 
 if __name__ == "__main__":

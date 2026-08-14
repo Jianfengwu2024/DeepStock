@@ -173,10 +173,14 @@ class PriceVolumeProfileBuilder:
         relative_volume_histogram = np.zeros(profile_bins, dtype=np.float64)
         relative_level_sum = np.zeros(profile_bins, dtype=np.float64)
         relative_level_count = np.zeros(profile_bins, dtype=np.float64)
-        price_velocity_histogram = np.zeros(
-            (profile_bins, self.config.velocity_bins), dtype=np.float64
+        joint_velocity_histogram = np.zeros(
+            (
+                profile_bins,
+                self.config.velocity_bins,
+                self.config.velocity_bins,
+            ),
+            dtype=np.float64,
         )
-        volume_velocity_histogram = np.zeros_like(price_velocity_histogram)
         weights = np.maximum(normalized.relative_volume, 0.0)
 
         for low, high, weight in zip(normalized_low, normalized_high, weights, strict=True):
@@ -197,21 +201,26 @@ class PriceVolumeProfileBuilder:
             self.config.velocity_bins + 1,
         )
         close_positions = np.log(bars.close / anchor)
-        for position, relative_level, price_velocity, volume_velocity in zip(
+        for position, relative_level in zip(
             close_positions,
             normalized.relative_volume_level,
-            normalized.price_velocity,
-            normalized.volume_velocity,
             strict=True,
         ):
             price_index = self._bin_index(edges, float(position))
             relative_level_sum[price_index] += float(relative_level)
             relative_level_count[price_index] += 1.0
-            price_velocity_histogram[
-                price_index, self._bin_index(velocity_edges, float(price_velocity))
-            ] += 1.0
-            volume_velocity_histogram[
-                price_index, self._bin_index(velocity_edges, float(volume_velocity))
+
+        for edge_index in np.flatnonzero(normalized.velocity_edge_valid):
+            position = normalized.velocity_anchor_log_price[edge_index] - np.log(anchor)
+            price_index = self._bin_index(edges, float(position))
+            price_velocity_index = self._bin_index(
+                velocity_edges, float(normalized.price_velocity[edge_index])
+            )
+            volume_velocity_index = self._bin_index(
+                velocity_edges, float(normalized.volume_velocity[edge_index])
+            )
+            joint_velocity_histogram[
+                price_index, price_velocity_index, volume_velocity_index
             ] += 1.0
 
         normalized_relative_volume_level = np.divide(
@@ -224,8 +233,7 @@ class PriceVolumeProfileBuilder:
             relative_level_count + 4.0
         )
         normalized_relative_volume_level *= relative_level_reliability
-        self._normalize_conditional_velocity(price_velocity_histogram)
-        self._normalize_conditional_velocity(volume_velocity_histogram)
+        self._normalize_conditional_velocity(joint_velocity_histogram)
 
         relative_volume_intensity = relative_volume_histogram / max(len(bars), 1)
         self._normalize(price_histogram)
@@ -250,8 +258,7 @@ class PriceVolumeProfileBuilder:
             distribution=relative_volume_histogram,
             relative_volume_intensity=relative_volume_intensity,
             normalized_relative_volume_level=normalized_relative_volume_level,
-            price_velocity_distribution=price_velocity_histogram,
-            volume_velocity_distribution=volume_velocity_histogram,
+            joint_velocity_distribution=joint_velocity_histogram,
             adjacent_pairs=sliding_window_view(relative_volume_histogram, 2).copy(),
             adjacent_triples=sliding_window_view(relative_volume_histogram, 3).copy(),
             normalization_sessions=normalization.sessions,
@@ -280,16 +287,19 @@ class PriceVolumeProfileBuilder:
         self, histogram: NDArray[np.float64]
     ) -> None:
         """Smooth sparse conditional rows and retain their sample reliability."""
-        counts = histogram.sum(axis=1, keepdims=True)
+        counts = histogram.sum(axis=(1, 2), keepdims=True)
         total = float(counts.sum())
         if total <= 0:
             histogram.fill(0.0)
             return
-        occupied = counts[:, 0] > 0
+        occupied = counts[:, 0, 0] > 0
         smoothing = self.config.velocity_smoothing
         histogram[occupied] = (
             histogram[occupied] + smoothing
-        ) / (counts[occupied] + smoothing * histogram.shape[1])
+        ) / (
+            counts[occupied]
+            + smoothing * histogram.shape[1] * histogram.shape[2]
+        )
         histogram[occupied] *= counts[occupied] / total
         histogram[~occupied] = 0.0
 

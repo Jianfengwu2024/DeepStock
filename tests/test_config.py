@@ -40,10 +40,10 @@ class ConfigTests(unittest.TestCase):
         config = ProfileConfig()
         self.assertEqual(config.relative_volume_lookback_sessions, 10)
         self.assertEqual(config.relative_volume_min_observations, 10)
-        self.assertEqual(config.velocity_bins, 5)
+        self.assertEqual(config.velocity_bins, 3)
         self.assertEqual(config.velocity_smoothing, 0.25)
         self.assertEqual(config.profile_channels, PROFILE_CHANNELS)
-        self.assertEqual(PROFILE_PROTOCOL, "phase-space-gated-v4")
+        self.assertEqual(PROFILE_PROTOCOL, "phase-space-joint-v5")
         with self.assertRaises(ValueError):
             ProfileConfig(velocity_bins=8)
 

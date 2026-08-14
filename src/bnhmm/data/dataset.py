@@ -166,8 +166,9 @@ class ProfileLabelBuilder:
                 state.distribution[:, None],
                 state.normalized_relative_volume_level[:, None],
                 state.normalized_bin_coordinates[:, None],
-                state.price_velocity_distribution,
-                state.volume_velocity_distribution,
+                state.joint_velocity_distribution.reshape(
+                    len(state.distribution), -1
+                ),
             ),
             axis=1,
         ).astype(np.float32)

@@ -114,8 +114,7 @@ class ProfileState:
     distribution: FloatArray
     relative_volume_intensity: FloatArray
     normalized_relative_volume_level: FloatArray
-    price_velocity_distribution: FloatArray
-    volume_velocity_distribution: FloatArray
+    joint_velocity_distribution: FloatArray
     adjacent_pairs: FloatArray
     adjacent_triples: FloatArray
     normalization_sessions: int
@@ -148,12 +147,12 @@ class ProfileState:
         if self.normalized_relative_volume_level.shape != self.distribution.shape:
             raise ValueError("relative-volume levels must align with distributions")
         if (
-            self.price_velocity_distribution.ndim != 2
-            or self.price_velocity_distribution.shape[0] != len(self.distribution)
-            or self.volume_velocity_distribution.shape
-            != self.price_velocity_distribution.shape
+            self.joint_velocity_distribution.ndim != 3
+            or self.joint_velocity_distribution.shape[0] != len(self.distribution)
+            or self.joint_velocity_distribution.shape[1]
+            != self.joint_velocity_distribution.shape[2]
         ):
-            raise ValueError("conditional velocity distributions must align with price bins")
+            raise ValueError("joint velocity distribution must align with price bins")
         if len(self.distribution) < 3:
             raise ValueError("profile states require at least three bins")
         if self.adjacent_pairs.shape != (len(self.distribution) - 1, 2):
@@ -169,8 +168,7 @@ class ProfileState:
         phase_arrays = (
             self.normalized_bin_coordinates,
             self.normalized_relative_volume_level,
-            self.price_velocity_distribution,
-            self.volume_velocity_distribution,
+            self.joint_velocity_distribution,
         )
         if any(np.any(~np.isfinite(item)) for item in phase_arrays):
             raise ValueError("phase-space arrays must be finite")

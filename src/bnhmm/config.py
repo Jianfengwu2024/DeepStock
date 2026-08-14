@@ -17,9 +17,9 @@ REGIME_COUNT = len(REGIME_STATES)
 REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
 REGIME_PROTOCOL = "bear-flat-bull-v1"
-PROFILE_PROTOCOL = "phase-space-gated-v4"
-DEFAULT_VELOCITY_BINS = 5
-PROFILE_CHANNELS = 4 + 2 * DEFAULT_VELOCITY_BINS
+PROFILE_PROTOCOL = "phase-space-joint-v5"
+DEFAULT_VELOCITY_BINS = 3
+PROFILE_CHANNELS = 4 + DEFAULT_VELOCITY_BINS**2
 OUTPUT_HIDDEN_STATES = 9
 
 
@@ -71,8 +71,8 @@ class ProfileConfig:
 
     @property
     def profile_channels(self) -> int:
-        # Four scalar fields plus two conditional velocity histograms.
-        return 4 + 2 * self.velocity_bins
+        # Four scalar fields plus the paired price/volume velocity grid.
+        return 4 + self.velocity_bins**2
 
 
 @dataclass(frozen=True, slots=True)

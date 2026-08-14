@@ -31,7 +31,7 @@ class WebJobTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(velocity_bins=8)
         with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(latent_states=13)
+            WalkForwardJobRequest(latent_states=12)
 
     def test_command_contains_model_and_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(
@@ -60,7 +60,7 @@ class WebJobTests(unittest.TestCase):
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
         self.assertEqual(request.training_scope, "per-symbol")
-        self.assertEqual(request.profile_protocol, "phase-space-gated-v4")
+        self.assertEqual(request.profile_protocol, "phase-space-joint-v5")
         self.assertEqual(request.feature_mode, "gated-full")
 
         deterministic = build_command(

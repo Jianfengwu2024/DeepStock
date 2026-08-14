@@ -52,16 +52,17 @@ class WalkForwardJobRequest(BaseModel):
     bin_width_bps: float = Field(10.0, gt=0.0, le=100.0)
     max_profile_bins: int = Field(512, ge=8, le=2048)
     normalization_lookback_sessions: int = Field(10, ge=2, le=120)
-    velocity_bins: int = Field(5, ge=3, le=31)
+    velocity_bins: int = Field(3, ge=3, le=31)
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
     velocity_smoothing: float = Field(0.25, ge=0.0, le=10.0)
     profile_protocol: Literal[
+        "phase-space-joint-v5",
         "phase-space-gated-v4",
         "phase-space-log-v3",
         "variable-log-bins-v2",
         "legacy-fixed-bins",
     ] = (
-        "phase-space-gated-v4"
+        "phase-space-joint-v5"
     )
     state_timeframe: Literal["daily", "mixed"] = "daily"
     sequence_length: int = Field(128, ge=8, le=2048)
@@ -120,7 +121,7 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
             raise ValueError("velocity_bins must be odd")
-        profile_channels = 4 + 2 * self.velocity_bins
+        profile_channels = 4 + self.velocity_bins**2
         legacy = bool((info.context or {}).get("legacy_job"))
         if self.feature_mode == "legacy-entangled" and not legacy:
             raise ValueError("legacy-entangled is reserved for historical jobs")

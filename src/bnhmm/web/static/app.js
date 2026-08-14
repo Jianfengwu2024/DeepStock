@@ -56,8 +56,8 @@ function fillForm(defaults) {
 }
 
 function syncLatentStateMinimum() {
-  const velocityBins = Number(document.querySelector("[name=velocity_bins]").value || 9);
-  const minimum = 4 + 2 * velocityBins;
+  const velocityBins = Number(document.querySelector("[name=velocity_bins]").value || 3);
+  const minimum = 4 + velocityBins ** 2;
   const field = document.querySelector("[name=latent_states]");
   field.min = String(minimum);
   if (Number(field.value) < minimum) field.value = String(minimum);
@@ -214,8 +214,10 @@ function renderJob(job) {
   const stateMode = job.request.state_timeframe === "mixed"
     ? "小时 + 日状态"
     : "日状态（1分钟线生成）";
-  const profileMode = job.request.profile_protocol === "phase-space-gated-v4"
-    ? `${job.request.bin_width_bps} BP 稀疏平滑相空间 · ${job.request.normalization_lookback_sessions}日归一化`
+  const profileMode = job.request.profile_protocol === "phase-space-joint-v5"
+    ? `${job.request.bin_width_bps} BP 联合速度相空间 · ${job.request.normalization_lookback_sessions}日归一化`
+    : job.request.profile_protocol === "phase-space-gated-v4"
+      ? `${job.request.bin_width_bps} BP 旧边际速度相空间`
     : job.request.profile_protocol === "phase-space-log-v3"
       ? `${job.request.bin_width_bps} BP 旧22通道相空间`
       : job.request.profile_protocol === "legacy-fixed-bins"
@@ -226,10 +228,10 @@ function renderJob(job) {
     : "多标的共享模型（旧）";
   const latentStates = job.request.latent_states ?? 10;
   const featureMode = ({
-    "gated-full": "价格主干 + 门控量价速度",
+    "gated-full": "价格主干 + 门控成交量/联合速度",
     "price-only": "仅价格",
     "price-volume": "价格 + 成交量",
-    "price-velocity": "价格 + 价格速度",
+    "price-velocity": "价格 + 联合速度",
     "legacy-entangled": "旧混合特征",
   })[job.request.feature_mode] || "旧混合特征";
   document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → 9 隐藏节点 · ${stateMode} · ${profileMode} · ${job.request.device}`;

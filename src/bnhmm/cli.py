@@ -216,7 +216,7 @@ def _train(args: argparse.Namespace) -> int:
         "checkpoint": str(checkpoint_path),
         "auxiliary_gates": dict(
             zip(
-                ("relative_volume", "price_velocity", "volume_velocity"),
+                ("relative_volume", "joint_price_volume_velocity"),
                 model.tokenizer.effective_auxiliary_gates().detach().cpu().tolist(),
                 strict=True,
             )
@@ -468,7 +468,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--bin-width-bps", type=float, default=10.0)
     train.add_argument("--max-profile-bins", type=int, default=512)
     train.add_argument("--normalization-lookback-sessions", type=int, default=10)
-    train.add_argument("--velocity-bins", type=int, default=5)
+    train.add_argument("--velocity-bins", type=int, default=3)
     train.add_argument("--velocity-clip", type=float, default=4.0)
     train.add_argument("--velocity-smoothing", type=float, default=0.25)
     train.add_argument(
@@ -521,7 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--bin-width-bps", type=float, default=10.0)
     walk.add_argument("--max-profile-bins", type=int, default=512)
     walk.add_argument("--normalization-lookback-sessions", type=int, default=10)
-    walk.add_argument("--velocity-bins", type=int, default=5)
+    walk.add_argument("--velocity-bins", type=int, default=3)
     walk.add_argument("--velocity-clip", type=float, default=4.0)
     walk.add_argument("--velocity-smoothing", type=float, default=0.25)
     walk.add_argument(

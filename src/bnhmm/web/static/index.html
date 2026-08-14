@@ -75,17 +75,17 @@
           </label>
           <label>特征消融
             <select name="feature_mode">
-              <option value="gated-full">价格主干 + 门控量价速度</option>
+              <option value="gated-full">价格主干 + 门控成交量/联合速度</option>
               <option value="price-only">仅价格主干</option>
               <option value="price-volume">价格 + 成交量</option>
-              <option value="price-velocity">价格 + 价格速度</option>
+              <option value="price-velocity">价格 + 联合速度</option>
             </select>
           </label>
           <div class="two-columns">
             <label>每柱基点<input name="bin_width_bps" type="number" min="1" max="100" step="1"></label>
             <label>单日最大柱数<input name="max_profile_bins" type="number" min="8" max="2048"></label>
             <label>归一化回看日<input name="normalization_lookback_sessions" type="number" min="2" max="120"></label>
-            <label>速度分布柱数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
+            <label>联合速度每轴档数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
             <label>速度标准差截断<input name="velocity_clip" type="number" min="0.5" max="20" step="0.5"></label>
             <label>速度分布平滑<input name="velocity_smoothing" type="number" min="0" max="10" step="0.05"></label>
             <label>序列长度<input name="sequence_length" type="number"></label>

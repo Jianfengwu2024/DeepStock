@@ -31,6 +31,8 @@ class NormalizedSession:
     relative_volume_level: NDArray[np.float64]
     price_velocity: NDArray[np.float64]
     volume_velocity: NDArray[np.float64]
+    velocity_anchor_log_price: NDArray[np.float64]
+    velocity_edge_valid: NDArray[np.bool_]
 
     def take(self, indices: NDArray[np.integer]) -> "NormalizedSession":
         return NormalizedSession(
@@ -38,11 +40,14 @@ class NormalizedSession:
             relative_volume_level=self.relative_volume_level[indices],
             price_velocity=self.price_velocity[indices],
             volume_velocity=self.volume_velocity[indices],
+            velocity_anchor_log_price=self.velocity_anchor_log_price[indices],
+            velocity_edge_valid=self.velocity_edge_valid[indices],
         )
 
 
 @dataclass(frozen=True, slots=True)
 class _CompletedSession:
+    timestamp: NDArray[np.datetime64]
     log_close: NDArray[np.float64]
     high: float
     low: float
@@ -73,8 +78,11 @@ class RollingPhaseSpaceNormalizer:
             float(np.mean([np.log(item.high / item.low) for item in history])),
             log_bin_width,
         )
+        valid_edges = [
+            self._continuous_minute_edges(item.timestamp) for item in history
+        ]
         price_velocity = self._session_differences(
-            [item.log_close for item in history]
+            [item.log_close for item in history], valid_edges
         )
         relative_levels = [
             np.log1p(
@@ -87,7 +95,9 @@ class RollingPhaseSpaceNormalizer:
             for item in history
         ]
         relative_level = np.concatenate(relative_levels)
-        volume_velocity = self._session_differences(relative_levels)
+        volume_velocity = self._session_differences(
+            relative_levels, valid_edges
+        )
         price_mean, price_scale = self._location_scale(
             price_velocity, minimum=log_bin_width / 10.0
         )
@@ -119,10 +129,14 @@ class RollingPhaseSpaceNormalizer:
         )
         relative_log = np.log1p(relative)
         price_log = np.log(bars.close)
-        price_velocity = np.diff(
-            price_log, prepend=float(np.log(bars.open[0]))
-        )
-        volume_velocity = np.diff(relative_log, prepend=float(relative_log[0]))
+        valid_edges = self._continuous_minute_edges(bars.timestamp)
+        price_velocity = np.zeros(len(bars), dtype=np.float64)
+        volume_velocity = np.zeros(len(bars), dtype=np.float64)
+        velocity_anchor = price_log.copy()
+        if len(bars) > 1:
+            price_velocity[1:] = np.diff(price_log)
+            volume_velocity[1:] = np.diff(relative_log)
+            velocity_anchor[1:] = (price_log[:-1] + price_log[1:]) / 2.0
         return NormalizedSession(
             relative_volume=relative,
             relative_volume_level=self._standardize(
@@ -140,6 +154,8 @@ class RollingPhaseSpaceNormalizer:
                 normalization.volume_velocity_mean,
                 normalization.volume_velocity_scale,
             ),
+            velocity_anchor_log_price=velocity_anchor,
+            velocity_edge_valid=valid_edges,
         )
 
     def update(self, bars: BarBatch) -> None:
@@ -147,6 +163,7 @@ class RollingPhaseSpaceNormalizer:
             return
         self._history[bars.symbol].append(
             _CompletedSession(
+                timestamp=bars.timestamp.copy(),
                 log_close=np.log(bars.close.copy()),
                 high=float(bars.high.max()),
                 low=float(bars.low.min()),
@@ -169,9 +186,24 @@ class RollingPhaseSpaceNormalizer:
     @staticmethod
     def _session_differences(
         sessions: list[NDArray[np.float64]],
+        valid_edges: list[NDArray[np.bool_]],
     ) -> NDArray[np.float64]:
-        differences = [np.diff(item) for item in sessions if len(item) > 1]
+        differences = [
+            np.diff(item)[valid[1:]]
+            for item, valid in zip(sessions, valid_edges, strict=True)
+            if len(item) > 1 and np.any(valid[1:])
+        ]
         return np.concatenate(differences) if differences else np.zeros(1)
+
+    @staticmethod
+    def _continuous_minute_edges(
+        timestamp: NDArray[np.datetime64],
+    ) -> NDArray[np.bool_]:
+        valid = np.zeros(len(timestamp), dtype=np.bool_)
+        if len(timestamp) > 1:
+            elapsed = np.diff(timestamp.astype("datetime64[m]").astype(np.int64))
+            valid[1:] = elapsed == 1
+        return valid
 
     @staticmethod
     def _location_scale(

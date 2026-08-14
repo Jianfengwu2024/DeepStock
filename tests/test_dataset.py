@@ -5,7 +5,13 @@ from dataclasses import replace
 
 import numpy as np
 
-from bnhmm import LabelConfig, PriceVolumeProfileBuilder, ProfileConfig, SequenceConfig
+from bnhmm import (
+    PROFILE_CHANNELS,
+    LabelConfig,
+    PriceVolumeProfileBuilder,
+    ProfileConfig,
+    SequenceConfig,
+)
 from bnhmm.data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
 from test_profile import synthetic_sessions
 
@@ -18,7 +24,12 @@ class ProfileDatasetTests(unittest.TestCase):
         self.assertEqual(len(observations), 2)
         self.assertEqual(len(observations.profiles), 2)
         self.assertEqual(len(observations.bin_coordinates), 2)
-        self.assertTrue(all(profile.shape[1] == 14 for profile in observations.profiles))
+        self.assertTrue(
+            all(
+                profile.shape[1] == PROFILE_CHANNELS
+                for profile in observations.profiles
+            )
+        )
         self.assertTrue(
             all(
                 len(profile) == len(coordinates)
