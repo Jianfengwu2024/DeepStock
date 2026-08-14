@@ -17,14 +17,15 @@ overflow metadata to form one daily token. No exact intraday clock position,
 price acceleration, or direction-times-volume product is provided to the model.
 
 All query, key, value, attention-output, feed-forward, motif, transition-context,
-latent-emission, and evidence projections use variational Gaussian weights. The
-temporal attention mask is causal.
+latent-emission, output-hidden, and evidence projections use variational Gaussian
+weights. The temporal attention mask is causal.
 
-Fifty unnamed latent probabilities are filtered sequentially by default using a Bayesian base
-transition matrix plus a context-dependent transition delta. The output head
-maps the filtered latent state and Transformer context to three Dirichlet
-concentrations ordered as bear, flat, and bull. The count is configurable but
-cannot fall below the 22 input channels. Forward returns below -0.5% are bearish,
+Fifty unnamed latent probabilities are filtered sequentially by default using a
+Bayesian base transition matrix plus a context-dependent transition delta. A
+fixed nine-node Bayesian hidden layer then maps only the filtered latent state
+into three Dirichlet concentrations ordered as bear, flat, and bull. The first
+hidden-state count is configurable but cannot fall below the 22 input channels;
+the second hidden layer is always nine nodes. Forward returns below -0.5% are bearish,
 returns in `[-0.5%, +0.5%]` are flat, and returns above +0.5% are bullish.
 
 Monte Carlo prediction returns:

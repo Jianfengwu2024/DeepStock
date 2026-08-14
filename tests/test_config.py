@@ -5,6 +5,7 @@ import unittest
 from bnhmm import (
     PROFILE_CHANNELS,
     PROFILE_PROTOCOL,
+    OUTPUT_HIDDEN_STATES,
     REGIME_NAMES,
     BNHMMConfig,
     LabelConfig,
@@ -17,6 +18,7 @@ class ConfigTests(unittest.TestCase):
         config = BNHMMConfig()
         self.assertEqual(config.latent_states, 50)
         self.assertEqual(len(config.output_states), 3)
+        self.assertEqual(OUTPUT_HIDDEN_STATES, 9)
         self.assertEqual(REGIME_NAMES, ("bear", "flat", "bull"))
         with self.assertRaises(ValueError):
             BNHMMConfig(latent_states=PROFILE_CHANNELS - 1)

@@ -8,7 +8,12 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from ..config import PROFILE_CHANNELS, REGIME_COUNT, REGIME_SCORES
+from ..config import (
+    OUTPUT_HIDDEN_STATES,
+    PROFILE_CHANNELS,
+    REGIME_COUNT,
+    REGIME_SCORES,
+)
 from .bayesian import BayesianLinear, module_kl_divergence
 from .transformer import BayesianTransformerBlock
 
@@ -188,6 +193,7 @@ class BNHMMNetwork(nn.Module):
         self.profile_channels = profile_channels
         self.state_feature_dim = state_feature_dim
         self.latent_states = latent_states
+        self.output_hidden_states = OUTPUT_HIDDEN_STATES
         self.output_states = output_states
         self.max_sequence_length = max_sequence_length
         self.d_model = d_model
@@ -218,7 +224,8 @@ class BNHMMNetwork(nn.Module):
         transition = torch.eye(latent_states) * 2.0
         self.transition_mu = nn.Parameter(transition)
         self.transition_rho = nn.Parameter(torch.full_like(transition, -4.5))
-        self.evidence = BayesianLinear(d_model + latent_states, output_states)
+        self.output_hidden = BayesianLinear(latent_states, OUTPUT_HIDDEN_STATES)
+        self.evidence = BayesianLinear(OUTPUT_HIDDEN_STATES, output_states)
         pretraining_dim = d_model + latent_states
         self.masked_state_reconstruction = nn.Linear(
             pretraining_dim, state_feature_dim
@@ -308,9 +315,8 @@ class BNHMMNetwork(nn.Module):
         latent = self._filter_latent(
             emissions, transition_base, transition_delta, valid_mask
         )
-        evidence = F.softplus(
-            self.evidence(torch.cat((context, latent), dim=-1), sample=sample)
-        )
+        output_hidden = F.gelu(self.output_hidden(latent, sample=sample))
+        evidence = F.softplus(self.evidence(output_hidden, sample=sample))
         alpha = evidence + 1.0
         kl = (
             module_kl_divergence(self) + self._transition_kl(transition_std)

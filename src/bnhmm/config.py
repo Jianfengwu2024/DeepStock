@@ -20,6 +20,7 @@ REGIME_PROTOCOL = "bear-flat-bull-v1"
 PROFILE_PROTOCOL = "phase-space-log-v3"
 DEFAULT_VELOCITY_BINS = 9
 PROFILE_CHANNELS = 4 + 2 * DEFAULT_VELOCITY_BINS
+OUTPUT_HIDDEN_STATES = 9
 
 
 @dataclass(frozen=True, slots=True)

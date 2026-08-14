@@ -16,8 +16,10 @@ Hourly states remain an explicit comparison mode only.
 
 The model core now includes adjacent two/three-bin motif tokenization, causal
 Bayesian multi-head attention, a conditional 50-state latent transition filter,
-and a three-regime Dirichlet evidence head. The hidden-state count is configurable
-but cannot be smaller than the input channel count. `predict_posterior()` separates
+a fixed nine-node Bayesian output hidden layer, and a three-regime Dirichlet
+evidence head. The first hidden-state count is configurable
+but cannot be smaller than the input channel count; the second hidden layer is
+always nine nodes. `predict_posterior()` separates
 aleatoric and epistemic variance through Monte Carlo weight sampling.
 
 Optional self-supervised pretraining uses only states available before each

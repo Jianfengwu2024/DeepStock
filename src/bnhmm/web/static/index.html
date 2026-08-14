@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BNHMM Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.5.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.5.1">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.5.0" defer></script>
+  <script src="/static/app.js?v=0.5.1" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -83,7 +83,8 @@
             <label>序列步长<input name="sequence_stride" type="number"></label>
             <label>最短序列<input name="minimum_sequence_length" type="number"></label>
             <label>模型宽度<input name="d_model" type="number"></label>
-            <label>隐状态数<input name="latent_states" type="number" min="22" max="512"></label>
+            <label>第一隐层状态<input name="latent_states" type="number" min="22" max="512"></label>
+            <label>第二隐层节点<input type="number" value="9" disabled></label>
             <label>形态维度<input name="motif_dim" type="number"></label>
             <label>注意力头<input name="heads" type="number"></label>
             <label>网络层数<input name="layers" type="number"></label>

@@ -43,6 +43,9 @@ class BNHMMNetworkTests(unittest.TestCase):
         output = self.model(values, timeframes, features, sample=True)
         self.assertEqual(output.alpha.shape, (2, 6, 3))
         self.assertEqual(output.latent_probabilities.shape, (2, 6, 50))
+        self.assertEqual(self.model.output_hidden_states, 9)
+        self.assertEqual(self.model.output_hidden.weight_mu.shape, (9, 50))
+        self.assertEqual(self.model.evidence.weight_mu.shape, (3, 9))
         self.assertTrue(torch.all(output.alpha > 1.0))
         self.assertTrue(
             torch.allclose(

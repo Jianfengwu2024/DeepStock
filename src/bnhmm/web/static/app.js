@@ -223,7 +223,7 @@ function renderJob(job) {
     ? "逐标的独立 BNHMM"
     : "多标的共享模型（旧）";
   const latentStates = job.request.latent_states ?? 10;
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${latentStates} 隐状态 · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${latentStates} 隐状态 → 9 隐藏节点 · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);

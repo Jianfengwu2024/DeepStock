@@ -11,6 +11,7 @@ from typing import Sequence
 import numpy as np
 
 from .config import (
+    OUTPUT_HIDDEN_STATES,
     REGIME_COUNT,
     REGIME_NAMES,
     REGIME_PROTOCOL,
@@ -150,6 +151,7 @@ def _train(args: argparse.Namespace) -> int:
         "profile_states": len(states),
         "profile_protocol": PROFILE_PROTOCOL,
         "profile_channels": profile_config.profile_channels,
+        "output_hidden_states": OUTPUT_HIDDEN_STATES,
         "normalization_lookback_sessions": args.normalization_lookback_sessions,
         "velocity_bins": args.velocity_bins,
         "velocity_clip": args.velocity_clip,
@@ -373,7 +375,10 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "price_coordinate": "log-price-relative-to-previous-close",
         },
         "regime_protocol": _regime_metadata(label_config),
-        "model_config": asdict(model_config),
+        "model_config": {
+            **asdict(model_config),
+            "output_hidden_states": OUTPUT_HIDDEN_STATES,
+        },
         "trainer_config": asdict(trainer_config),
         "sequence_config": asdict(sequence_config),
         "walk_forward_config": asdict(walk_config),
