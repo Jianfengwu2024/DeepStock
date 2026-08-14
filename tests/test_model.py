@@ -8,7 +8,7 @@ from bnhmm import PROFILE_CHANNELS
 from bnhmm.model import (
     BNHMMNetwork,
     SinglePassOutput,
-    normal_regime_probabilities,
+    student_t_regime_probabilities,
     return_distribution_loss,
 )
 
@@ -124,6 +124,15 @@ class BNHMMNetworkTests(unittest.TestCase):
         far_loss = return_distribution_loss(far, returns, targets).return_nll
 
         self.assertGreater(float(far_loss), float(near_loss))
+
+    def test_student_t_probabilities_are_symmetric_and_normalized(self) -> None:
+        probability = student_t_regime_probabilities(
+            torch.tensor([0.0]), torch.tensor([0.015**2])
+        )
+
+        self.assertTrue(torch.allclose(probability.sum(dim=-1), torch.ones(1)))
+        self.assertTrue(torch.allclose(probability[:, 0], probability[:, 2]))
+        self.assertEqual(int(probability.argmax(dim=-1)), 1)
 
     def test_continuous_head_starts_centered_with_low_sampling_noise(self) -> None:
         self.assertTrue(torch.equal(

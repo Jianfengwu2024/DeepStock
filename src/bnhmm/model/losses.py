@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 from torch.nn import functional as F
 
-from .network import SinglePassOutput, normal_regime_probabilities
+from .network import SinglePassOutput, student_t_regime_probabilities
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,11 +67,12 @@ def return_distribution_loss(
         / 2.0
         * torch.log1p(error.square() / (student_df * scale_squared))
     )
-    probability = normal_regime_probabilities(
+    probability = student_t_regime_probabilities(
         output.return_mean,
         variance,
         bear_threshold,
         bull_threshold,
+        student_df,
     )
     one_hot = F.one_hot(targets, num_classes=probability.shape[-1]).to(
         probability.dtype

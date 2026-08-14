@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from bnhmm import PROFILE_CHANNELS
-from bnhmm.model import normal_regime_probabilities
+from bnhmm.model import student_t_regime_probabilities
 from bnhmm.data.dataset import ProfileSequence
 from bnhmm.training import (
     BNHMMTrainer,
@@ -256,7 +256,7 @@ class TrainerTests(unittest.TestCase):
                 valid_mask=batch["valid_mask"],
                 sample=False,
             )
-        probability = normal_regime_probabilities(
+        probability = student_t_regime_probabilities(
             output.return_mean, output.return_log_variance.exp()
         )
         accuracy = (

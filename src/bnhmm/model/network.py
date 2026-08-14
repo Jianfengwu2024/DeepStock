@@ -19,21 +19,25 @@ from .bayesian import BayesianLinear, DeterministicLinear, module_kl_divergence
 from .transformer import BayesianTransformerBlock
 
 
-def normal_regime_probabilities(
+def student_t_regime_probabilities(
     mean: Tensor,
     variance: Tensor,
     bear_threshold: float = -0.005,
     bull_threshold: float = 0.005,
+    degrees_of_freedom: float = 4.0,
 ) -> Tensor:
-    """Convert a Gaussian return posterior into bear/flat/bull probabilities."""
-    scale = variance.clamp_min(1e-12).sqrt()
-    denominator = scale * 2.0**0.5
-    bear = 0.5 * (
-        1.0 + torch.erf((bear_threshold - mean) / denominator)
-    )
-    below_bull = 0.5 * (
-        1.0 + torch.erf((bull_threshold - mean) / denominator)
-    )
+    """Convert a Student-t(4) return posterior into regime probabilities."""
+    if degrees_of_freedom != 4.0:
+        raise ValueError("exact regime probabilities currently require Student-t df=4")
+    scale = torch.sqrt(variance.clamp_min(1e-12) / 2.0)
+
+    def cdf(value: Tensor | float) -> Tensor:
+        standardized = (value - mean) / scale
+        sine = standardized / torch.sqrt(standardized.square() + 4.0)
+        return 0.5 + 0.75 * sine - 0.25 * sine.pow(3)
+
+    bear = cdf(bear_threshold)
+    below_bull = cdf(bull_threshold)
     flat = (below_bull - bear).clamp_min(0.0)
     bull = (1.0 - below_bull).clamp_min(0.0)
     probability = torch.stack((bear, flat, bull), dim=-1)
@@ -514,7 +518,7 @@ class BNHMMNetwork(nn.Module):
         )
         return_mean = 0.1 * torch.tanh(return_parameters[..., 0])
         return_log_variance = torch.clamp(
-            return_parameters[..., 1] - 7.0, min=-12.0, max=-3.0
+            return_parameters[..., 1] - 8.4, min=-12.0, max=-3.0
         )
         kl = (
             module_kl_divergence(self) + self._transition_kl(transition_std)
@@ -587,7 +591,7 @@ class BNHMMNetwork(nn.Module):
                 sample=True,
             )
             return_variance = output.return_log_variance.exp()
-            probability = normal_regime_probabilities(
+            probability = student_t_regime_probabilities(
                 output.return_mean,
                 return_variance,
                 self.bear_threshold,

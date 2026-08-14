@@ -31,8 +31,9 @@ future-return posterior. The first hidden-state count defaults to 50 and cannot
 be smaller than the input channel count; the second hidden layer is always nine
 nodes.
 
-Training uses a robust Student-t return likelihood. Bearish, flat, and bullish
-probabilities are derived from the continuous posterior using -0.5% and +0.5%
+Training uses a robust Student-t return likelihood with four degrees of freedom.
+Bearish, flat, and bullish probabilities are derived from the same Student-t
+posterior using its exact CDF at -0.5% and +0.5%
 return thresholds; they are not trained as a direct three-class head.
 `predict_posterior()` uses Monte Carlo weight sampling to report expected return,
 predictive variance, and separate aleatoric and epistemic uncertainty.

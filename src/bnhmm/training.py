@@ -17,7 +17,7 @@ from .config import PROFILE_CHANNELS, REGIME_COUNT, REGIME_NAMES, REGIME_PROTOCO
 from .data.dataset import ProfileSequence
 from .model import (
     BNHMMNetwork,
-    normal_regime_probabilities,
+    student_t_regime_probabilities,
     return_distribution_loss,
 )
 
@@ -86,8 +86,8 @@ class TrainerConfig:
             raise ValueError("next-state pretraining weight cannot be negative")
         if self.pretrain_profile_weight < 0:
             raise ValueError("profile pretraining weight cannot be negative")
-        if self.student_df <= 2.0:
-            raise ValueError("Student-t degrees of freedom must exceed two")
+        if self.student_df != 4.0:
+            raise ValueError("BNHMM currently requires Student-t degrees of freedom = 4")
         if self.max_tokens_per_batch < 1:
             raise ValueError("maximum tokens per batch must be positive")
 
@@ -480,11 +480,12 @@ class BNHMMTrainer:
                     optimizer.step()
 
             tokens = int(batch["valid_mask"].sum().item())
-            probability = normal_regime_probabilities(
+            probability = student_t_regime_probabilities(
                 output.return_mean,
                 output.return_log_variance.exp(),
                 self.model.bear_threshold,
                 self.model.bull_threshold,
+                self.config.student_df,
             )
             correct = (
                 (probability.argmax(dim=-1) == batch["targets"])

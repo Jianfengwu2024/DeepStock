@@ -5,7 +5,7 @@ from .network import (
     BNHMMNetwork,
     PosteriorOutput,
     SinglePassOutput,
-    normal_regime_probabilities,
+    student_t_regime_probabilities,
 )
 
 __all__ = [
@@ -13,7 +13,7 @@ __all__ = [
     "LossBreakdown",
     "PosteriorOutput",
     "SinglePassOutput",
-    "normal_regime_probabilities",
+    "student_t_regime_probabilities",
     "return_distribution_loss",
 ]
 
