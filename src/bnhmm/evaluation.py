@@ -273,6 +273,9 @@ def evaluate_predictions(
             ),
         },
     }
+    baselines = _prediction_baselines(predictions, targets, returns)
+    report["baselines"] = baselines
+    report["validation_gate"] = _validation_gate(report, baselines)
     report["backtest"] = _backtest(predictions, policy or DecisionPolicy())
     report["series"] = {
         "signal_times": [str(item.signal_time) for item in predictions],
@@ -280,6 +283,87 @@ def evaluate_predictions(
         "standardized_residuals": standardized_residuals.tolist(),
     }
     return report
+
+
+def _prediction_baselines(
+    predictions: Sequence[PredictionRecord],
+    targets: np.ndarray,
+    returns: np.ndarray,
+) -> dict[str, object]:
+    """Calculate point-in-time baselines without crossing symbol boundaries."""
+    previous_indices: list[int] = []
+    current_indices: list[int] = []
+    latest: dict[tuple[str, int], int] = {}
+    for index, item in enumerate(predictions):
+        key = (item.symbol, item.timeframe_id)
+        previous = latest.get(key)
+        if previous is not None:
+            previous_indices.append(previous)
+            current_indices.append(index)
+        latest[key] = index
+
+    zero_rmse = float(np.sqrt(np.square(returns).mean()))
+    zero_mae = float(np.abs(returns).mean())
+    if not current_indices:
+        return {
+            "comparison_count": 0,
+            "persistence_accuracy": None,
+            "reversal_accuracy": None,
+            "prior_return_correlation": None,
+            "prior_return_rmse": None,
+            "prior_return_mae": None,
+            "zero_return_rmse": zero_rmse,
+            "zero_return_mae": zero_mae,
+        }
+
+    previous_index = np.asarray(previous_indices, dtype=np.int64)
+    current_index = np.asarray(current_indices, dtype=np.int64)
+    previous_targets = targets[previous_index]
+    current_targets = targets[current_index]
+    previous_returns = returns[previous_index]
+    current_returns = returns[current_index]
+    correlation = (
+        float(np.corrcoef(previous_returns, current_returns)[0, 1])
+        if previous_returns.std() > 0 and current_returns.std() > 0
+        else 0.0
+    )
+    return {
+        "comparison_count": int(len(current_index)),
+        "persistence_accuracy": float((previous_targets == current_targets).mean()),
+        "reversal_accuracy": float(((2 - previous_targets) == current_targets).mean()),
+        "prior_return_correlation": correlation,
+        "prior_return_rmse": float(
+            np.sqrt(np.square(current_returns - previous_returns).mean())
+        ),
+        "prior_return_mae": float(np.abs(current_returns - previous_returns).mean()),
+        "zero_return_rmse": zero_rmse,
+        "zero_return_mae": zero_mae,
+    }
+
+
+def _validation_gate(
+    report: Mapping[str, object], baselines: Mapping[str, object]
+) -> dict[str, object]:
+    residual = report["return_residual"]
+    assert isinstance(residual, Mapping)
+    checks = {
+        "beats_majority_accuracy": bool(
+            float(report["accuracy"]) > float(report["majority_baseline"])
+        ),
+        "balanced_accuracy_above_random": bool(
+            float(report["balanced_accuracy"]) > 1.0 / REGIME_COUNT + 0.01
+        ),
+        "beats_zero_return_rmse": bool(
+            float(residual["rmse"]) < float(baselines["zero_return_rmse"])
+        ),
+        "positive_return_correlation": bool(float(residual["correlation"]) > 0.0),
+        "minimum_oos_observations": bool(int(report["observation_count"]) >= 200),
+    }
+    return {
+        "passed": all(checks.values()),
+        "checks": checks,
+        "status": "passed" if all(checks.values()) else "research-only",
+    }
 
 
 def _moment_rows(

@@ -126,6 +126,11 @@ python -m bnhmm.cli walk-forward \
 Reports include out-of-sample bearish/flat/bullish predictions, Brier score, log loss,
 calibration, probability/return/standardized residuals, residual
 autocorrelation, posterior predictive checks, and policy equity/drawdown. The
+report also compares the model with majority-class, prior-state persistence,
+state reversal, zero-return, and prior-return baselines. A model remains marked
+`research-only` unless it beats the majority and zero-return baselines, has
+positive return correlation, exceeds random balanced accuracy, and contains at
+least 200 out-of-sample observations. The
 policy is a separate consumer of the model posterior. It opens or holds a long
 position on bullish signals, preserves the prior position on flat signals, and
 closes on bearish signals; it never opens short positions. Completed daily signals

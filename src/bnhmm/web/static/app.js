@@ -418,6 +418,22 @@ function renderInsight(summary) {
     title = "模型出现初步区分能力，仍需扩大样本验证";
     detail = `本次三个分类指标均明显优于随机基准，但仍需更多标的独立模型和更多滚动窗口确认稳定性。`;
   }
+  const gate = summary.validation_gate;
+  if (gate && !gate.passed) {
+    const labels = {
+      beats_majority_accuracy: "命中率未超过多数类",
+      balanced_accuracy_above_random: "均衡命中率优势不足",
+      beats_zero_return_rmse: "收益误差未优于零预测",
+      positive_return_correlation: "收益相关性非正",
+      minimum_oos_observations: "样本外数量不足 200",
+    };
+    const failed = Object.entries(gate.checks || {})
+      .filter(([, passed]) => !passed)
+      .map(([name]) => labels[name] || name);
+    level = "poor";
+    title = "未通过样本外发布门槛";
+    detail = `当前结果仅供研究，不能发布为可交易模型。未通过：${failed.join("、")}。`;
+  }
   const backtest = summary.backtest || {};
   const inactive = Number.isFinite(Number(backtest.average_abs_position))
     ? Number(backtest.average_abs_position) < 0.02
@@ -437,14 +453,20 @@ function renderMetrics(summary) {
     return;
   }
   const baseline = classificationBaseline(summary);
+  const comparisons = summary.baselines || {};
   const values = [
     ["样本外信号", formatInteger(summary.oos_predictions), "未参与训练的预测数量"],
     [`${baseline.label}状态命中率`, formatPercent(summary.accuracy), `随机约 ${formatPercent(baseline.accuracy)}，越高越好`],
     ["均衡命中率", formatPercent(summary.balanced_accuracy), `${baseline.label}种状态分别计算召回率后取平均`],
     ["多数类基线", formatPercent(summary.majority_baseline), "始终猜样本最多状态的命中率"],
+    ["状态持续基线", comparisons.persistence_accuracy == null ? "—" : formatPercent(comparisons.persistence_accuracy), "直接沿用上一交易日状态"],
+    ["状态反转基线", comparisons.reversal_accuracy == null ? "—" : formatPercent(comparisons.reversal_accuracy), "多空反转、平保持不变"],
     ["概率误差 Brier", formatNumber(summary.brier_score, 4), `0 最好，随机约 ${formatNumber(baseline.brier, 2)}`],
     ["概率损失 Log Loss", formatNumber(summary.log_loss, 4), `0 最好，随机约 ${formatNumber(baseline.logLoss, 2)}`],
     ["有序概率误差 RPS", formatNumber(summary.ranked_probability_score, 4), "越低越好，距离更远的错判惩罚更大"],
+    ["收益相关性", formatNumber(summary.return_residual?.correlation, 4), "预测收益与实际收益的样本外相关性"],
+    ["收益 RMSE", formatPercent(summary.return_residual?.rmse), `零收益基线 ${formatPercent(comparisons.zero_return_rmse)}`],
+    ["发布验证", summary.validation_gate ? (summary.validation_gate.passed ? "通过" : "未通过") : "未评估", "必须同时通过分类、收益误差、相关性和样本量门槛"],
     ["模型策略收益", formatPercent(summary.backtest?.total_return), "已扣除设定的交易成本"],
     ["最大回撤", formatPercent(Math.abs(Number(summary.backtest?.max_drawdown))), "历史峰值后的最大跌幅"],
   ];

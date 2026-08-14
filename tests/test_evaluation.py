@@ -64,6 +64,11 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(report["class_support"], [4, 4, 4])
         self.assertEqual(report["confusion_matrix"], (np.eye(3, dtype=int) * 4).tolist())
         self.assertLess(report["ranked_probability_score"], 0.1)
+        self.assertEqual(report["baselines"]["comparison_count"], 11)
+        self.assertAlmostEqual(report["baselines"]["persistence_accuracy"], 0.0)
+        self.assertAlmostEqual(report["baselines"]["reversal_accuracy"], 3 / 11)
+        self.assertIn("beats_zero_return_rmse", report["validation_gate"]["checks"])
+        self.assertFalse(report["validation_gate"]["passed"])
 
     def test_uncertainty_reduces_position(self) -> None:
         item = prediction(1, 2, (0.05, 0.1, 0.85))
