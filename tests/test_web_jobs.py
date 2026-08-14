@@ -40,6 +40,10 @@ class WebJobTests(unittest.TestCase):
             WalkForwardJobRequest(sequence_stride=2)
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(state_timeframe="mixed")
+        self.assertEqual(WalkForwardJobRequest(sequence_length=2).sequence_length, 2)
+        self.assertEqual(WalkForwardJobRequest(sequence_length=20).sequence_length, 20)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(sequence_length=21)
 
     def test_command_contains_model_and_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(

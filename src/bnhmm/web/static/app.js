@@ -59,6 +59,7 @@ function syncModelConstraints() {
   const velocityField = document.querySelector("[name=velocity_bins]");
   const latentField = document.querySelector("[name=latent_states]");
   const transitionRankField = document.querySelector("[name=transition_rank]");
+  const sequenceLengthField = document.querySelector("[name=sequence_length]");
   const widthField = document.querySelector("[name=d_model]");
   const headsField = document.querySelector("[name=heads]");
   const velocityBins = Number(velocityField.value || 3);
@@ -76,6 +77,10 @@ function syncModelConstraints() {
   if (channelCount) {
     channelCount.textContent = `4 + ${velocityBins}² = ${minimum} 通道`;
   }
+
+  const memoryLength = Number(sequenceLengthField.value || 5);
+  const memorySpec = document.querySelector("#memory-length-spec");
+  if (memorySpec) memorySpec.textContent = `最近 ${memoryLength} 个交易日`;
 
   const width = Number(widthField.value);
   const heads = Number(headsField.value);
@@ -578,7 +583,7 @@ function applySymbols() {
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
-  for (const name of ["velocity_bins", "latent_states", "transition_rank", "d_model", "heads"]) {
+  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "d_model", "heads"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);
