@@ -33,8 +33,8 @@ Bayesian base transition matrix plus a context-dependent transition delta. A
 fixed nine-node Bayesian hidden layer then maps only the filtered latent state
 into three Dirichlet concentrations ordered as bear, flat, and bull. The first
 hidden-state count is configurable but cannot fall below the 14 input channels;
-the second hidden layer is always nine nodes. Forward returns below -0.5% are bearish,
-returns in `[-0.5%, +0.5%]` are flat, and returns above +0.5% are bullish.
+the second hidden layer is always nine nodes. A configurable symmetric threshold
+(0.5% by default) separates bearish, flat, and bullish forward returns.
 
 Monte Carlo prediction returns:
 

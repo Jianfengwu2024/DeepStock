@@ -96,7 +96,12 @@ def _train(args: argparse.Namespace) -> int:
     source = DuckDBBarSource(args.duckdb_path)
     bars = source.fetch(args.symbol, "1m", args.start, args.end)
     states = PriceVolumeProfileBuilder(profile_config).build(bars)
-    label_config = LabelConfig(forward_sessions=args.forward_sessions)
+    flat_threshold = args.flat_threshold_percent / 100.0
+    label_config = LabelConfig(
+        forward_sessions=args.forward_sessions,
+        bear_threshold=-flat_threshold,
+        bull_threshold=flat_threshold,
+    )
     observations = ProfileLabelBuilder(label_config).build(states)
     sessions = np.unique(observations.signal_times.astype("datetime64[D]"))
     if len(sessions) < 10:
@@ -115,6 +120,8 @@ def _train(args: argparse.Namespace) -> int:
         profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
         transition_rank=args.transition_rank,
+        bear_threshold=label_config.bear_threshold,
+        bull_threshold=label_config.bull_threshold,
         feature_mode=args.feature_mode,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
@@ -267,7 +274,12 @@ def _walk_forward(args: argparse.Namespace) -> int:
         velocity_clip=args.velocity_clip,
         velocity_smoothing=args.velocity_smoothing,
     )
-    label_config = LabelConfig(forward_sessions=args.forward_sessions)
+    flat_threshold = args.flat_threshold_percent / 100.0
+    label_config = LabelConfig(
+        forward_sessions=args.forward_sessions,
+        bear_threshold=-flat_threshold,
+        bull_threshold=flat_threshold,
+    )
     for symbol in symbols:
         bars = source.fetch(symbol, "1m", args.start, args.end)
         states = PriceVolumeProfileBuilder(profile_config).build(bars)
@@ -295,6 +307,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
         profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
         transition_rank=args.transition_rank,
+        bear_threshold=label_config.bear_threshold,
+        bull_threshold=label_config.bull_threshold,
         feature_mode=args.feature_mode,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
@@ -476,6 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--deterministic-training", action="store_true")
     train.add_argument("--train-fraction", type=float, default=0.8)
     train.add_argument("--forward-sessions", type=int, default=1)
+    train.add_argument("--flat-threshold-percent", type=float, default=0.5)
     train.add_argument("--bin-width-bps", type=float, default=10.0)
     train.add_argument("--max-profile-bins", type=int, default=512)
     train.add_argument("--normalization-lookback-sessions", type=int, default=10)
@@ -525,6 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     walk.add_argument("--deterministic-training", action="store_true")
     walk.add_argument("--forward-sessions", type=int, default=1)
+    walk.add_argument("--flat-threshold-percent", type=float, default=0.5)
     walk.add_argument("--minimum-train-sessions", type=int, default=252)
     walk.add_argument("--tuning-sessions", type=int, default=60)
     walk.add_argument("--test-sessions", type=int, default=60)

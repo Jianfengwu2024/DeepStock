@@ -120,6 +120,13 @@ class WebJobTests(unittest.TestCase):
         self.assertEqual(request.sequence_stride, 1)
         self.assertEqual(request.sequence_protocol, "fixed-recent-endpoint-v1")
         self.assertEqual(request.transition_rank, 4)
+        self.assertEqual(request.flat_threshold_percent, 0.5)
+        self.assertIn("--flat-threshold-percent", command)
+
+        custom_threshold = WalkForwardJobRequest(flat_threshold_percent=0.2)
+        custom_command = build_command(custom_threshold, Path("/tmp/result"))
+        threshold_index = custom_command.index("--flat-threshold-percent") + 1
+        self.assertEqual(custom_command[threshold_index], "0.2")
 
         deterministic = build_command(
             request.model_copy(update={"deterministic_training": True}),

@@ -11,7 +11,7 @@ const state = {
 };
 
 const numberFields = new Set([
-  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions",
+  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions", "flat_threshold_percent",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
   "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
   "minimum_sequence_length", "d_model", "latent_states", "transition_rank", "motif_dim", "heads", "layers",
@@ -60,6 +60,7 @@ function syncModelConstraints() {
   const latentField = document.querySelector("[name=latent_states]");
   const transitionRankField = document.querySelector("[name=transition_rank]");
   const sequenceLengthField = document.querySelector("[name=sequence_length]");
+  const flatThresholdField = document.querySelector("[name=flat_threshold_percent]");
   const widthField = document.querySelector("[name=d_model]");
   const headsField = document.querySelector("[name=heads]");
   const velocityBins = Number(velocityField.value || 3);
@@ -81,6 +82,12 @@ function syncModelConstraints() {
   const memoryLength = Number(sequenceLengthField.value || 5);
   const memorySpec = document.querySelector("#memory-length-spec");
   if (memorySpec) memorySpec.textContent = `最近 ${memoryLength} 个交易日`;
+
+  const flatThreshold = Number(flatThresholdField.value || 0.5);
+  const flatSpec = document.querySelector("#flat-threshold-spec");
+  if (flatSpec) {
+    flatSpec.textContent = `-${flatThreshold.toFixed(2)}% ～ +${flatThreshold.toFixed(2)}%`;
+  }
 
   const width = Number(widthField.value);
   const heads = Number(headsField.value);
@@ -583,7 +590,7 @@ function applySymbols() {
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
-  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "d_model", "heads"]) {
+  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "flat_threshold_percent", "d_model", "heads"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);

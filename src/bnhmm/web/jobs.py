@@ -48,6 +48,7 @@ class WalkForwardJobRequest(BaseModel):
     pretrain_mask_probability: float = Field(0.15, gt=0.0, lt=1.0)
     deterministic_training: bool = False
     forward_sessions: int = Field(1, ge=1, le=60)
+    flat_threshold_percent: float = Field(0.5, gt=0.0, le=10.0)
     minimum_train_sessions: int = Field(252, ge=10)
     tuning_sessions: int = Field(60, ge=2)
     test_sessions: int = Field(60, ge=1)
@@ -238,6 +239,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.pretrain_mask_probability),
         "--forward-sessions",
         str(request.forward_sessions),
+        "--flat-threshold-percent",
+        str(request.flat_threshold_percent),
         "--minimum-train-sessions",
         str(request.minimum_train_sessions),
         "--tuning-sessions",
