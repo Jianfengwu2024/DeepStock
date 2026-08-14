@@ -25,6 +25,7 @@ class BayesianLinear(nn.Module):
         *,
         bias: bool = True,
         prior_std: float = 1.0,
+        posterior_rho_init: float = -6.0,
     ) -> None:
         super().__init__()
         if in_features < 1 or out_features < 1:
@@ -34,6 +35,7 @@ class BayesianLinear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.prior_std = float(prior_std)
+        self.posterior_rho_init = float(posterior_rho_init)
         self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
         self.weight_rho = nn.Parameter(torch.empty(out_features, in_features))
         if bias:
@@ -47,10 +49,10 @@ class BayesianLinear(nn.Module):
     def reset_parameters(self) -> None:
         bound = 1.0 / math.sqrt(self.in_features)
         nn.init.uniform_(self.weight_mu, -bound, bound)
-        nn.init.constant_(self.weight_rho, -4.5)
+        nn.init.constant_(self.weight_rho, self.posterior_rho_init)
         if self.bias_mu is not None:
             nn.init.uniform_(self.bias_mu, -bound, bound)
-            nn.init.constant_(self.bias_rho, -4.5)
+            nn.init.constant_(self.bias_rho, self.posterior_rho_init)
 
     @staticmethod
     def _sample(mu: Tensor, rho: Tensor, sample: bool) -> Tensor:

@@ -398,9 +398,11 @@ class BNHMMNetwork(nn.Module):
         )
         transition = torch.eye(latent_states) * 2.0
         self.transition_mu = nn.Parameter(transition)
-        self.transition_rho = nn.Parameter(torch.full_like(transition, -4.5))
+        self.transition_rho = nn.Parameter(torch.full_like(transition, -6.0))
         self.output_hidden = BayesianLinear(latent_states, OUTPUT_HIDDEN_STATES)
         self.return_distribution = BayesianLinear(OUTPUT_HIDDEN_STATES, 2)
+        nn.init.zeros_(self.return_distribution.weight_mu)
+        nn.init.zeros_(self.return_distribution.bias_mu)
         pretraining_dim = d_model + latent_states
         self.masked_state_reconstruction = nn.Linear(
             pretraining_dim, state_feature_dim

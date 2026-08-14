@@ -125,6 +125,20 @@ class BNHMMNetworkTests(unittest.TestCase):
 
         self.assertGreater(float(far_loss), float(near_loss))
 
+    def test_continuous_head_starts_centered_with_low_sampling_noise(self) -> None:
+        self.assertTrue(torch.equal(
+            self.model.return_distribution.weight_mu,
+            torch.zeros_like(self.model.return_distribution.weight_mu),
+        ))
+        self.assertTrue(torch.equal(
+            self.model.return_distribution.bias_mu,
+            torch.zeros_like(self.model.return_distribution.bias_mu),
+        ))
+        posterior_std = torch.nn.functional.softplus(
+            self.model.return_distribution.weight_rho
+        )
+        self.assertLess(float(posterior_std.max()), 0.003)
+
     def test_future_profile_does_not_change_past_output(self) -> None:
         self.model.eval()
         original = profiles(batch=1)
