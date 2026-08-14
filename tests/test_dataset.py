@@ -90,15 +90,18 @@ class ProfileDatasetTests(unittest.TestCase):
     def test_sequence_windows_include_the_tail_once(self) -> None:
         states = PriceVolumeProfileBuilder(
             ProfileConfig(state_timeframes=("60m", "1d"))
-        ).build(synthetic_sessions(15))
+        ).build(synthetic_sessions(25))
         observations = ProfileLabelBuilder().build(states)
         windows = SequenceWindowBuilder(
-            SequenceConfig(length=7, stride=5, minimum_length=4)
+            SequenceConfig(length=5, stride=3, minimum_length=2)
         ).build(observations)
 
         self.assertTrue(windows)
-        self.assertLessEqual(max(map(len, windows)), 7)
+        self.assertTrue(all(len(window) == 5 for window in windows))
         self.assertEqual(windows[-1].signal_times[-1], observations.signal_times[-1])
+        self.assertEqual(
+            len({window.signal_times[-1] for window in windows}), len(windows)
+        )
 
 
 if __name__ == "__main__":

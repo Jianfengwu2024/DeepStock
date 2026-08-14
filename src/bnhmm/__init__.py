@@ -8,6 +8,7 @@ from .config import (
     OUTPUT_HIDDEN_STATES,
     PROFILE_CHANNELS,
     PROFILE_PROTOCOL,
+    SEQUENCE_PROTOCOL,
     BNHMMConfig,
     LabelConfig,
     ProfileConfig,
@@ -32,6 +33,7 @@ __all__ = [
     "ProfileState",
     "PROFILE_CHANNELS",
     "PROFILE_PROTOCOL",
+    "SEQUENCE_PROTOCOL",
     "OUTPUT_HIDDEN_STATES",
     "REGIME_COUNT",
     "REGIME_NAMES",
@@ -43,5 +45,5 @@ __all__ = [
     "SequenceWindowBuilder",
 ]
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 

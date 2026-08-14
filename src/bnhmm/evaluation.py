@@ -78,7 +78,7 @@ def infer_sequences(
     device: str | torch.device,
     mc_samples: int = 16,
 ) -> list[PredictionRecord]:
-    """Infer overlapping windows and keep the version with the most context."""
+    """Predict one next-session return from each fixed recent-state window."""
     selected: dict[tuple[str, int, int], PredictionRecord] = {}
     for sequence in sequences:
         batch = collate_profile_sequences([sequence])
@@ -91,7 +91,7 @@ def infer_sequences(
             valid_mask=batch["valid_mask"].to(device),
             mc_samples=mc_samples,
         )
-        for index in range(len(sequence)):
+        for index in (len(sequence) - 1,):
             signal_time = sequence.signal_times[index]
             timeframe_id = int(sequence.timeframe_ids[index])
             key = (sequence.symbol, int(signal_time.astype(np.int64)), timeframe_id)
@@ -127,9 +127,7 @@ def infer_sequences(
                 ),
                 context_length=index + 1,
             )
-            previous = selected.get(key)
-            if previous is None or record.context_length > previous.context_length:
-                selected[key] = record
+            selected[key] = record
     return sorted(
         selected.values(), key=lambda item: (item.signal_time, item.symbol, item.timeframe_id)
     )

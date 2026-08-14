@@ -65,10 +65,13 @@ class WalkForwardJobRequest(BaseModel):
     ] = (
         "phase-space-joint-return-v6"
     )
+    sequence_protocol: Literal[
+        "fixed-recent-endpoint-v1", "legacy-overlapping-window-v1"
+    ] = "fixed-recent-endpoint-v1"
     state_timeframe: Literal["daily", "mixed"] = "daily"
-    sequence_length: int = Field(128, ge=8, le=2048)
-    sequence_stride: int = Field(64, ge=1, le=2048)
-    minimum_sequence_length: int = Field(32, ge=2, le=2048)
+    sequence_length: int = Field(5, ge=2, le=2048)
+    sequence_stride: int = Field(1, ge=1, le=2048)
+    minimum_sequence_length: int = Field(2, ge=2, le=2048)
     d_model: int = Field(96, ge=8, le=2048)
     latent_states: int = Field(50, ge=1, le=512)
     feature_mode: Literal[
@@ -110,6 +113,7 @@ class WalkForwardJobRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_relationships(self, info: ValidationInfo) -> "WalkForwardJobRequest":
+        legacy = bool((info.context or {}).get("legacy_job"))
         if self.end <= self.start:
             raise ValueError("end must be later than start")
         if self.minimum_train_sessions <= self.tuning_sessions:
@@ -118,12 +122,13 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("minimum_sequence_length cannot exceed sequence_length")
         if self.sequence_stride > self.sequence_length:
             raise ValueError("sequence_stride cannot exceed sequence_length")
+        if not legacy and self.sequence_length > 20:
+            raise ValueError("recent context cannot exceed twenty trading states")
         if self.d_model % self.heads:
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
             raise ValueError("velocity_bins must be odd")
         profile_channels = 4 + self.velocity_bins**2
-        legacy = bool((info.context or {}).get("legacy_job"))
         if self.feature_mode == "legacy-entangled" and not legacy:
             raise ValueError("legacy-entangled is reserved for historical jobs")
         if not legacy and self.latent_states < profile_channels:
@@ -513,6 +518,13 @@ class JobManager:
                     and "profile_protocol" not in request_payload
                 ):
                     request_payload["profile_protocol"] = "legacy-fixed-bins"
+                if (
+                    isinstance(request_payload, dict)
+                    and "sequence_protocol" not in request_payload
+                ):
+                    request_payload["sequence_protocol"] = (
+                        "legacy-overlapping-window-v1"
+                    )
                 if (
                     isinstance(request_payload, dict)
                     and "training_scope" not in request_payload

@@ -16,6 +16,7 @@ from .config import (
     REGIME_NAMES,
     REGIME_PROTOCOL,
     PROFILE_PROTOCOL,
+    SEQUENCE_PROTOCOL,
     LabelConfig,
     ProfileConfig,
     SequenceConfig,
@@ -160,6 +161,7 @@ def _train(args: argparse.Namespace) -> int:
         "velocity_smoothing": args.velocity_smoothing,
         "feature_mode": args.feature_mode,
         "regime_protocol": _regime_metadata(label_config),
+        "sequence_protocol": SEQUENCE_PROTOCOL,
         "bin_width_bps": args.bin_width_bps,
         "maximum_profile_bins": max((len(state.distribution) for state in states), default=0),
         "state_timeframe": args.state_timeframe,
@@ -401,6 +403,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         },
         "trainer_config": asdict(trainer_config),
         "sequence_config": asdict(sequence_config),
+        "sequence_protocol": SEQUENCE_PROTOCOL,
         "walk_forward_config": asdict(walk_config),
         "data": data_summary,
         "per_symbol": per_symbol,
@@ -488,9 +491,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="daily",
         help="daily builds one state from each full 1m session; mixed also builds 60m states",
     )
-    train.add_argument("--sequence-length", type=int, default=128)
-    train.add_argument("--sequence-stride", type=int, default=64)
-    train.add_argument("--minimum-sequence-length", type=int, default=32)
+    train.add_argument("--sequence-length", type=int, default=5)
+    train.add_argument("--sequence-stride", type=int, default=1)
+    train.add_argument("--minimum-sequence-length", type=int, default=2)
     train.add_argument("--d-model", type=int, default=96)
     train.add_argument("--latent-states", type=int, default=50)
     train.add_argument("--motif-dim", type=int, default=32)
@@ -541,9 +544,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="daily",
         help="daily builds one state from each full 1m session; mixed also builds 60m states",
     )
-    walk.add_argument("--sequence-length", type=int, default=128)
-    walk.add_argument("--sequence-stride", type=int, default=64)
-    walk.add_argument("--minimum-sequence-length", type=int, default=32)
+    walk.add_argument("--sequence-length", type=int, default=5)
+    walk.add_argument("--sequence-stride", type=int, default=1)
+    walk.add_argument("--minimum-sequence-length", type=int, default=2)
     walk.add_argument("--d-model", type=int, default=96)
     walk.add_argument("--latent-states", type=int, default=50)
     walk.add_argument("--motif-dim", type=int, default=32)

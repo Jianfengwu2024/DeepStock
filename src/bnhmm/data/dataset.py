@@ -227,20 +227,15 @@ class SequenceWindowBuilder:
 
     def build(self, observations: ProfileObservations) -> list[ProfileSequence]:
         size = len(observations)
-        if size < self.config.minimum_length:
+        if size < self.config.length:
             return []
-        starts = list(range(0, max(size - self.config.minimum_length + 1, 1), self.config.stride))
-        tail_start = max(0, size - self.config.length)
-        if not starts or starts[-1] != tail_start:
-            starts.append(tail_start)
+        ends = list(range(self.config.length, size + 1, self.config.stride))
+        if ends[-1] != size:
+            ends.append(size)
 
         result: list[ProfileSequence] = []
-        seen: set[tuple[int, int]] = set()
-        for start in starts:
-            end = min(start + self.config.length, size)
-            if end - start < self.config.minimum_length or (start, end) in seen:
-                continue
-            seen.add((start, end))
+        for end in ends:
+            start = end - self.config.length
             section = slice(start, end)
             result.append(
                 ProfileSequence(

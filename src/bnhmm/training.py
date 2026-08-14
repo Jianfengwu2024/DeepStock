@@ -40,7 +40,7 @@ class ModelConfig:
     layers: int = 3
     feedforward_dim: int = 192
     dropout: float = 0.1
-    max_sequence_length: int = 128
+    max_sequence_length: int = 5
 
     def build(self, *, seed: int | None = None) -> BNHMMNetwork:
         if seed is None:
@@ -127,6 +127,7 @@ def collate_profile_sequences(items: Sequence[ProfileSequence]) -> dict[str, Ten
     targets = torch.zeros(batch, sequence, dtype=torch.long)
     forward_returns = torch.zeros(batch, sequence, dtype=torch.float32)
     valid_mask = torch.zeros(batch, sequence, dtype=torch.bool)
+    target_mask = torch.zeros(batch, sequence, dtype=torch.bool)
     for index, item in enumerate(items):
         if len(item.profiles) != len(item) or len(item.bin_coordinates) != len(item):
             raise ValueError("profile arrays and coordinates must match sequence length")
@@ -153,6 +154,7 @@ def collate_profile_sequences(items: Sequence[ProfileSequence]) -> dict[str, Ten
             item.forward_returns.astype(np.float32)
         )
         valid_mask[index, :length] = True
+        target_mask[index, length - 1] = True
     return {
         "profiles": profiles,
         "bin_coordinates": bin_coordinates,
@@ -162,6 +164,7 @@ def collate_profile_sequences(items: Sequence[ProfileSequence]) -> dict[str, Ten
         "targets": targets,
         "forward_returns": forward_returns,
         "valid_mask": valid_mask,
+        "target_mask": target_mask,
     }
 
 
@@ -465,7 +468,7 @@ class BNHMMTrainer:
                     output,
                     batch["forward_returns"],
                     batch["targets"],
-                    valid_mask=batch["valid_mask"],
+                    valid_mask=batch["target_mask"],
                     kl_weight=self.config.kl_weight * kl_scale,
                     brier_weight=self.config.brier_weight,
                     ordinal_weight=self.config.ordinal_weight,
@@ -479,7 +482,7 @@ class BNHMMTrainer:
                     clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
                     optimizer.step()
 
-            tokens = int(batch["valid_mask"].sum().item())
+            tokens = int(batch["target_mask"].sum().item())
             probability = student_t_regime_probabilities(
                 output.return_mean,
                 output.return_log_variance.exp(),
@@ -489,7 +492,7 @@ class BNHMMTrainer:
             )
             correct = (
                 (probability.argmax(dim=-1) == batch["targets"])
-                & batch["valid_mask"]
+                & batch["target_mask"]
             ).sum()
             totals["loss"] += float(loss.total.detach()) * tokens
             predictive_loss = (
@@ -522,7 +525,7 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 8,
+            "format_version": 9,
             "regime_protocol": REGIME_PROTOCOL,
             "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),

@@ -20,7 +20,10 @@ volume divides minute volume by prior ten-day mean daily volume divided by 240.
 Hourly states remain an explicit comparison mode only.
 
 The model core uses deterministic price motifs and a deterministic causal
-Transformer backbone. Relative volume and paired joint velocity use gated
+Transformer backbone. Its default memory is a fixed rolling window of the five
+most recent completed daily states. Each window predicts only the next-session
+return attached to its final state; training never supervises truncated prefixes
+or selects a longer context at inference. Relative volume and paired joint velocity use gated
 residual motif branches initialized near zero, so adding noisy features cannot
 immediately overwhelm the price baseline. Four feature modes support controlled
 ablation. Bayesian layers begin at the emission model and feed a configurable

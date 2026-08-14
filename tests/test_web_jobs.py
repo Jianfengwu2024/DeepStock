@@ -62,6 +62,9 @@ class WebJobTests(unittest.TestCase):
         self.assertEqual(request.training_scope, "per-symbol")
         self.assertEqual(request.profile_protocol, "phase-space-joint-return-v6")
         self.assertEqual(request.feature_mode, "gated-full")
+        self.assertEqual(request.sequence_length, 5)
+        self.assertEqual(request.sequence_stride, 1)
+        self.assertEqual(request.sequence_protocol, "fixed-recent-endpoint-v1")
 
         deterministic = build_command(
             request.model_copy(update={"deterministic_training": True}),
@@ -173,6 +176,7 @@ class WebJobTests(unittest.TestCase):
             request = WalkForwardJobRequest().model_dump(mode="json")
             request.pop("state_timeframe")
             request.pop("profile_protocol")
+            request.pop("sequence_protocol")
             request.pop("training_scope")
             request.pop("latent_states")
             request.pop("feature_mode")
@@ -194,6 +198,9 @@ class WebJobTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.request.state_timeframe, "mixed")
             self.assertEqual(loaded.request.profile_protocol, "legacy-fixed-bins")
+            self.assertEqual(
+                loaded.request.sequence_protocol, "legacy-overlapping-window-v1"
+            )
             self.assertEqual(loaded.request.training_scope, "shared-legacy")
             self.assertEqual(loaded.request.latent_states, 10)
             self.assertEqual(loaded.request.feature_mode, "legacy-entangled")

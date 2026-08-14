@@ -88,9 +88,7 @@
             <label>联合速度每轴档数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
             <label>速度标准差截断<input name="velocity_clip" type="number" min="0.5" max="20" step="0.5"></label>
             <label>速度分布平滑<input name="velocity_smoothing" type="number" min="0" max="10" step="0.05"></label>
-            <label>序列长度<input name="sequence_length" type="number"></label>
-            <label>序列步长<input name="sequence_stride" type="number"></label>
-            <label>最短序列<input name="minimum_sequence_length" type="number"></label>
+            <label>近期上下文（日）<input name="sequence_length" type="number" min="2" max="20"></label>
             <label>模型宽度<input name="d_model" type="number"></label>
             <label>隐藏态节点数（可配置）<input name="latent_states" type="number" min="13" max="512"></label>
             <label>输出前隐藏层（固定）<input type="number" value="9" disabled></label>

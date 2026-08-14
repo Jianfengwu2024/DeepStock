@@ -47,8 +47,10 @@ def sequence(seed: int, length: int = 8, bins: int = 16) -> ProfileSequence:
     )
 
 
-def learnable_sequence(symbol: str, length: int = 25) -> ProfileSequence:
-    targets = np.arange(length, dtype=np.int64) % 3
+def learnable_sequence(
+    symbol: str, length: int = 25, target_offset: int = 0
+) -> ProfileSequence:
+    targets = (np.arange(length, dtype=np.int64) + target_offset) % 3
     profiles: list[np.ndarray] = []
     coordinates: list[np.ndarray] = []
     state_features = np.zeros((length, 9), dtype=np.float32)
@@ -217,9 +219,15 @@ class TrainerTests(unittest.TestCase):
         self.assertTrue(batch["profile_mask"][0, 0].any())
         self.assertFalse(batch["profile_mask"][1, 5:].any())
         self.assertFalse(batch["valid_mask"][1, 5:].any())
+        self.assertEqual(int(batch["target_mask"].sum()), 2)
+        self.assertTrue(batch["target_mask"][0, 7])
+        self.assertTrue(batch["target_mask"][1, 4])
 
     def test_clear_three_state_patterns_can_be_overfit(self) -> None:
-        sequences = [learnable_sequence(str(index)) for index in range(4)]
+        sequences = [
+            learnable_sequence(str(index), target_offset=index % 3)
+            for index in range(12)
+        ]
         model = ModelConfig(
             max_profile_bins=32,
             d_model=16,
@@ -234,7 +242,7 @@ class TrainerTests(unittest.TestCase):
             model,
             TrainerConfig(
                 epochs=200,
-                batch_size=4,
+                batch_size=12,
                 learning_rate=0.003,
                 weight_decay=0.0,
                 kl_weight=0.0,
@@ -260,7 +268,7 @@ class TrainerTests(unittest.TestCase):
             output.return_mean, output.return_log_variance.exp()
         )
         accuracy = (
-            (probability.argmax(dim=-1) == batch["targets"])[batch["valid_mask"]]
+            (probability.argmax(dim=-1) == batch["targets"])[batch["target_mask"]]
             .float()
             .mean()
         )

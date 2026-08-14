@@ -5,12 +5,14 @@ import unittest
 from bnhmm import (
     PROFILE_CHANNELS,
     PROFILE_PROTOCOL,
+    SEQUENCE_PROTOCOL,
     OUTPUT_HIDDEN_STATES,
     REGIME_NAMES,
     REGIME_PROTOCOL,
     BNHMMConfig,
     LabelConfig,
     ProfileConfig,
+    SequenceConfig,
 )
 
 
@@ -48,6 +50,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.velocity_smoothing, 0.25)
         self.assertEqual(config.profile_channels, PROFILE_CHANNELS)
         self.assertEqual(PROFILE_PROTOCOL, "phase-space-joint-return-v6")
+        self.assertEqual(SEQUENCE_PROTOCOL, "fixed-recent-endpoint-v1")
         with self.assertRaises(ValueError):
             ProfileConfig(velocity_bins=8)
 
@@ -55,6 +58,12 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             LabelConfig(bear_threshold=0.01, bull_threshold=0.005)
         self.assertEqual(LabelConfig().thresholds, (-0.005, 0.005))
+
+    def test_sequence_defaults_to_five_recent_trading_days(self) -> None:
+        config = SequenceConfig()
+        self.assertEqual((config.length, config.stride), (5, 1))
+        with self.assertRaises(ValueError):
+            SequenceConfig(length=21)
 
 
 if __name__ == "__main__":

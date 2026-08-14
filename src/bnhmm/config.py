@@ -18,6 +18,7 @@ REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
 REGIME_PROTOCOL = "continuous-return-posterior-v2"
 PROFILE_PROTOCOL = "phase-space-joint-return-v6"
+SEQUENCE_PROTOCOL = "fixed-recent-endpoint-v1"
 DEFAULT_VELOCITY_BINS = 3
 PROFILE_CHANNELS = 4 + DEFAULT_VELOCITY_BINS**2
 OUTPUT_HIDDEN_STATES = 9
@@ -97,13 +98,15 @@ class LabelConfig:
 
 @dataclass(frozen=True, slots=True)
 class SequenceConfig:
-    length: int = 128
-    stride: int = 64
-    minimum_length: int = 32
+    length: int = 5
+    stride: int = 1
+    minimum_length: int = 2
 
     def __post_init__(self) -> None:
         if self.length < 2:
             raise ValueError("sequence length must be at least two")
+        if self.length > 20:
+            raise ValueError("sequence length cannot exceed twenty trading states")
         if self.stride < 1:
             raise ValueError("sequence stride must be positive")
         if not 2 <= self.minimum_length <= self.length:
