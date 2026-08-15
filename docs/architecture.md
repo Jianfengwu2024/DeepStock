@@ -9,17 +9,19 @@
    price bin carries relative volume plus sample-weighted, smoothed price-velocity
    and volume-velocity distributions. Small source gaps do not discard the full day; hourly states
    are opt-in only.
-3. The model layer encodes price motifs as the backbone. Volume and velocity
-   families enter through independently gated residual branches initialized near
-   zero. It then applies a causal Transformer and a conditional 20-state transition model.
+3. The model layer encodes price motifs as the backbone and uses relative volume
+   as its selected auxiliary branch. Ten-minute joint velocity remains available
+   only for controlled ablation. It then applies a causal Transformer and a
+   conditional 20-state transition model.
    The hidden-state count is configurable and may not be smaller than the profile
    channel count.
    Every symbol owns a complete model instance; Transformer weights, hidden-state
    transitions, evidence heads, and return moments are never shared across symbols.
 4. The filtered latent state feeds a Bayesian standardized Student-t return
    posterior and a direct four-state evidence head. The evidence updates a
-   training-only class prior. The two heads are trained with a consistency loss,
-   and both aleatoric and epistemic uncertainty remain explicit.
+   training-only class prior. Brier, ordinal, and cross-head consistency losses
+   are disabled after strict ablation; both aleatoric and epistemic uncertainty
+   remain explicit.
 5. The long-only policy targets half size on weak-bull, full size on strong-bull,
    and closes on either bearish state independently of the model.
 6. Walk-forward evaluation publishes only point-in-time-correct predictions.
@@ -67,9 +69,11 @@ and carry a bin mask. A 512-bin cap keeps the 10-basis-point scale unchanged;
 extreme overflow is deposited into edge bins and marked in state metadata.
 
 Price coordinates use log returns relative to previous close. Relative minute
-volume is divided by prior ten-day mean daily volume divided by 240. Price
-velocity is the one-minute log-price difference; volume velocity is the
-difference of `log1p(relative_volume)`. Both are standardized from the same ten
-historical sessions and discretized into conditional histograms at each price
-bin. Clock time, acceleration, and hand-built direction-times-volume features
-are intentionally absent.
+volume is divided by prior ten-day mean daily volume divided by 240. Contiguous
+minutes are grouped into non-overlapping 10-minute blocks separately on each
+side of the lunch break. Mean log price and mean relative volume are calculated
+per block; price and `log1p(relative_volume)` velocities use the same adjacent
+block pair, the same midpoint price anchor, and per-minute units. Both are
+standardized from identically constructed blocks in the preceding ten sessions.
+Clock time, acceleration, and hand-built direction-times-volume features are
+intentionally absent.

@@ -11,6 +11,7 @@ from bnhmm.model import (
     student_t_regime_probabilities,
     return_distribution_loss,
 )
+from bnhmm.training import ModelConfig, TrainerConfig
 
 
 def profiles(
@@ -74,7 +75,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(
             torch.allclose(
                 self.model.tokenizer.effective_auxiliary_gates(),
-                torch.tensor([0.0, 0.75]),
+                torch.tensor([0.75, 0.0]),
                 atol=1e-6,
             )
         )
@@ -82,13 +83,13 @@ class BNHMMNetworkTests(unittest.TestCase):
     def test_auxiliary_warmup_forces_enabled_branches_to_full_weight(self) -> None:
         self.model.tokenizer.set_auxiliary_warmup(True)
         self.assertEqual(
-            self.model.tokenizer.effective_auxiliary_gates().tolist(), [0.0, 1.0]
+            self.model.tokenizer.effective_auxiliary_gates().tolist(), [1.0, 0.0]
         )
         self.model.tokenizer.set_auxiliary_warmup(False)
         gates = self.model.tokenizer.effective_auxiliary_gates().detach()
-        self.assertEqual(float(gates[0]), 0.0)
-        self.assertGreaterEqual(float(gates[1]), 0.25)
-        self.assertLess(float(gates[1]), 1.0)
+        self.assertGreaterEqual(float(gates[0]), 0.25)
+        self.assertLess(float(gates[0]), 1.0)
+        self.assertEqual(float(gates[1]), 0.0)
 
     def test_posterior_separates_uncertainty(self) -> None:
         values = profiles(batch=1)
@@ -138,6 +139,60 @@ class BNHMMNetworkTests(unittest.TestCase):
             self.model.transition_mu.shape,
             (self.model.latent_states, self.model.latent_states),
         )
+
+    def test_production_defaults_match_strict_ablation(self) -> None:
+        model = ModelConfig()
+        trainer = TrainerConfig()
+
+        self.assertEqual(model.feature_mode, "price-volume")
+        self.assertEqual(trainer.brier_weight, 0.0)
+        self.assertEqual(trainer.ordinal_weight, 0.0)
+        self.assertEqual(trainer.consistency_weight, 0.0)
+
+    def test_ablation_switches_remove_trainable_paths(self) -> None:
+        full = BNHMMNetwork(
+            max_profile_bins=32,
+            d_model=24,
+            motif_dim=8,
+            heads=4,
+            layers=1,
+            feedforward_dim=48,
+            max_sequence_length=6,
+        )
+        reduced = BNHMMNetwork(
+            max_profile_bins=32,
+            feature_mode="price-only",
+            include_metadata=False,
+            use_latent_filter=False,
+            conditional_transition=False,
+            direct_autoregression=False,
+            d_model=24,
+            motif_dim=8,
+            heads=4,
+            layers=0,
+            feedforward_dim=48,
+            max_sequence_length=6,
+        )
+
+        full_count = sum(
+            parameter.numel() for parameter in full.parameters() if parameter.requires_grad
+        )
+        reduced_count = sum(
+            parameter.numel()
+            for parameter in reduced.parameters()
+            if parameter.requires_grad
+        )
+        output = reduced(
+            profiles(batch=1, sequence=6),
+            torch.ones(1, 6, dtype=torch.long),
+            state_features(batch=1, sequence=6),
+            sample=False,
+        )
+
+        self.assertLess(reduced_count, full_count)
+        self.assertEqual(output.regime_logits.shape, (1, 6, 4))
+        self.assertFalse(reduced.transition_mu.requires_grad)
+        self.assertFalse(reduced.return_autoregression.weight.requires_grad)
 
     def test_return_loss_penalizes_distant_errors(self) -> None:
         common = {

@@ -14,10 +14,10 @@ const state = {
 };
 
 const numberFields = new Set([
-  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "symmetry_weight", "auxiliary_gate_floor", "auxiliary_gate_initial", "auxiliary_warmup_epochs", "forward_sessions", "strong_threshold_sigma",
+  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "symmetry_weight", "auxiliary_gate_floor", "auxiliary_gate_initial", "auxiliary_warmup_epochs", "forward_sessions", "strong_threshold_sigma",
   "return_standardization_lookback", "return_standardization_min_observations", "minimum_return_scale_percent",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
-  "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
+  "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_aggregation_minutes", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
   "minimum_sequence_length", "d_model", "latent_states", "transition_rank", "motif_dim", "heads", "layers",
   "feedforward_dim", "dropout", "mc_samples", "uncertainty_aversion",
   "transaction_cost_bps", "seed", "conservation_weight",
@@ -27,9 +27,9 @@ const numberFields = new Set([
 
 const strategyParameterFields = {
   bnhmm: [
-    "pretrain_epochs", "pretrain_mask_probability", "kl_weight", "ordinal_weight",
+    "pretrain_epochs", "pretrain_mask_probability", "kl_weight",
     "symmetry_weight", "deterministic_training", "feature_mode", "auxiliary_gate_floor",
-    "auxiliary_gate_initial", "auxiliary_warmup_epochs", "velocity_bins", "velocity_clip",
+    "auxiliary_gate_initial", "auxiliary_warmup_epochs", "velocity_bins", "velocity_aggregation_minutes", "velocity_clip",
     "velocity_smoothing", "sequence_length", "d_model", "motif_dim", "heads", "layers",
     "feedforward_dim", "dropout", "latent_states", "transition_rank", "mc_samples", "device",
   ],
@@ -437,7 +437,7 @@ function renderJob(job) {
   const stateMode = job.request.state_timeframe === "mixed"
     ? "小时 + 日状态"
     : "日状态（1分钟线生成）";
-  const profileMode = job.request.profile_protocol === "phase-space-joint-return-v6"
+  const profileMode = ["phase-space-10m-joint-return-v7", "phase-space-joint-return-v6"].includes(job.request.profile_protocol)
     ? `${job.request.bin_width_bps} BP 联合速度相空间 · ${job.request.normalization_lookback_sessions}日归一化`
     : job.request.profile_protocol === "phase-space-joint-v5"
       ? `${job.request.bin_width_bps} BP 旧联合速度相空间`
@@ -464,7 +464,7 @@ function renderJob(job) {
   const auxiliaryMode = job.request.feature_mode === "price-only"
     ? "辅助分支关闭"
     : `辅助门 ${Number(job.request.auxiliary_gate_initial ?? 0.05).toFixed(2)} 初始 / ${Number(job.request.auxiliary_gate_floor ?? 0).toFixed(2)} 下限 / ${job.request.auxiliary_warmup_epochs ?? 0} 轮全权重`;
-  const outputMode = job.request.profile_protocol === "phase-space-joint-return-v6"
+  const outputMode = ["phase-space-10m-joint-return-v7", "phase-space-joint-return-v6"].includes(job.request.profile_protocol)
     ? ((job.summary?.class_support?.length ?? 4) === 3
       ? "连续收益后验 → 空/平/多（旧）"
       : "连续收益后验 → 强空/弱空/弱多/强多")

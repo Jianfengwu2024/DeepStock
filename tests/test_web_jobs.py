@@ -78,6 +78,8 @@ class WebJobTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(velocity_bins=8)
         with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(velocity_aggregation_minutes=7)
+        with self.assertRaises(ValidationError):
             WalkForwardJobRequest(latent_states=12)
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(latent_states=50, transition_rank=51)
@@ -114,19 +116,21 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--max-profile-bins", command)
         self.assertIn("--normalization-lookback-sessions", command)
         self.assertIn("--velocity-bins", command)
+        self.assertIn("--velocity-aggregation-minutes", command)
         self.assertIn("--velocity-clip", command)
         self.assertIn("--velocity-smoothing", command)
         self.assertIn("--feature-mode", command)
         self.assertIn("--kl-weight", command)
-        self.assertIn("--ordinal-weight", command)
         self.assertIn("--pretrain-epochs", command)
         self.assertIn("--pretrain-mask-probability", command)
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
         self.assertEqual(request.strategy, "bnhmm")
         self.assertEqual(request.training_scope, "per-symbol")
-        self.assertEqual(request.profile_protocol, "phase-space-joint-return-v6")
-        self.assertEqual(request.feature_mode, "price-velocity")
+        self.assertEqual(request.profile_protocol, "phase-space-10m-joint-return-v7")
+        self.assertEqual(request.velocity_aggregation_minutes, 10)
+        self.assertEqual(request.feature_mode, "price-volume")
+        self.assertNotIn("--ordinal-weight", command)
         self.assertEqual(request.auxiliary_gate_floor, 0.25)
         self.assertEqual(request.auxiliary_gate_initial, 0.75)
         self.assertEqual(request.auxiliary_warmup_epochs, 3)

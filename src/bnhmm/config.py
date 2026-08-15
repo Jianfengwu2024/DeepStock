@@ -18,7 +18,7 @@ REGIME_COUNT = len(REGIME_STATES)
 REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
 REGIME_PROTOCOL = "volatility-scaled-prior-evidence-v5"
-PROFILE_PROTOCOL = "phase-space-joint-return-v6"
+PROFILE_PROTOCOL = "phase-space-10m-joint-return-v7"
 SEQUENCE_PROTOCOL = "fixed-recent-endpoint-v1"
 DEFAULT_VELOCITY_BINS = 3
 PROFILE_CHANNELS = 4 + DEFAULT_VELOCITY_BINS**2
@@ -35,6 +35,7 @@ class ProfileConfig:
     relative_volume_clip: float = 10.0
     trading_minutes_per_session: int = 240
     velocity_bins: int = DEFAULT_VELOCITY_BINS
+    velocity_aggregation_minutes: int = 10
     velocity_clip: float = 4.0
     velocity_smoothing: float = 0.25
     feature_clip: float = 4.0
@@ -65,6 +66,14 @@ class ProfileConfig:
             raise ValueError("trading minutes per session must be positive")
         if self.velocity_bins < 3 or self.velocity_bins % 2 == 0:
             raise ValueError("velocity bins must be an odd integer of at least three")
+        if (
+            self.velocity_aggregation_minutes < 2
+            or self.velocity_aggregation_minutes > 60
+            or 60 % self.velocity_aggregation_minutes
+        ):
+            raise ValueError(
+                "velocity aggregation must be a divisor of 60 between 2 and 60 minutes"
+            )
         if self.velocity_clip <= 0 or self.feature_clip <= 0:
             raise ValueError("phase-space clipping limits must be positive")
         if self.velocity_smoothing < 0:

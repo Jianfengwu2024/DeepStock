@@ -62,7 +62,6 @@
           <div class="two-columns bnhmm-only">
             <label>预训练轮数<input name="pretrain_epochs" type="number" min="0"></label>
             <label>KL 权重<input name="kl_weight" type="number" min="0" max="1" step="0.0001"></label>
-            <label>有序损失权重<input name="ordinal_weight" type="number" min="0" max="10" step="0.01"></label>
             <label>Z2 镜像约束权重<input name="symmetry_weight" type="number" min="0" max="10" step="0.05"></label>
             <label>遮罩比例<input name="pretrain_mask_probability" type="number" min="0.01" max="0.99" step="0.01"></label>
           </div>
@@ -96,8 +95,8 @@
             <select name="feature_mode">
               <option value="gated-full">价格主干 + 门控成交量/联合速度</option>
               <option value="price-only">仅价格主干</option>
-              <option value="price-volume">价格 + 成交量</option>
-              <option value="price-velocity" selected>价格 + Z2 流态（推荐）</option>
+              <option value="price-volume" selected>价格 + 成交量（消融推荐）</option>
+              <option value="price-velocity">价格 + 10 分钟联合速度</option>
             </select>
           </label>
           <div class="three-columns bnhmm-only">
@@ -111,6 +110,7 @@
             <label>归一化回看日<input name="normalization_lookback_sessions" type="number" min="2" max="120"></label>
           </div>
           <div class="two-columns bnhmm-only">
+            <label>速度聚合（分钟）<input name="velocity_aggregation_minutes" type="number" min="2" max="60" step="1"></label>
             <label>联合速度每轴档数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
             <label>速度标准差截断<input name="velocity_clip" type="number" min="0.5" max="20" step="0.5"></label>
             <label>速度分布平滑<input name="velocity_smoothing" type="number" min="0" max="10" step="0.05"></label>

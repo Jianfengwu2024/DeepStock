@@ -48,12 +48,15 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.relative_volume_lookback_sessions, 10)
         self.assertEqual(config.relative_volume_min_observations, 10)
         self.assertEqual(config.velocity_bins, 3)
+        self.assertEqual(config.velocity_aggregation_minutes, 10)
         self.assertEqual(config.velocity_smoothing, 0.25)
         self.assertEqual(config.profile_channels, PROFILE_CHANNELS)
-        self.assertEqual(PROFILE_PROTOCOL, "phase-space-joint-return-v6")
+        self.assertEqual(PROFILE_PROTOCOL, "phase-space-10m-joint-return-v7")
         self.assertEqual(SEQUENCE_PROTOCOL, "fixed-recent-endpoint-v1")
         with self.assertRaises(ValueError):
             ProfileConfig(velocity_bins=8)
+        with self.assertRaises(ValueError):
+            ProfileConfig(velocity_aggregation_minutes=7)
 
     def test_label_standardization_is_validated(self) -> None:
         with self.assertRaises(ValueError):

@@ -88,6 +88,7 @@ def _train(args: argparse.Namespace) -> int:
         relative_volume_lookback_sessions=args.normalization_lookback_sessions,
         relative_volume_min_observations=args.normalization_lookback_sessions,
         velocity_bins=args.velocity_bins,
+        velocity_aggregation_minutes=args.velocity_aggregation_minutes,
         velocity_clip=args.velocity_clip,
         velocity_smoothing=args.velocity_smoothing,
     )
@@ -174,6 +175,7 @@ def _train(args: argparse.Namespace) -> int:
         "output_head": "training-prior-plus-bayesian-evidence-and-return",
         "normalization_lookback_sessions": args.normalization_lookback_sessions,
         "velocity_bins": args.velocity_bins,
+        "velocity_aggregation_minutes": args.velocity_aggregation_minutes,
         "velocity_clip": args.velocity_clip,
         "velocity_smoothing": args.velocity_smoothing,
         "feature_mode": args.feature_mode,
@@ -286,6 +288,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         relative_volume_lookback_sessions=args.normalization_lookback_sessions,
         relative_volume_min_observations=args.normalization_lookback_sessions,
         velocity_bins=args.velocity_bins,
+        velocity_aggregation_minutes=args.velocity_aggregation_minutes,
         velocity_clip=args.velocity_clip,
         velocity_smoothing=args.velocity_smoothing,
     )
@@ -433,6 +436,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "normalization_lookback_sessions": args.normalization_lookback_sessions,
             "relative_volume_baseline": "prior-mean-daily-volume/240",
             "velocity_bins": args.velocity_bins,
+            "velocity_aggregation_minutes": args.velocity_aggregation_minutes,
             "velocity_clip": args.velocity_clip,
             "velocity_smoothing": args.velocity_smoothing,
             "velocity_representation": "z2-hydrodynamic-v1",
@@ -976,6 +980,143 @@ def _fk_stock_ablation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _bnhmm_ablation(args: argparse.Namespace) -> int:
+    import torch
+
+    from .ablation import BNHMMAblationConfig, run_bnhmm_ablation
+    from .training import ModelConfig, TrainerConfig
+    from .walk_forward import WalkForwardConfig
+
+    source = DuckDBBarSource(args.duckdb_path)
+    symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
+    if not symbols:
+        symbols = source.list_symbols(args.symbol_limit)
+    profile_config = ProfileConfig(
+        bin_width_bps=args.bin_width_bps,
+        max_profile_bins=args.max_profile_bins,
+        state_timeframes=("1d",),
+        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
+        relative_volume_min_observations=args.normalization_lookback_sessions,
+        velocity_bins=args.velocity_bins,
+        velocity_aggregation_minutes=args.velocity_aggregation_minutes,
+        velocity_clip=args.velocity_clip,
+        velocity_smoothing=args.velocity_smoothing,
+    )
+    label_config = LabelConfig(
+        forward_sessions=1,
+        standardization_lookback_sessions=args.return_standardization_lookback,
+        standardization_min_observations=args.return_standardization_min_observations,
+        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
+        strong_threshold_sigma=args.strong_threshold_sigma,
+    )
+    observations = []
+    data_summary: dict[str, dict[str, int]] = {}
+    for symbol in symbols:
+        bars = source.fetch(symbol, "1m", args.start, args.end)
+        states = PriceVolumeProfileBuilder(profile_config).build(bars)
+        if not states:
+            continue
+        labeled = ProfileLabelBuilder(label_config).build(states)
+        observations.append(labeled)
+        data_summary[symbol] = {
+            "bars": len(bars),
+            "profile_states": len(states),
+            "observations": len(labeled),
+        }
+    if not observations:
+        raise ValueError("none of the requested symbols produced observations")
+
+    sequence_config = SequenceConfig(length=args.sequence_length)
+    model_config = ModelConfig(
+        max_profile_bins=args.max_profile_bins,
+        profile_channels=profile_config.profile_channels,
+        latent_states=args.latent_states,
+        transition_rank=args.transition_rank,
+        strong_bear_threshold=label_config.strong_bear_threshold,
+        direction_threshold=label_config.direction_threshold,
+        strong_bull_threshold=label_config.strong_bull_threshold,
+        feature_mode=args.feature_mode,
+        auxiliary_gate_floor=args.auxiliary_gate_floor,
+        auxiliary_gate_initial=args.auxiliary_gate_initial,
+        d_model=args.d_model,
+        motif_dim=args.motif_dim,
+        heads=args.heads,
+        layers=args.layers,
+        feedforward_dim=args.feedforward_dim,
+        dropout=args.dropout,
+        max_sequence_length=args.sequence_length,
+    )
+    trainer_config = TrainerConfig(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        kl_weight=args.kl_weight,
+        brier_weight=0.25,
+        ordinal_weight=args.ordinal_weight,
+        consistency_weight=0.25,
+        symmetry_weight=args.symmetry_weight,
+        pretrain_epochs=args.pretrain_epochs,
+        auxiliary_warmup_epochs=args.auxiliary_warmup_epochs,
+        seed=args.seed,
+    )
+    walk_config = WalkForwardConfig(
+        minimum_train_sessions=args.minimum_train_sessions,
+        tuning_sessions=args.tuning_sessions,
+        test_sessions=args.test_sessions,
+        step_sessions=args.test_sessions,
+        max_folds=1,
+    )
+    device = args.device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    seeds = tuple(
+        int(value.strip())
+        for value in args.confirmation_seeds.split(",")
+        if value.strip()
+    )
+
+    def progress(payload: dict[str, object]) -> None:
+        print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+    result = run_bnhmm_ablation(
+        observations,
+        model_config,
+        trainer_config,
+        sequence_config,
+        walk_config,
+        device=device,
+        output_dir=args.output_dir,
+        dataset_id=args.dataset_id,
+        mc_samples=args.mc_samples,
+        ablation_config=BNHMMAblationConfig(
+            screening_seed=args.seed,
+            confirmation_seeds=seeds,
+            log_loss_tolerance=args.ablation_log_loss_tolerance,
+            brier_tolerance=args.ablation_brier_tolerance,
+        ),
+        progress=progress,
+    )
+    summary = {
+        "strategy": "bnhmm-ablation",
+        "dataset_id": args.dataset_id,
+        "symbols_requested": len(symbols),
+        "symbols_loaded": len(observations),
+        "selected_candidate": result.selected_candidate.name,
+        "selected_model_config": asdict(result.selected_candidate.model),
+        "selected_trainer_config": asdict(result.selected_candidate.trainer),
+        "selected_active_objectives": list(result.selected_candidate.active_objectives),
+        "outer_metrics": result.outer_metrics,
+        "fold": result.fold,
+        "data": data_summary,
+        "output_dir": args.output_dir,
+    }
+    Path(args.output_dir, "run-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bnhmm")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1003,7 +1144,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--batch-size", type=int, default=8)
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--kl-weight", type=float, default=1e-3)
-    train.add_argument("--ordinal-weight", type=float, default=0.25)
+    train.add_argument("--ordinal-weight", type=float, default=0.0)
     train.add_argument("--symmetry-weight", type=float, default=0.2)
     train.add_argument("--pretrain-epochs", type=int, default=10)
     train.add_argument("--pretrain-mask-probability", type=float, default=0.15)
@@ -1018,12 +1159,13 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--max-profile-bins", type=int, default=512)
     train.add_argument("--normalization-lookback-sessions", type=int, default=10)
     train.add_argument("--velocity-bins", type=int, default=3)
+    train.add_argument("--velocity-aggregation-minutes", type=int, default=10)
     train.add_argument("--velocity-clip", type=float, default=4.0)
     train.add_argument("--velocity-smoothing", type=float, default=0.25)
     train.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
-        default="price-velocity",
+        default="price-volume",
     )
     train.add_argument("--auxiliary-gate-floor", type=float, default=0.25)
     train.add_argument("--auxiliary-gate-initial", type=float, default=0.75)
@@ -1067,7 +1209,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--batch-size", type=int, default=8)
     walk.add_argument("--learning-rate", type=float, default=3e-4)
     walk.add_argument("--kl-weight", type=float, default=1e-3)
-    walk.add_argument("--ordinal-weight", type=float, default=0.25)
+    walk.add_argument("--ordinal-weight", type=float, default=0.0)
     walk.add_argument("--symmetry-weight", type=float, default=0.2)
     walk.add_argument("--pretrain-epochs", type=int, default=10)
     walk.add_argument("--pretrain-mask-probability", type=float, default=0.15)
@@ -1086,12 +1228,13 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--max-profile-bins", type=int, default=512)
     walk.add_argument("--normalization-lookback-sessions", type=int, default=10)
     walk.add_argument("--velocity-bins", type=int, default=3)
+    walk.add_argument("--velocity-aggregation-minutes", type=int, default=10)
     walk.add_argument("--velocity-clip", type=float, default=4.0)
     walk.add_argument("--velocity-smoothing", type=float, default=0.25)
     walk.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
-        default="price-velocity",
+        default="price-volume",
     )
     walk.add_argument("--auxiliary-gate-floor", type=float, default=0.25)
     walk.add_argument("--auxiliary-gate-initial", type=float, default=0.75)
@@ -1220,6 +1363,60 @@ def build_parser() -> argparse.ArgumentParser:
     ablation.add_argument("--ablation-log-loss-tolerance", type=float, default=1e-3)
     ablation.add_argument("--ablation-brier-tolerance", type=float, default=5e-4)
     ablation.set_defaults(handler=_fk_stock_ablation)
+
+    bnhmm_ablation = subparsers.add_parser("bnhmm-ablation")
+    bnhmm_ablation.add_argument("--duckdb-path", required=True)
+    bnhmm_ablation.add_argument("--symbols", default="")
+    bnhmm_ablation.add_argument("--symbol-limit", type=int, default=10)
+    bnhmm_ablation.add_argument("--dataset-id", required=True)
+    bnhmm_ablation.add_argument("--start", required=True)
+    bnhmm_ablation.add_argument("--end", required=True)
+    bnhmm_ablation.add_argument("--output-dir", required=True)
+    bnhmm_ablation.add_argument("--device", default="auto")
+    bnhmm_ablation.add_argument("--epochs", type=int, default=10)
+    bnhmm_ablation.add_argument("--batch-size", type=int, default=8)
+    bnhmm_ablation.add_argument("--learning-rate", type=float, default=3e-4)
+    bnhmm_ablation.add_argument("--kl-weight", type=float, default=1e-3)
+    bnhmm_ablation.add_argument("--ordinal-weight", type=float, default=0.25)
+    bnhmm_ablation.add_argument("--symmetry-weight", type=float, default=0.2)
+    bnhmm_ablation.add_argument("--pretrain-epochs", type=int, default=10)
+    bnhmm_ablation.add_argument("--auxiliary-warmup-epochs", type=int, default=3)
+    bnhmm_ablation.add_argument("--strong-threshold-sigma", type=float, default=0.75)
+    bnhmm_ablation.add_argument("--return-standardization-lookback", type=int, default=20)
+    bnhmm_ablation.add_argument("--return-standardization-min-observations", type=int, default=10)
+    bnhmm_ablation.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
+    bnhmm_ablation.add_argument("--minimum-train-sessions", type=int, default=252)
+    bnhmm_ablation.add_argument("--tuning-sessions", type=int, default=60)
+    bnhmm_ablation.add_argument("--test-sessions", type=int, default=60)
+    bnhmm_ablation.add_argument("--bin-width-bps", type=float, default=10.0)
+    bnhmm_ablation.add_argument("--max-profile-bins", type=int, default=512)
+    bnhmm_ablation.add_argument("--normalization-lookback-sessions", type=int, default=10)
+    bnhmm_ablation.add_argument("--velocity-bins", type=int, default=3)
+    bnhmm_ablation.add_argument("--velocity-aggregation-minutes", type=int, default=10)
+    bnhmm_ablation.add_argument("--velocity-clip", type=float, default=4.0)
+    bnhmm_ablation.add_argument("--velocity-smoothing", type=float, default=0.25)
+    bnhmm_ablation.add_argument(
+        "--feature-mode",
+        choices=("gated-full", "price-only", "price-volume", "price-velocity"),
+        default="price-volume",
+    )
+    bnhmm_ablation.add_argument("--auxiliary-gate-floor", type=float, default=0.25)
+    bnhmm_ablation.add_argument("--auxiliary-gate-initial", type=float, default=0.75)
+    bnhmm_ablation.add_argument("--sequence-length", type=int, default=5)
+    bnhmm_ablation.add_argument("--d-model", type=int, default=48)
+    bnhmm_ablation.add_argument("--latent-states", type=int, default=20)
+    bnhmm_ablation.add_argument("--transition-rank", type=int, default=4)
+    bnhmm_ablation.add_argument("--motif-dim", type=int, default=16)
+    bnhmm_ablation.add_argument("--heads", type=int, default=4)
+    bnhmm_ablation.add_argument("--layers", type=int, default=2)
+    bnhmm_ablation.add_argument("--feedforward-dim", type=int, default=96)
+    bnhmm_ablation.add_argument("--dropout", type=float, default=0.1)
+    bnhmm_ablation.add_argument("--mc-samples", type=int, default=8)
+    bnhmm_ablation.add_argument("--seed", type=int, default=7)
+    bnhmm_ablation.add_argument("--confirmation-seeds", default="7,17,29")
+    bnhmm_ablation.add_argument("--ablation-log-loss-tolerance", type=float, default=1e-3)
+    bnhmm_ablation.add_argument("--ablation-brier-tolerance", type=float, default=5e-4)
+    bnhmm_ablation.set_defaults(handler=_bnhmm_ablation)
     return parser
 
 

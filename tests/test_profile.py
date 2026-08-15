@@ -167,7 +167,7 @@ class ProfileBuilderTests(unittest.TestCase):
             original_state.total_relative_volume,
         )
 
-    def test_velocity_pair_uses_one_edge_one_anchor_and_rejects_gaps(self) -> None:
+    def test_velocity_pair_uses_aligned_ten_minute_blocks(self) -> None:
         config = ProfileConfig(relative_volume_min_observations=1)
         normalizer = RollingPhaseSpaceNormalizer(config)
         history = synthetic_sessions(1)
@@ -175,16 +175,15 @@ class ProfileBuilderTests(unittest.TestCase):
         normalization = normalizer.snapshot(history.symbol)
         self.assertIsNotNone(normalization)
 
-        timestamps = np.asarray(
-            [
-                "2026-01-06T09:31:00",
-                "2026-01-06T09:32:00",
-                "2026-01-06T09:34:00",
-                "2026-01-06T09:35:00",
-            ],
-            dtype="datetime64[ns]",
+        timestamps = np.datetime64("2026-01-06T09:31:00", "ns") + np.arange(
+            30
+        ).astype("timedelta64[m]")
+        close = np.concatenate(
+            (np.full(10, 10.0), np.full(10, 10.2), np.full(10, 9.8))
         )
-        close = np.asarray([10.0, 10.1, 9.9, 9.8])
+        volume = np.concatenate(
+            (np.full(10, 1000.0), np.full(10, 2000.0), np.full(10, 500.0))
+        )
         bars = BarBatch(
             symbol=history.symbol,
             timestamp=timestamps,
@@ -192,27 +191,55 @@ class ProfileBuilderTests(unittest.TestCase):
             high=close,
             low=close,
             close=close,
-            volume=np.asarray([1000.0, 2000.0, 8000.0, 4000.0]),
+            volume=volume,
         )
         transformed = normalizer.transform(bars, normalization)
 
         np.testing.assert_array_equal(
             transformed.velocity_edge_valid,
-            np.asarray([False, True, False, True]),
+            np.asarray([False] * 19 + [True] + [False] * 9 + [True]),
         )
-        expected_anchors = (
-            np.log(close[:-1]) + np.log(close[1:])
-        ) / 2.0
+        expected_anchors = (np.log(10.0) + np.log(10.2)) / 2.0
         self.assertAlmostEqual(
-            transformed.velocity_anchor_log_price[1], expected_anchors[0]
+            transformed.velocity_anchor_log_price[19], expected_anchors
         )
+        self.assertGreater(transformed.price_velocity[19], 0.0)
+        self.assertGreater(transformed.volume_velocity[19], 0.0)
+        self.assertLess(transformed.price_velocity[29], 0.0)
+        self.assertLess(transformed.volume_velocity[29], 0.0)
+
+    def test_ten_minute_velocity_never_crosses_a_session_gap(self) -> None:
+        config = ProfileConfig(relative_volume_min_observations=1)
+        normalizer = RollingPhaseSpaceNormalizer(config)
+        history = synthetic_sessions(1)
+        normalizer.update(history)
+        normalization = normalizer.snapshot(history.symbol)
+        self.assertIsNotNone(normalization)
+
+        morning = np.datetime64("2026-01-06T11:11:00", "ns") + np.arange(
+            20
+        ).astype("timedelta64[m]")
+        afternoon = np.datetime64("2026-01-06T13:01:00", "ns") + np.arange(
+            20
+        ).astype("timedelta64[m]")
+        timestamps = np.concatenate((morning, afternoon))
+        close = np.concatenate((np.full(20, 10.0), np.full(20, 12.0)))
+        bars = BarBatch(
+            symbol=history.symbol,
+            timestamp=timestamps,
+            open=close,
+            high=close,
+            low=close,
+            close=close,
+            volume=np.full(40, 1000.0),
+        )
+
+        transformed = normalizer.transform(bars, normalization)
+
+        self.assertEqual(np.flatnonzero(transformed.velocity_edge_valid).tolist(), [19, 39])
         self.assertAlmostEqual(
-            transformed.velocity_anchor_log_price[3], expected_anchors[2]
+            transformed.price_velocity[19], transformed.price_velocity[39]
         )
-        self.assertGreater(transformed.price_velocity[1], 0.0)
-        self.assertGreater(transformed.volume_velocity[1], 0.0)
-        self.assertLess(transformed.price_velocity[3], 0.0)
-        self.assertLess(transformed.volume_velocity[3], 0.0)
 
 
 if __name__ == "__main__":

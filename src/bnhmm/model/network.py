@@ -157,6 +157,7 @@ class BayesianMotifTokenizer(nn.Module):
         feature_mode: str,
         auxiliary_gate_floor: float,
         auxiliary_gate_initial: float,
+        include_metadata: bool,
         *,
         bayesian: bool,
     ) -> None:
@@ -178,6 +179,7 @@ class BayesianMotifTokenizer(nn.Module):
         self.profile_channels = profile_channels
         self.state_feature_dim = state_feature_dim
         self.feature_mode = feature_mode
+        self.include_metadata = include_metadata
         self.joint_velocity_channels = joint_velocity_channels
         self.velocity_bins = velocity_bins
         self.hydrodynamic_channels = 10
@@ -228,6 +230,10 @@ class BayesianMotifTokenizer(nn.Module):
         self.enabled_auxiliary_indices = tuple(
             index for index, value in enumerate(enabled) if value
         )
+        for index, branch in enumerate((self.volume_branch, self.joint_velocity_branch)):
+            if index not in self.enabled_auxiliary_indices:
+                for parameter in branch.parameters():
+                    parameter.requires_grad_(False)
         self.register_buffer(
             "auxiliary_enabled", torch.tensor(enabled), persistent=True
         )
@@ -238,6 +244,10 @@ class BayesianMotifTokenizer(nn.Module):
         self.metadata = linear(state_feature_dim, d_model)
         self.combine = linear(d_model * 2, d_model)
         self.output_norm = nn.LayerNorm(d_model)
+        if not include_metadata:
+            for module in (self.metadata, self.combine):
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
 
     def forward(
         self,
@@ -321,12 +331,15 @@ class BayesianMotifTokenizer(nn.Module):
         scores = scores.masked_fill(~profile_mask, torch.finfo(scores.dtype).min)
         attention = F.softmax(scores, dim=-1)
         profile_summary = (tokens * attention.unsqueeze(-1)).sum(dim=-2)
-        metadata_features = state_features.clone()
-        metadata_features[..., 6] = state_features[..., 6] * gates[0]
-        metadata = F.gelu(self.metadata(metadata_features, sample=sample))
-        combined = self.combine(
-            torch.cat((profile_summary, metadata), dim=-1), sample=sample
-        )
+        if self.include_metadata:
+            metadata_features = state_features.clone()
+            metadata_features[..., 6] = state_features[..., 6] * gates[0]
+            metadata = F.gelu(self.metadata(metadata_features, sample=sample))
+            combined = self.combine(
+                torch.cat((profile_summary, metadata), dim=-1), sample=sample
+            )
+        else:
+            combined = profile_summary
         return self.output_norm(combined)
 
     def effective_auxiliary_gates(self) -> Tensor:
@@ -453,11 +466,15 @@ class BNHMMNetwork(nn.Module):
         state_feature_dim: int = 9,
         latent_states: int = 20,
         output_states: int = REGIME_COUNT,
-        feature_mode: str = "price-velocity",
+        feature_mode: str = "price-volume",
         auxiliary_gate_floor: float = 0.25,
         auxiliary_gate_initial: float = 0.75,
         bayesian_backbone: bool = False,
         transition_rank: int = 4,
+        include_metadata: bool = True,
+        use_latent_filter: bool = True,
+        conditional_transition: bool = True,
+        direct_autoregression: bool = True,
         strong_bear_threshold: float = -0.75,
         direction_threshold: float = 0.0,
         strong_bull_threshold: float = 0.75,
@@ -494,6 +511,10 @@ class BNHMMNetwork(nn.Module):
         self.auxiliary_gate_initial = float(auxiliary_gate_initial)
         self.bayesian_backbone = bayesian_backbone
         self.transition_rank = transition_rank
+        self.include_metadata = include_metadata
+        self.use_latent_filter = use_latent_filter
+        self.conditional_transition = conditional_transition
+        self.direct_autoregression = direct_autoregression
         self.strong_bear_threshold = float(strong_bear_threshold)
         self.direction_threshold = float(direction_threshold)
         self.strong_bull_threshold = float(strong_bull_threshold)
@@ -509,6 +530,7 @@ class BNHMMNetwork(nn.Module):
             feature_mode,
             auxiliary_gate_floor,
             auxiliary_gate_initial,
+            include_metadata,
             bayesian=bayesian_backbone,
         )
         self.timeframe_embedding = nn.Embedding(2, d_model)
@@ -534,9 +556,24 @@ class BNHMMNetwork(nn.Module):
         self.transition_destination_context = BayesianLinear(
             d_model, latent_states * transition_rank
         )
+        if not conditional_transition:
+            for module in (
+                self.transition_source_context,
+                self.transition_destination_context,
+            ):
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
         transition = torch.eye(latent_states) * 2.0
         self.transition_mu = nn.Parameter(transition)
         self.transition_rho = nn.Parameter(torch.full_like(transition, -6.0))
+        if not use_latent_filter:
+            for parameter in (
+                self.transition_mu,
+                self.transition_rho,
+                *self.transition_source_context.parameters(),
+                *self.transition_destination_context.parameters(),
+            ):
+                parameter.requires_grad_(False)
         self.return_distribution = BayesianLinear(latent_states, 2)
         nn.init.normal_(self.return_distribution.weight_mu, std=0.01)
         nn.init.zeros_(self.return_distribution.bias_mu)
@@ -555,6 +592,10 @@ class BNHMMNetwork(nn.Module):
         )
         nn.init.zeros_(self.return_autoregression.weight)
         nn.init.zeros_(self.regime_autoregression.weight)
+        if not direct_autoregression:
+            for module in (self.return_autoregression, self.regime_autoregression):
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
         self.register_buffer(
             "class_prior", torch.full((output_states,), 1.0 / output_states)
         )
@@ -643,23 +684,32 @@ class BNHMMNetwork(nn.Module):
         context = self.output_norm(tokens) * valid_mask.unsqueeze(-1)
 
         emissions = F.softmax(self.latent_emission(context, sample=sample), dim=-1)
-        transition_source = self.transition_source_context(
-            context, sample=sample
-        ).view(batch, sequence, self.latent_states, self.transition_rank)
-        transition_destination = self.transition_destination_context(
-            context, sample=sample
-        ).view(batch, sequence, self.latent_states, self.transition_rank)
-        transition_delta = torch.einsum(
-            "bsir,bsjr->bsij", transition_source, transition_destination
-        ) / self.transition_rank**0.5
+        if self.conditional_transition:
+            transition_source = self.transition_source_context(
+                context, sample=sample
+            ).view(batch, sequence, self.latent_states, self.transition_rank)
+            transition_destination = self.transition_destination_context(
+                context, sample=sample
+            ).view(batch, sequence, self.latent_states, self.transition_rank)
+            transition_delta = torch.einsum(
+                "bsir,bsjr->bsij", transition_source, transition_destination
+            ) / self.transition_rank**0.5
+        else:
+            transition_delta = context.new_zeros(
+                batch, sequence, self.latent_states, self.latent_states
+            )
         transition_std = F.softplus(self.transition_rho)
         transition_base = self.transition_mu
         if sample:
             transition_base = transition_base + transition_std * torch.randn_like(
                 transition_base
             )
-        latent = self._filter_latent(
-            emissions, transition_base, transition_delta, valid_mask
+        latent = (
+            self._filter_latent(
+                emissions, transition_base, transition_delta, valid_mask
+            )
+            if self.use_latent_filter
+            else emissions
         )
         latent_features = latent * float(self.latent_states)
         recent_returns = self._recent_return_features(
@@ -668,8 +718,11 @@ class BNHMMNetwork(nn.Module):
         return_parameters = self.return_distribution(
             latent_features, sample=sample
         )
-        autoregressive_return = 2.0 * torch.tanh(
-            self.return_autoregression(recent_returns).squeeze(-1)
+        autoregressive_return = (
+            2.0
+            * torch.tanh(self.return_autoregression(recent_returns).squeeze(-1))
+            if self.direct_autoregression
+            else return_parameters[..., 0].new_zeros(return_parameters.shape[:-1])
         )
         return_mean = torch.clamp(
             4.0 * torch.tanh(return_parameters[..., 0])
@@ -680,14 +733,26 @@ class BNHMMNetwork(nn.Module):
         return_log_variance = torch.clamp(
             return_parameters[..., 1], min=-6.0, max=4.0
         )
+        direct_regime = (
+            self.regime_autoregression(recent_returns)
+            if self.direct_autoregression
+            else latent_features.new_zeros(
+                (*latent_features.shape[:-1], self.output_states)
+            )
+        )
         regime_logits = (
             self.class_prior.clamp_min(1e-6).log()
             + self.regime_evidence(latent_features, sample=sample)
-            + self.regime_autoregression(recent_returns)
+            + direct_regime
         )
-        kl = (
-            module_kl_divergence(self) + self._transition_kl(transition_std)
-        ) / self.kl_distribution_count
+        transition_kl = (
+            self._transition_kl(transition_std)
+            if self.use_latent_filter
+            else transition_std.new_zeros(())
+        )
+        kl = (module_kl_divergence(self) + transition_kl) / max(
+            self.kl_distribution_count, 1
+        )
         return SinglePassOutput(
             return_mean, return_log_variance, regime_logits, latent, context, kl
         )

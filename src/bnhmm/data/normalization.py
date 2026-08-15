@@ -78,12 +78,6 @@ class RollingPhaseSpaceNormalizer:
             float(np.mean([np.log(item.high / item.low) for item in history])),
             log_bin_width,
         )
-        valid_edges = [
-            self._continuous_minute_edges(item.timestamp) for item in history
-        ]
-        price_velocity = self._session_differences(
-            [item.log_close for item in history], valid_edges
-        )
         relative_levels = [
             np.log1p(
                 np.clip(
@@ -95,17 +89,32 @@ class RollingPhaseSpaceNormalizer:
             for item in history
         ]
         relative_level = np.concatenate(relative_levels)
-        volume_velocity = self._session_differences(
-            relative_levels, valid_edges
-        )
+        velocity_samples = [
+            self._block_velocity_samples(
+                item.timestamp,
+                item.log_close,
+                np.clip(
+                    item.volume / average_minute_volume,
+                    0.0,
+                    self.config.relative_volume_clip,
+                ),
+            )
+            for item in history
+        ]
+        price_rows = [item[0] for item in velocity_samples if len(item[0])]
+        volume_rows = [item[1] for item in velocity_samples if len(item[1])]
+        price_velocity = np.concatenate(price_rows) if price_rows else np.zeros(1)
+        volume_velocity = np.concatenate(volume_rows) if volume_rows else np.zeros(1)
         price_mean, price_scale = self._location_scale(
-            price_velocity, minimum=log_bin_width / 10.0
+            price_velocity,
+            minimum=log_bin_width / self.config.velocity_aggregation_minutes,
         )
         relative_mean, relative_scale = self._location_scale(
             relative_level, minimum=0.05
         )
         volume_mean, volume_scale = self._location_scale(
-            volume_velocity, minimum=0.05
+            volume_velocity,
+            minimum=0.05 / self.config.velocity_aggregation_minutes,
         )
         return PhaseSpaceNormalization(
             sessions=len(history),
@@ -129,14 +138,12 @@ class RollingPhaseSpaceNormalizer:
         )
         relative_log = np.log1p(relative)
         price_log = np.log(bars.close)
-        valid_edges = self._continuous_minute_edges(bars.timestamp)
-        price_velocity = np.zeros(len(bars), dtype=np.float64)
-        volume_velocity = np.zeros(len(bars), dtype=np.float64)
-        velocity_anchor = price_log.copy()
-        if len(bars) > 1:
-            price_velocity[1:] = np.diff(price_log)
-            volume_velocity[1:] = np.diff(relative_log)
-            velocity_anchor[1:] = (price_log[:-1] + price_log[1:]) / 2.0
+        (
+            price_velocity,
+            volume_velocity,
+            velocity_anchor,
+            valid_edges,
+        ) = self._block_velocity_fields(bars.timestamp, price_log, relative)
         return NormalizedSession(
             relative_volume=relative,
             relative_volume_level=self._standardize(
@@ -183,17 +190,58 @@ class RollingPhaseSpaceNormalizer:
             self.config.feature_clip,
         )
 
-    @staticmethod
-    def _session_differences(
-        sessions: list[NDArray[np.float64]],
-        valid_edges: list[NDArray[np.bool_]],
-    ) -> NDArray[np.float64]:
-        differences = [
-            np.diff(item)[valid[1:]]
-            for item, valid in zip(sessions, valid_edges, strict=True)
-            if len(item) > 1 and np.any(valid[1:])
-        ]
-        return np.concatenate(differences) if differences else np.zeros(1)
+    def _block_velocity_samples(
+        self,
+        timestamp: NDArray[np.datetime64],
+        log_price: NDArray[np.float64],
+        relative_volume: NDArray[np.float64],
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        price, volume, _, valid = self._block_velocity_fields(
+            timestamp, log_price, relative_volume
+        )
+        return price[valid], volume[valid]
+
+    def _block_velocity_fields(
+        self,
+        timestamp: NDArray[np.datetime64],
+        log_price: NDArray[np.float64],
+        relative_volume: NDArray[np.float64],
+    ) -> tuple[
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.bool_],
+    ]:
+        """Average contiguous 10-minute blocks before forming paired velocities."""
+        size = len(timestamp)
+        price_velocity = np.zeros(size, dtype=np.float64)
+        volume_velocity = np.zeros(size, dtype=np.float64)
+        anchor = log_price.copy()
+        valid = np.zeros(size, dtype=np.bool_)
+        if size < self.config.velocity_aggregation_minutes * 2:
+            return price_velocity, volume_velocity, anchor, valid
+
+        minute = timestamp.astype("datetime64[m]").astype(np.int64)
+        breaks = np.flatnonzero(np.diff(minute) != 1) + 1
+        starts = np.concatenate((np.asarray([0]), breaks))
+        ends = np.concatenate((breaks, np.asarray([size])))
+        width = self.config.velocity_aggregation_minutes
+        for start, end in zip(starts, ends, strict=True):
+            block_count = (int(end) - int(start)) // width
+            if block_count < 2:
+                continue
+            indices = np.arange(start, start + block_count * width).reshape(
+                block_count, width
+            )
+            block_price = log_price[indices].mean(axis=1)
+            block_volume = np.log1p(relative_volume[indices].mean(axis=1))
+            endpoints = indices[:, -1]
+            destination = endpoints[1:]
+            price_velocity[destination] = np.diff(block_price) / width
+            volume_velocity[destination] = np.diff(block_volume) / width
+            anchor[destination] = (block_price[:-1] + block_price[1:]) / 2.0
+            valid[destination] = True
+        return price_velocity, volume_velocity, anchor, valid
 
     @staticmethod
     def _continuous_minute_edges(

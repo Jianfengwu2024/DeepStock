@@ -9,10 +9,11 @@ DuckDB broker and converts each trading session's available one-minute bars into
 one variable-length daily log-price phase-space profile. The previous close is
 coordinate zero and every log-price bin is 10 basis points wide. Each price bin
 contains price occupancy, relative-volume mass, confidence-weighted relative-volume
-level, and a 3-by-3 joint price/volume velocity distribution. Each joint sample
-comes from one strictly continuous minute edge: both velocities share the same
-`(t-1, t)` pair and are anchored at the midpoint of the two log close prices.
-Lunch breaks and missing-minute edges are excluded. Sparse joint rows are smoothed
+level, and a 3-by-3 joint price/volume velocity distribution. Price and relative
+volume are first averaged inside contiguous 10-minute blocks. Each joint sample
+then uses the same pair of adjacent blocks for both average velocities and is
+anchored at the midpoint of their mean log prices. Lunch breaks, missing-minute
+blocks, and cross-gap transitions are excluded. Sparse joint rows are smoothed
 and weighted by their real sample share instead of being normalized to equal
 confidence.
 All scalers use only the symbol's preceding ten completed sessions. Relative
@@ -23,10 +24,11 @@ The model core uses deterministic price motifs and a deterministic causal
 Transformer backbone. Its default memory is a fixed rolling window of the five
 most recent completed daily states. Each window predicts only the next-session
 return attached to its final state; training never supervises truncated prefixes
-or selects a longer context at inference. Relative volume and paired joint velocity use gated
-residual motif branches initialized near zero, so adding noisy features cannot
-immediately overwhelm the price baseline. Four feature modes support controlled
-ablation. Bayesian layers begin at the emission model and feed a configurable
+or selects a longer context at inference. The production input uses price and
+relative volume. Paired 10-minute joint velocity remains an independently gated
+research branch, but strict three-seed ablation did not justify enabling it by
+default. Four feature modes support controlled ablation. Bayesian layers begin at
+the emission model and feed a configurable
 latent-state filter. Its context-conditioned transition correction is low rank,
 while its base transition matrix remains Bayesian. The filtered state posterior
   feeds a Bayesian standardized-return head and a Bayesian four-state evidence
@@ -35,9 +37,12 @@ while its base transition matrix remains Bayesian. The filtered state posterior
 
 The target return is scaled by volatility from the preceding 20 known sessions,
 while zero remains an actual flat return. The noisy rolling mean is retained only
-as an evaluation baseline and is never subtracted from the label. Training
-combines a robust Student-t likelihood with a direct ordinal
-four-state objective. The evidence head starts from the symbol/fold training
+as an evaluation baseline and is never subtracted from the label. Production
+training combines a robust Student-t likelihood with direct four-state
+classification, latent-state information, Z2 mirror consistency, Bayesian KL,
+and causal self-supervised pretraining. Brier, ordinal, and return/classification
+head-consistency training terms were removed by strict ablation. The evidence
+head starts from the symbol/fold training
 prior, then learns only the information contributed by the current state.
 Both supervised heads use a small nonzero centered initialization so predictive
 gradients reach the latent emissions and transition filter from the first update.

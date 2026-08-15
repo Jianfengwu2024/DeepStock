@@ -47,7 +47,6 @@ class WalkForwardJobRequest(BaseModel):
     batch_size: int = Field(8, ge=1, le=512)
     learning_rate: float = Field(3e-4, gt=0, le=1.0)
     kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
-    ordinal_weight: float = Field(0.25, ge=0.0, le=10.0)
     symmetry_weight: float = Field(0.2, ge=0.0, le=10.0)
     conservation_weight: float = Field(0.5, ge=0.0, le=10.0)
     pretrain_epochs: int = Field(10, ge=0, le=1000)
@@ -67,6 +66,7 @@ class WalkForwardJobRequest(BaseModel):
     max_profile_bins: int = Field(512, ge=8, le=2048)
     normalization_lookback_sessions: int = Field(10, ge=2, le=120)
     velocity_bins: int = Field(3, ge=3, le=31)
+    velocity_aggregation_minutes: int = Field(10, ge=2, le=60)
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
     velocity_smoothing: float = Field(0.25, ge=0.0, le=10.0)
     conservation_grid_points: int = Field(64, ge=16, le=512)
@@ -75,15 +75,14 @@ class WalkForwardJobRequest(BaseModel):
     maximum_tokens: int = Field(16, ge=2, le=128)
     boundary_threshold: float = Field(1.5, gt=0.0, le=20.0)
     profile_protocol: Literal[
+        "phase-space-10m-joint-return-v7",
         "phase-space-joint-return-v6",
         "phase-space-joint-v5",
         "phase-space-gated-v4",
         "phase-space-log-v3",
         "variable-log-bins-v2",
         "legacy-fixed-bins",
-    ] = (
-        "phase-space-joint-return-v6"
-    )
+    ] = "phase-space-10m-joint-return-v7"
     sequence_protocol: Literal[
         "fixed-recent-endpoint-v1", "legacy-overlapping-window-v1"
     ] = "fixed-recent-endpoint-v1"
@@ -100,7 +99,7 @@ class WalkForwardJobRequest(BaseModel):
         "price-volume",
         "price-velocity",
         "legacy-entangled",
-    ] = "price-velocity"
+    ] = "price-volume"
     auxiliary_gate_floor: float = Field(0.25, ge=0.0, lt=1.0)
     auxiliary_gate_initial: float = Field(0.75, ge=0.0, lt=1.0)
     auxiliary_warmup_epochs: int = Field(3, ge=0, le=1000)
@@ -154,8 +153,8 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("sector-pooled jobs require a sector dataset")
             if self.strategy in {"stock-transformer", "fk-stock"} and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
-            if self.profile_protocol != "phase-space-joint-return-v6":
-                raise ValueError("current jobs require the v6 phase-space profile")
+            if self.profile_protocol != "phase-space-10m-joint-return-v7":
+                raise ValueError("current jobs require the v7 ten-minute phase-space profile")
             if self.sequence_protocol != "fixed-recent-endpoint-v1":
                 raise ValueError("current jobs require fixed recent endpoint windows")
             if self.state_timeframe != "daily":
@@ -170,6 +169,8 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
             raise ValueError("velocity_bins must be odd")
+        if 60 % self.velocity_aggregation_minutes:
+            raise ValueError("velocity_aggregation_minutes must divide 60")
         profile_channels = 4 + self.velocity_bins**2
         if self.feature_mode == "legacy-entangled" and not legacy:
             raise ValueError("legacy-entangled is reserved for historical jobs")
@@ -262,8 +263,6 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.learning_rate),
         "--kl-weight",
         str(request.kl_weight),
-        "--ordinal-weight",
-        str(request.ordinal_weight),
         "--symmetry-weight",
         str(request.symmetry_weight),
         "--pretrain-epochs",
@@ -296,6 +295,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.normalization_lookback_sessions),
         "--velocity-bins",
         str(request.velocity_bins),
+        "--velocity-aggregation-minutes",
+        str(request.velocity_aggregation_minutes),
         "--velocity-clip",
         str(request.velocity_clip),
         "--velocity-smoothing",
