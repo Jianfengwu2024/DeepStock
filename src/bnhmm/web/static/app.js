@@ -8,6 +8,8 @@ const state = {
   dialogSelected: new Set(),
   resultScopeByJob: new Map(),
   symbolReportCache: new Map(),
+  strategyFormValues: new Map(),
+  activeStrategy: "bnhmm",
   polling: false,
 };
 
@@ -18,8 +20,25 @@ const numberFields = new Set([
   "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
   "minimum_sequence_length", "d_model", "latent_states", "transition_rank", "motif_dim", "heads", "layers",
   "feedforward_dim", "dropout", "mc_samples", "uncertainty_aversion",
-  "transaction_cost_bps", "seed",
+  "transaction_cost_bps", "seed", "conservation_weight",
+  "conservation_grid_points", "conservation_ridge", "minimum_token_bins",
+  "maximum_tokens", "boundary_threshold",
 ]);
+
+const strategyParameterFields = {
+  bnhmm: [
+    "pretrain_epochs", "pretrain_mask_probability", "kl_weight", "ordinal_weight",
+    "symmetry_weight", "deterministic_training", "feature_mode", "auxiliary_gate_floor",
+    "auxiliary_gate_initial", "auxiliary_warmup_epochs", "velocity_bins", "velocity_clip",
+    "velocity_smoothing", "sequence_length", "d_model", "motif_dim", "heads", "layers",
+    "feedforward_dim", "dropout", "latent_states", "transition_rank", "mc_samples",
+  ],
+  "stock-transformer": [
+    "conservation_weight", "conservation_grid_points", "conservation_ridge",
+    "minimum_token_bins", "maximum_tokens", "boundary_threshold", "sequence_length",
+    "d_model", "heads", "layers", "feedforward_dim", "dropout", "mc_samples",
+  ],
+};
 
 const statusText = {
   queued: "排队中", running: "运行中", completed: "已完成", failed: "失败",
@@ -54,8 +73,83 @@ function fillForm(defaults) {
     else if (field.type === "checkbox") field.checked = Boolean(value);
     else field.value = value ?? "";
   }
+  state.activeStrategy = currentStrategy();
+  state.strategyFormValues.set(
+    state.activeStrategy,
+    readFormFields(strategyParameterFields[state.activeStrategy]),
+  );
+  syncStrategySelection();
   syncModelConstraints();
   syncDatasetSelection();
+}
+
+function currentStrategy() {
+  return document.querySelector("[name=strategy]:checked")?.value || "bnhmm";
+}
+
+function readFormFields(names) {
+  const form = document.querySelector("#experiment-form");
+  return Object.fromEntries(names.map(name => {
+    const field = form.elements[name];
+    return [name, field?.type === "checkbox" ? field.checked : field?.value];
+  }));
+}
+
+function writeFormFields(values) {
+  const form = document.querySelector("#experiment-form");
+  for (const [name, value] of Object.entries(values || {})) {
+    const field = form.elements[name];
+    if (!field) continue;
+    if (field.type === "checkbox") field.checked = Boolean(value);
+    else field.value = value ?? "";
+  }
+}
+
+function changeStrategy() {
+  const strategy = currentStrategy();
+  if (strategy !== state.activeStrategy) {
+    state.strategyFormValues.set(
+      state.activeStrategy,
+      readFormFields(strategyParameterFields[state.activeStrategy]),
+    );
+    const saved = state.strategyFormValues.get(strategy);
+    const preset = state.config?.strategy_defaults?.[strategy] || {};
+    const fields = strategyParameterFields[strategy];
+    writeFormFields(saved || Object.fromEntries(fields.map(name => [name, preset[name]])));
+    state.activeStrategy = strategy;
+  }
+  syncStrategySelection();
+  syncModelConstraints();
+  syncDatasetSelection();
+  icons();
+}
+
+function syncStrategySelection() {
+  const strategy = currentStrategy();
+  const stock = strategy === "stock-transformer";
+  document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", stock));
+  document.querySelectorAll(".stock-only").forEach(element => element.classList.toggle("hidden", !stock));
+  const scope = document.querySelector("#training-scope");
+  const perSymbol = scope.querySelector('option[value="per-symbol"]');
+  perSymbol.disabled = stock;
+  if (stock) scope.value = "sector-pooled";
+  document.querySelector("#brand-subtitle").textContent = stock
+    ? "StockTransformer · conservation language model"
+    : "BNHMM · Bayesian hidden-state model";
+  document.querySelector("#state-section-title").textContent = stock
+    ? "每日价格-成交量密度态"
+    : "每日相空间态";
+  document.querySelector("#model-section-title").textContent = stock
+    ? "第三层 · StockTransformer"
+    : "短期记忆与贝叶斯模型";
+  document.querySelector("#model-backbone-spec").textContent = stock
+    ? "守恒 Token Transformer"
+    : "确定性 Transformer";
+  const noDataset = stock && state.datasets.length === 0;
+  document.querySelector("#run-button").disabled = noDataset;
+  document.querySelector("#form-error").textContent = noDataset
+    ? "StockTransformer 需要可用的概念板块数据集"
+    : "";
 }
 
 function setupDatasets(datasets) {
@@ -287,7 +381,8 @@ function renderJobList() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `job-item${job.id === state.selectedId ? " active" : ""}`;
-    button.innerHTML = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
+    const strategy = job.request.strategy === "stock-transformer" ? "StockTransformer" : "BNHMM";
+    button.innerHTML = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
     button.addEventListener("click", () => { state.selectedId = job.id; refreshAll(); });
     return button;
   }));
@@ -308,6 +403,21 @@ function renderJob(job) {
   const badge = document.querySelector("#run-status");
   badge.className = `status-badge ${job.status}`;
   badge.textContent = statusText[job.status];
+  const stock = job.request.strategy === "stock-transformer";
+  const dataset = state.datasets.find(
+    item => item.dataset_id === job.request.dataset_id,
+  );
+  if (stock) {
+    const law = job.summary?.folds?.at(-1)?.conservation_law;
+    const tokens = job.summary?.folds?.at(-1)?.token_diagnostics;
+    const lawText = law
+      ? `D=${formatNumber(law.diffusion, 4)} · v=${formatNumber(law.drift, 4)} · noise=${formatNumber(law.noise_scale, 4)}`
+      : `${job.request.conservation_grid_points}点守恒网格`;
+    const tokenText = tokens
+      ? `日均 ${formatNumber(tokens.mean_tokens_per_day, 1)} Token · ${formatNumber(tokens.mean_sentences_per_day, 1)} 句`
+      : `最多 ${job.request.maximum_tokens} Token/日`;
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 随机连续性方程 → 守恒分词/断句 → StockTransformer · ${lawText} · ${tokenText} · ${job.request.sequence_length}日记忆 · ${job.request.device}`;
+  } else {
   const stateMode = job.request.state_timeframe === "mixed"
     ? "小时 + 日状态"
     : "日状态（1分钟线生成）";
@@ -322,9 +432,6 @@ function renderJob(job) {
       : job.request.profile_protocol === "legacy-fixed-bins"
         ? "旧固定柱协议"
         : `${job.request.bin_width_bps} BP 可变日态（旧）`;
-  const dataset = state.datasets.find(
-    item => item.dataset_id === job.request.dataset_id,
-  );
   const modelScope = ({
     "per-symbol": "逐标的独立 BNHMM",
     "sector-pooled": `${dataset?.name || job.request.dataset_id || "板块"}联合 BNHMM`,
@@ -356,12 +463,15 @@ function renderJob(job) {
       ? `强弱分界 ±${Number(job.request.strong_threshold_percent ?? 1.5).toFixed(2)}%（旧）`
       : `强弱分界 ±${Number(job.request.strong_threshold_sigma).toFixed(2)}σ · ${job.request.return_standardization_lookback}日标准化`;
   document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${auxiliaryMode} · ${latentStates} 隐状态 → ${outputHead} · ${outputMode} · ${thresholdText} · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  }
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
   document.querySelector("#delete-button").classList.toggle("hidden", active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
-  document.querySelector("#progress-label").textContent = job.status === "queued" ? "等待 GPU 任务" : "Walk-forward 运行中";
+  document.querySelector("#progress-label").textContent = job.status === "queued"
+    ? "等待 GPU 任务"
+    : stock ? "StockTransformer 三层 Walk-forward 运行中" : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -687,6 +797,7 @@ function applySymbols() {
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
+  document.querySelectorAll("[name=strategy]").forEach(field => field.addEventListener("change", changeStrategy));
   for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }

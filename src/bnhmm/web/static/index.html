@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BNHMM Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.10.0">
+  <title>DeepStock Lab</title>
+  <link rel="stylesheet" href="/static/styles.css?v=0.14.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.13.0" defer></script>
+  <script src="/static/app.js?v=0.14.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <aside class="config-panel" id="config-panel">
       <div class="brand-row">
         <div>
-          <div class="brand">BNHMM Lab</div>
-          <div class="brand-sub">Bayesian Transformer</div>
+          <div class="brand">DeepStock Lab</div>
+          <div class="brand-sub" id="brand-subtitle">BNHMM · Bayesian hidden-state model</div>
         </div>
         <button class="icon-button mobile-only" type="button" id="close-config" title="关闭配置">
           <i data-lucide="x"></i>
@@ -25,6 +25,10 @@
         <section class="form-section">
           <h2>实验</h2>
           <label>名称<input name="name" required maxlength="64"></label>
+          <div class="strategy-switch" role="radiogroup" aria-label="策略模型">
+            <label><input type="radio" name="strategy" value="bnhmm" checked><span>BNHMM</span></label>
+            <label><input type="radio" name="strategy" value="stock-transformer"><span>StockTransformer</span></label>
+          </div>
           <label>训练范围
             <select name="training_scope" id="training-scope">
               <option value="sector-pooled">概念板块联合训练</option>
@@ -48,20 +52,21 @@
 
         <details class="form-section" open>
           <summary>训练</summary>
-          <div class="three-columns">
+          <div class="two-columns">
             <label>轮数<input name="epochs" type="number" min="1"></label>
-            <label>预训练轮数<input name="pretrain_epochs" type="number" min="0"></label>
             <label>批量上限（每批最多 256 个日态）<input name="batch_size" type="number" min="1"></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
-          </div>
-          <div class="two-columns">
             <label>学习率<input name="learning_rate" type="number" min="0" step="0.00001"></label>
+          </div>
+          <div class="two-columns bnhmm-only">
+            <label>预训练轮数<input name="pretrain_epochs" type="number" min="0"></label>
             <label>KL 权重<input name="kl_weight" type="number" min="0" max="1" step="0.0001"></label>
-            <label>有序损失权重<input name="ordinal_weight" type="number" min="0" max="10" step="0.1"></label>
+            <label>有序损失权重<input name="ordinal_weight" type="number" min="0" max="10" step="0.01"></label>
             <label>Z2 镜像约束权重<input name="symmetry_weight" type="number" min="0" max="10" step="0.05"></label>
             <label>遮罩比例<input name="pretrain_mask_probability" type="number" min="0.01" max="0.99" step="0.01"></label>
           </div>
-          <label class="toggle-row"><span>确定性训练（消融）</span><input name="deterministic_training" type="checkbox" role="switch"></label>
+          <label class="toggle-row bnhmm-only"><span>确定性训练（消融）</span><input name="deterministic_training" type="checkbox" role="switch"></label>
+          <label class="stock-only hidden">守恒辅助损失权重<input name="conservation_weight" type="number" min="0" max="10" step="0.05"></label>
         </details>
 
         <details class="form-section" open>
@@ -76,15 +81,17 @@
         </details>
 
         <details class="form-section" open>
-          <summary>每日相空间态</summary>
+          <summary id="state-section-title">每日相空间态</summary>
           <div class="fixed-spec-grid">
             <div class="fixed-spec"><span>状态构造</span><strong>1 分钟线 → 每日态</strong></div>
             <div class="fixed-spec"><span>价格坐标</span><strong>前收盘为零点的对数价格</strong></div>
-            <div class="fixed-spec"><span>日状态元数据</span><strong>9 个归一化特征</strong></div>
-            <div class="fixed-spec"><span>直方图输入</span><strong id="profile-channel-count">4 + 3² = 13 通道</strong></div>
-            <div class="fixed-spec"><span>速度表示</span><strong>Z2 流体矩 + 层流序参量</strong></div>
+            <div class="fixed-spec bnhmm-only"><span>日状态元数据</span><strong>9 个归一化特征</strong></div>
+            <div class="fixed-spec bnhmm-only"><span>直方图输入</span><strong id="profile-channel-count">4 + 3² = 13 通道</strong></div>
+            <div class="fixed-spec bnhmm-only"><span>速度表示</span><strong>Z2 流体矩 + 层流序参量</strong></div>
+            <div class="fixed-spec stock-only hidden"><span>守恒密度</span><strong>价格坐标上的归一化成交量</strong></div>
+            <div class="fixed-spec stock-only hidden"><span>使用范围</span><strong>仅负责生成密度态，不参与分词</strong></div>
           </div>
-          <label>输入特征组合（消融测试）
+          <label class="bnhmm-only">输入特征组合（消融测试）
             <select name="feature_mode">
               <option value="gated-full">价格主干 + 门控成交量/联合速度</option>
               <option value="price-only">仅价格主干</option>
@@ -92,7 +99,7 @@
               <option value="price-velocity" selected>价格 + Z2 流态（推荐）</option>
             </select>
           </label>
-          <div class="three-columns">
+          <div class="three-columns bnhmm-only">
             <label>辅助权重下限<input name="auxiliary_gate_floor" type="number" min="0" max="0.95" step="0.05"></label>
             <label>辅助初始权重<input name="auxiliary_gate_initial" type="number" min="0" max="0.99" step="0.05"></label>
             <label>全权重预热轮数<input name="auxiliary_warmup_epochs" type="number" min="0" max="1000"></label>
@@ -101,14 +108,39 @@
             <label>每柱基点<input name="bin_width_bps" type="number" min="1" max="100" step="1"></label>
             <label>单日最大柱数<input name="max_profile_bins" type="number" min="8" max="2048"></label>
             <label>归一化回看日<input name="normalization_lookback_sessions" type="number" min="2" max="120"></label>
+          </div>
+          <div class="two-columns bnhmm-only">
             <label>联合速度每轴档数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
             <label>速度标准差截断<input name="velocity_clip" type="number" min="0.5" max="20" step="0.5"></label>
             <label>速度分布平滑<input name="velocity_smoothing" type="number" min="0" max="10" step="0.05"></label>
           </div>
         </details>
 
+        <details class="form-section stock-only hidden" open>
+          <summary>守恒发现与分词</summary>
+          <div class="pipeline-steps" aria-label="StockTransformer 三层流水线">
+            <div><span>1</span><strong>守恒量发现</strong><small>拟合随机连续性方程</small></div>
+            <i data-lucide="arrow-down"></i>
+            <div><span>2</span><strong>分词与断句</strong><small>只读取守恒流和残差</small></div>
+            <i data-lucide="arrow-down"></i>
+            <div><span>3</span><strong>Transformer</strong><small>只读取守恒 token</small></div>
+          </div>
+          <div class="parameter-group-title">第一层 · 守恒量发现</div>
+          <div class="two-columns">
+            <label>固定价格网格<input name="conservation_grid_points" type="number" min="16" max="512"></label>
+            <label>守恒拟合正则<input name="conservation_ridge" type="number" min="0" max="10" step="0.0001"></label>
+          </div>
+          <div class="parameter-group-title">第二层 · 守恒分词与断句</div>
+          <div class="two-columns">
+            <label>最小词宽<input name="minimum_token_bins" type="number" min="1" max="64"></label>
+            <label>每日最大 Token<input name="maximum_tokens" type="number" min="2" max="128"></label>
+            <label>断句阈值<input name="boundary_threshold" type="number" min="0.01" max="20" step="0.01"></label>
+          </div>
+          <div class="isolation-note"><i data-lucide="shield-check"></i><span>每个滚动窗口只用训练期发现守恒方程；守恒层、分词层和模型层没有交叉拟合。</span></div>
+        </details>
+
         <details class="form-section" open>
-          <summary>短期记忆与贝叶斯模型</summary>
+          <summary id="model-section-title">短期记忆与贝叶斯模型</summary>
           <div class="fixed-spec-grid">
             <div class="fixed-spec"><span>多日记忆</span><strong id="memory-length-spec">最近 5 个交易日</strong></div>
             <div class="fixed-spec"><span>预测目标</span><strong>下一交易日</strong></div>
@@ -116,8 +148,9 @@
             <div class="fixed-spec"><span>输出状态</span><strong>强空 / 弱空 / 弱多 / 强多</strong></div>
             <div class="fixed-spec"><span>强弱分界</span><strong id="strong-threshold-spec">-0.75σ / 0 / +0.75σ</strong></div>
             <div class="fixed-spec"><span>收益后验</span><strong>滚动标准化 Student-t（df=4）</strong></div>
-            <div class="fixed-spec"><span>特征骨干</span><strong>确定性 Transformer</strong></div>
-            <div class="fixed-spec"><span>贝叶斯部分</span><strong>发射、转移、收益与先验证据头</strong></div>
+            <div class="fixed-spec"><span>特征骨干</span><strong id="model-backbone-spec">确定性 Transformer</strong></div>
+            <div class="fixed-spec bnhmm-only"><span>贝叶斯部分</span><strong>发射、转移、收益与先验证据头</strong></div>
+            <div class="fixed-spec stock-only hidden"><span>后验估计</span><strong>MC Dropout 概率均值与方差</strong></div>
           </div>
           <div class="parameter-group-title">输出定义</div>
           <div class="two-columns">
@@ -131,13 +164,13 @@
           <div class="parameter-group-title">网络结构</div>
           <div class="two-columns">
             <label>状态编码宽度<input name="d_model" type="number" min="8"></label>
-            <label>日内形态维度<input name="motif_dim" type="number" min="2"></label>
+            <label class="bnhmm-only">日内形态维度<input name="motif_dim" type="number" min="2"></label>
             <label>Transformer 层数<input name="layers" type="number" min="1"></label>
             <label>注意力头数<input name="heads" type="number" min="1"></label>
             <label>前馈层宽度<input name="feedforward_dim" type="number" min="8"></label>
             <label>Dropout<input name="dropout" type="number" min="0" max="0.99" step="0.01"></label>
-            <label>黑盒隐藏态<input name="latent_states" type="number" min="13" max="512"></label>
-            <label>转移低秩维度<input name="transition_rank" type="number" min="1" max="512"></label>
+            <label class="bnhmm-only">黑盒隐藏态<input name="latent_states" type="number" min="13" max="512"></label>
+            <label class="bnhmm-only">转移低秩维度<input name="transition_rank" type="number" min="1" max="512"></label>
             <label>后验 MC 采样<input name="mc_samples" type="number" min="2"></label>
           </div>
         </details>

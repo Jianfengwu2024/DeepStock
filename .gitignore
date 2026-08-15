@@ -13,4 +13,6 @@ artifacts/
 artifacts/
 reports/
 *.npz
+.cursor/
+.triadmind/
 

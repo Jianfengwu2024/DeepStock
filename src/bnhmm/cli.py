@@ -502,6 +502,203 @@ def _walk_forward(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stock_transformer_walk_forward(args: argparse.Namespace) -> int:
+    import torch
+
+    from .evaluation import (
+        DecisionPolicy,
+        DecisionPolicyConfig,
+        evaluate_predictions,
+        save_evaluation_report,
+    )
+    from .stock_transformer import (
+        ConservationConfig,
+        StockPipelineConfig,
+        StockTrainerConfig,
+        StockTransformerConfig,
+        TokenizationConfig,
+        run_stock_transformer_walk_forward,
+    )
+    from .walk_forward import WalkForwardConfig
+
+    source = DuckDBBarSource(args.duckdb_path)
+    symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
+    if not symbols:
+        symbols = source.list_symbols(args.symbol_limit)
+    profile_config = ProfileConfig(
+        bin_width_bps=args.bin_width_bps,
+        max_profile_bins=args.max_profile_bins,
+        state_timeframes=("1d",),
+        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
+        relative_volume_min_observations=args.normalization_lookback_sessions,
+    )
+    label_config = LabelConfig(
+        forward_sessions=1,
+        standardization_lookback_sessions=args.return_standardization_lookback,
+        standardization_min_observations=args.return_standardization_min_observations,
+        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
+        strong_threshold_sigma=args.strong_threshold_sigma,
+    )
+    observations = []
+    data_summary: dict[str, dict[str, int]] = {}
+    for symbol in symbols:
+        bars = source.fetch(symbol, "1m", args.start, args.end)
+        states = PriceVolumeProfileBuilder(profile_config).build(bars)
+        if not states:
+            continue
+        labeled = ProfileLabelBuilder(label_config).build(states)
+        observations.append(labeled)
+        data_summary[symbol] = {
+            "bars": len(bars),
+            "profile_states": len(states),
+            "observations": len(labeled),
+        }
+    if not observations:
+        raise ValueError("none of the requested symbols produced observations")
+    conservation_config = ConservationConfig(
+        grid_points=args.conservation_grid_points,
+        ridge=args.conservation_ridge,
+    )
+    tokenization_config = TokenizationConfig(
+        minimum_token_bins=args.minimum_token_bins,
+        maximum_tokens=args.maximum_tokens,
+        boundary_threshold=args.boundary_threshold,
+    )
+    model_config = StockTransformerConfig(
+        d_model=args.d_model,
+        heads=args.heads,
+        layers=args.layers,
+        feedforward_dim=args.feedforward_dim,
+        dropout=args.dropout,
+        maximum_days=args.sequence_length,
+        maximum_tokens=args.maximum_tokens,
+    )
+    trainer_config = StockTrainerConfig(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        conservation_weight=args.conservation_weight,
+        seed=args.seed,
+    )
+    pipeline_config = StockPipelineConfig(
+        sequence_length=args.sequence_length,
+        mc_samples=args.mc_samples,
+    )
+    walk_config = WalkForwardConfig(
+        minimum_train_sessions=args.minimum_train_sessions,
+        tuning_sessions=args.tuning_sessions,
+        test_sessions=args.test_sessions,
+        step_sessions=args.step_sessions,
+        max_folds=args.max_folds,
+    )
+    device = args.device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    result = run_stock_transformer_walk_forward(
+        observations,
+        conservation_config,
+        tokenization_config,
+        model_config,
+        trainer_config,
+        pipeline_config,
+        walk_config,
+        device=device,
+        output_dir=args.output_dir,
+        dataset_id=args.dataset_id,
+    )
+    policy = DecisionPolicy(
+        DecisionPolicyConfig(
+            uncertainty_aversion=args.uncertainty_aversion,
+            transaction_cost_bps=args.transaction_cost_bps,
+        )
+    )
+    report = evaluate_predictions(
+        result.predictions,
+        result.regime_return_means,
+        result.regime_return_variances,
+        policy=policy,
+    )
+    save_evaluation_report(args.output_dir, report)
+    per_symbol = []
+    for symbol in data_summary:
+        predictions = [item for item in result.predictions if item.symbol == symbol]
+        if not predictions:
+            continue
+        symbol_report = evaluate_predictions(
+            predictions,
+            result.regime_return_means,
+            result.regime_return_variances,
+            policy=policy,
+        )
+        per_symbol.append(
+            {
+                "symbol": symbol,
+                "oos_predictions": len(predictions),
+                "accuracy": symbol_report["accuracy"],
+                "majority_baseline": symbol_report["majority_baseline"],
+                "balanced_accuracy": symbol_report["balanced_accuracy"],
+                "brier_score": symbol_report["brier_score"],
+                "log_loss": symbol_report["log_loss"],
+                "backtest": {
+                    key: symbol_report["backtest"][key]
+                    for key in ("total_return", "max_drawdown")
+                },
+            }
+        )
+    summary = {
+        "strategy": "stock-transformer",
+        "symbols": list(data_summary),
+        "model_scope": "sector-pooled",
+        "dataset_id": args.dataset_id,
+        "three_layer_protocol": {
+            "conservation": "stochastic-continuity-v1",
+            "tokenization": "gradient-current-sentence-v1",
+            "model": "stock-transformer-v1",
+        },
+        "conservation_config": asdict(conservation_config),
+        "tokenization_config": asdict(tokenization_config),
+        "model_config": asdict(model_config),
+        "trainer_config": asdict(trainer_config),
+        "pipeline_config": asdict(pipeline_config),
+        "walk_forward_config": asdict(walk_config),
+        "data": data_summary,
+        "per_symbol": per_symbol,
+        "folds": list(result.folds),
+        "oos_predictions": len(result.predictions),
+        "accuracy": report["accuracy"],
+        "majority_baseline": report["majority_baseline"],
+        "balanced_accuracy": report["balanced_accuracy"],
+        "macro_f1": report["macro_f1"],
+        "class_support": report["class_support"],
+        "predicted_class_counts": report["predicted_class_counts"],
+        "confusion_matrix": report["confusion_matrix"],
+        "brier_score": report["brier_score"],
+        "log_loss": report["log_loss"],
+        "ranked_probability_score": report["ranked_probability_score"],
+        "baselines": report["baselines"],
+        "validation_gate": report["validation_gate"],
+        "return_residual": report["return_residual"],
+        "standardized_residual": report["standardized_residual"],
+        "backtest": {
+            key: report["backtest"][key]
+            for key in (
+                "total_return",
+                "benchmark_return",
+                "max_drawdown",
+                "average_abs_position",
+                "active_position_ratio",
+                "average_turnover",
+            )
+        },
+        "output_dir": args.output_dir,
+    }
+    Path(args.output_dir, "run-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bnhmm")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -644,6 +841,48 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--transaction-cost-bps", type=float, default=10.0)
     walk.add_argument("--seed", type=int, default=7)
     walk.set_defaults(handler=_walk_forward)
+
+    stock = subparsers.add_parser("stock-transformer-walk-forward")
+    stock.add_argument("--duckdb-path", required=True)
+    stock.add_argument("--symbols", default="")
+    stock.add_argument("--symbol-limit", type=int, default=10)
+    stock.add_argument("--dataset-id")
+    stock.add_argument("--start", required=True)
+    stock.add_argument("--end", required=True)
+    stock.add_argument("--output-dir", required=True)
+    stock.add_argument("--device", default="auto")
+    stock.add_argument("--epochs", type=int, default=10)
+    stock.add_argument("--batch-size", type=int, default=16)
+    stock.add_argument("--learning-rate", type=float, default=3e-4)
+    stock.add_argument("--conservation-weight", type=float, default=0.5)
+    stock.add_argument("--strong-threshold-sigma", type=float, default=0.75)
+    stock.add_argument("--return-standardization-lookback", type=int, default=20)
+    stock.add_argument("--return-standardization-min-observations", type=int, default=10)
+    stock.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
+    stock.add_argument("--minimum-train-sessions", type=int, default=252)
+    stock.add_argument("--tuning-sessions", type=int, default=60)
+    stock.add_argument("--test-sessions", type=int, default=60)
+    stock.add_argument("--step-sessions", type=int, default=60)
+    stock.add_argument("--max-folds", type=int)
+    stock.add_argument("--bin-width-bps", type=float, default=10.0)
+    stock.add_argument("--max-profile-bins", type=int, default=512)
+    stock.add_argument("--normalization-lookback-sessions", type=int, default=10)
+    stock.add_argument("--conservation-grid-points", type=int, default=64)
+    stock.add_argument("--conservation-ridge", type=float, default=1e-3)
+    stock.add_argument("--minimum-token-bins", type=int, default=2)
+    stock.add_argument("--maximum-tokens", type=int, default=16)
+    stock.add_argument("--boundary-threshold", type=float, default=1.5)
+    stock.add_argument("--sequence-length", type=int, default=5)
+    stock.add_argument("--d-model", type=int, default=64)
+    stock.add_argument("--heads", type=int, default=4)
+    stock.add_argument("--layers", type=int, default=3)
+    stock.add_argument("--feedforward-dim", type=int, default=128)
+    stock.add_argument("--dropout", type=float, default=0.1)
+    stock.add_argument("--mc-samples", type=int, default=16)
+    stock.add_argument("--uncertainty-aversion", type=float, default=2.0)
+    stock.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    stock.add_argument("--seed", type=int, default=7)
+    stock.set_defaults(handler=_stock_transformer_walk_forward)
     return parser
 
 

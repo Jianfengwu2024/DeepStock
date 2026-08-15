@@ -123,6 +123,7 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--pretrain-mask-probability", command)
         self.assertNotIn("--deterministic-training", command)
         self.assertNotIn("shell=True", command)
+        self.assertEqual(request.strategy, "bnhmm")
         self.assertEqual(request.training_scope, "per-symbol")
         self.assertEqual(request.profile_protocol, "phase-space-joint-return-v6")
         self.assertEqual(request.feature_mode, "price-velocity")
@@ -161,6 +162,23 @@ class WebJobTests(unittest.TestCase):
             Path("/tmp/result"),
         )
         self.assertIn("--deterministic-training", deterministic)
+
+    def test_stock_transformer_command_uses_isolated_pipeline(self) -> None:
+        request = WalkForwardJobRequest(
+            strategy="stock-transformer",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+        )
+        command = build_command(request, Path("/tmp/stock-result"))
+        self.assertIn("stock-transformer-walk-forward", command)
+        self.assertIn("--conservation-grid-points", command)
+        self.assertIn("--boundary-threshold", command)
+        self.assertIn("--conservation-weight", command)
+        self.assertNotIn("--latent-states", command)
+
+    def test_stock_transformer_rejects_non_sector_scope(self) -> None:
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(strategy="stock-transformer")
 
     def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
         output = "123, 512\n456, 900\n123, 256\n"

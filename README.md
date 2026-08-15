@@ -46,6 +46,17 @@ default; zero separates bearish from bullish.
 `predict_posterior()` uses Monte Carlo weight sampling to report expected return,
 predictive variance, and separate aleatoric and epistemic uncertainty.
 
+## StockTransformer
+
+StockTransformer is an independent conservation-first strategy alongside BNHMM.
+It discovers a stochastic volume-density continuity law on each walk-forward
+training slice, derives variable-width words and sentence boundaries from density
+gradients, current reversals, and stochastic-current residuals, and only then
+trains a token-only Transformer. The conservation, tokenization, and model layers
+have separate configuration and data contracts; none can fit or reach backward
+through another layer. See `docs/stock-transformer-v1-report.md` for the equations,
+implementation boundaries, tests, and the first semiconductor-sector experiment.
+
 Self-supervised pretraining uses only states available before each walk-forward
 cutoff. It reconstructs randomly masked daily metadata and fixed-width
 mass/location/spread summaries, then predicts their next-session values from
@@ -146,11 +157,11 @@ uncertainty reduces position confidence; irreducible aleatoric class overlap
 remains a reported risk diagnostic. Completed daily signals
 execute at the first continuous-trading bar of the next session.
 
-## Test console
+## DeepStock Lab
 
-The no-auth console exposes the same walk-forward parameters without requiring
-terminal commands. It keeps one GPU worker active at a time and persists each
-job, log, checkpoint, and report under the external storage tree.
+The no-auth console can switch between BNHMM and StockTransformer without
+requiring terminal commands. It keeps one GPU worker active at a time and
+persists each job, log, checkpoint, and report under the external storage tree.
 
 ```bash
 BNHMM_WEB_JOB_ROOT=/home/wujianfeng/private/bnhmm-storage/ui-runs \

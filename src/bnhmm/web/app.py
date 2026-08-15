@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     manager.close()
 
 
-app = FastAPI(title="BNHMM Lab", version=__version__, lifespan=lifespan)
+app = FastAPI(title="DeepStock Lab", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
 
 
@@ -89,11 +89,24 @@ def config(request: Request) -> dict[str, Any]:
                 "training_scope": "sector-pooled",
             }
         )
+    stock_defaults = {
+        **defaults,
+        "strategy": "stock-transformer",
+        "training_scope": "sector-pooled",
+        "d_model": 64,
+        "layers": 3,
+        "feedforward_dim": 128,
+        "pretrain_epochs": 0,
+    }
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
         "active_jobs": sum(item.status in {"queued", "running"} for item in jobs),
         "defaults": defaults,
+        "strategy_defaults": {
+            "bnhmm": defaults,
+            "stock-transformer": stock_defaults,
+        },
         "datasets": [item.as_json() for item in datasets],
     }
 

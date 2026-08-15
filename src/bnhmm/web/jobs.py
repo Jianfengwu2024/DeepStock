@@ -32,6 +32,7 @@ class DuplicateJobNameError(RuntimeError):
 
 
 class WalkForwardJobRequest(BaseModel):
+    strategy: Literal["bnhmm", "stock-transformer"] = "bnhmm"
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
@@ -48,6 +49,7 @@ class WalkForwardJobRequest(BaseModel):
     kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
     ordinal_weight: float = Field(0.25, ge=0.0, le=10.0)
     symmetry_weight: float = Field(0.2, ge=0.0, le=10.0)
+    conservation_weight: float = Field(0.5, ge=0.0, le=10.0)
     pretrain_epochs: int = Field(10, ge=0, le=1000)
     pretrain_mask_probability: float = Field(0.15, gt=0.0, lt=1.0)
     deterministic_training: bool = False
@@ -67,6 +69,11 @@ class WalkForwardJobRequest(BaseModel):
     velocity_bins: int = Field(3, ge=3, le=31)
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
     velocity_smoothing: float = Field(0.25, ge=0.0, le=10.0)
+    conservation_grid_points: int = Field(64, ge=16, le=512)
+    conservation_ridge: float = Field(1e-3, ge=0.0, le=10.0)
+    minimum_token_bins: int = Field(2, ge=1, le=64)
+    maximum_tokens: int = Field(16, ge=2, le=128)
+    boundary_threshold: float = Field(1.5, gt=0.0, le=20.0)
     profile_protocol: Literal[
         "phase-space-joint-return-v6",
         "phase-space-joint-v5",
@@ -145,6 +152,8 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("unsupported current training scope")
             if self.training_scope == "sector-pooled" and not self.dataset_id:
                 raise ValueError("sector-pooled jobs require a sector dataset")
+            if self.strategy == "stock-transformer" and self.training_scope != "sector-pooled":
+                raise ValueError("StockTransformer currently requires a sector dataset")
             if self.profile_protocol != "phase-space-joint-return-v6":
                 raise ValueError("current jobs require the v6 phase-space profile")
             if self.sequence_protocol != "fixed-recent-endpoint-v1":
@@ -164,9 +173,9 @@ class WalkForwardJobRequest(BaseModel):
         profile_channels = 4 + self.velocity_bins**2
         if self.feature_mode == "legacy-entangled" and not legacy:
             raise ValueError("legacy-entangled is reserved for historical jobs")
-        if not legacy and self.latent_states < profile_channels:
+        if not legacy and self.strategy == "bnhmm" and self.latent_states < profile_channels:
             raise ValueError("latent_states cannot be fewer than profile channels")
-        if not legacy and self.transition_rank > self.latent_states:
+        if not legacy and self.strategy == "bnhmm" and self.transition_rank > self.latent_states:
             raise ValueError("transition_rank cannot exceed latent_states")
         if self.auxiliary_gate_initial < self.auxiliary_gate_floor:
             raise ValueError("auxiliary gate initial cannot be below its floor")
@@ -222,6 +231,8 @@ def gpu_memory_for_pid(process_id: int) -> int:
 
 
 def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]:
+    if request.strategy == "stock-transformer":
+        return _build_stock_transformer_command(request, output_dir)
     command = [
         sys.executable,
         "-m",
@@ -334,6 +345,94 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         command.extend(("--max-folds", str(request.max_folds)))
     if request.deterministic_training:
         command.append("--deterministic-training")
+    return command
+
+
+def _build_stock_transformer_command(
+    request: WalkForwardJobRequest, output_dir: Path
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "bnhmm.cli",
+        "stock-transformer-walk-forward",
+        "--duckdb-path",
+        request.database_path,
+        "--symbols",
+        ",".join(request.symbols),
+        "--start",
+        request.start.isoformat(),
+        "--end",
+        request.end.isoformat(),
+        "--output-dir",
+        str(output_dir),
+        "--device",
+        request.device,
+        "--epochs",
+        str(request.epochs),
+        "--batch-size",
+        str(request.batch_size),
+        "--learning-rate",
+        str(request.learning_rate),
+        "--conservation-weight",
+        str(request.conservation_weight),
+        "--strong-threshold-sigma",
+        str(request.strong_threshold_sigma),
+        "--return-standardization-lookback",
+        str(request.return_standardization_lookback),
+        "--return-standardization-min-observations",
+        str(request.return_standardization_min_observations),
+        "--minimum-return-scale-percent",
+        str(request.minimum_return_scale_percent),
+        "--minimum-train-sessions",
+        str(request.minimum_train_sessions),
+        "--tuning-sessions",
+        str(request.tuning_sessions),
+        "--test-sessions",
+        str(request.test_sessions),
+        "--step-sessions",
+        str(request.step_sessions),
+        "--bin-width-bps",
+        str(request.bin_width_bps),
+        "--max-profile-bins",
+        str(request.max_profile_bins),
+        "--normalization-lookback-sessions",
+        str(request.normalization_lookback_sessions),
+        "--conservation-grid-points",
+        str(request.conservation_grid_points),
+        "--conservation-ridge",
+        str(request.conservation_ridge),
+        "--minimum-token-bins",
+        str(request.minimum_token_bins),
+        "--maximum-tokens",
+        str(request.maximum_tokens),
+        "--boundary-threshold",
+        str(request.boundary_threshold),
+        "--sequence-length",
+        str(request.sequence_length),
+        "--d-model",
+        str(request.d_model),
+        "--heads",
+        str(request.heads),
+        "--layers",
+        str(request.layers),
+        "--feedforward-dim",
+        str(request.feedforward_dim),
+        "--dropout",
+        str(request.dropout),
+        "--mc-samples",
+        str(request.mc_samples),
+        "--uncertainty-aversion",
+        str(request.uncertainty_aversion),
+        "--transaction-cost-bps",
+        str(request.transaction_cost_bps),
+        "--seed",
+        str(request.seed),
+    ]
+    if request.dataset_id:
+        command.extend(("--dataset-id", request.dataset_id))
+    if request.max_folds is not None:
+        command.extend(("--max-folds", str(request.max_folds)))
     return command
 
 
