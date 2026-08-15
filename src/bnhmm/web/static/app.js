@@ -23,6 +23,10 @@ const numberFields = new Set([
   "transaction_cost_bps", "seed", "conservation_weight",
   "conservation_grid_points", "conservation_ridge", "minimum_token_bins",
   "maximum_tokens", "boundary_threshold",
+  "fk_drift_lookback_sessions", "fk_ridge", "fk_minimum_return_history",
+  "fk_minimum_fit_rows", "fk_minimum_noise_variance", "fk_potential_floor",
+  "fk_noise_potential_weight", "fk_uncertainty_potential_weight",
+  "fk_incoherence_potential_weight", "fk_maximum_potential",
 ]);
 
 const strategyParameterFields = {
@@ -31,12 +35,19 @@ const strategyParameterFields = {
     "symmetry_weight", "deterministic_training", "feature_mode", "auxiliary_gate_floor",
     "auxiliary_gate_initial", "auxiliary_warmup_epochs", "velocity_bins", "velocity_clip",
     "velocity_smoothing", "sequence_length", "d_model", "motif_dim", "heads", "layers",
-    "feedforward_dim", "dropout", "latent_states", "transition_rank", "mc_samples",
+    "feedforward_dim", "dropout", "latent_states", "transition_rank", "mc_samples", "device",
   ],
   "stock-transformer": [
     "conservation_weight", "conservation_grid_points", "conservation_ridge",
     "minimum_token_bins", "maximum_tokens", "boundary_threshold", "sequence_length",
-    "d_model", "heads", "layers", "feedforward_dim", "dropout", "mc_samples",
+    "d_model", "heads", "layers", "feedforward_dim", "dropout", "mc_samples", "device",
+  ],
+  "fk-stock": [
+    "conservation_grid_points", "conservation_ridge", "fk_drift_lookback_sessions",
+    "fk_ridge", "fk_minimum_return_history", "fk_minimum_fit_rows",
+    "fk_minimum_noise_variance", "fk_potential_floor", "fk_noise_potential_weight",
+    "fk_uncertainty_potential_weight", "fk_incoherence_potential_weight",
+    "fk_maximum_potential", "mc_samples", "device",
   ],
 };
 
@@ -127,28 +138,36 @@ function changeStrategy() {
 function syncStrategySelection() {
   const strategy = currentStrategy();
   const stock = strategy === "stock-transformer";
-  document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", stock));
+  const fk = strategy === "fk-stock";
+  const neural = !fk;
+  document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", strategy !== "bnhmm"));
   document.querySelectorAll(".stock-only").forEach(element => element.classList.toggle("hidden", !stock));
+  document.querySelectorAll(".fk-only").forEach(element => element.classList.toggle("hidden", !fk));
+  document.querySelectorAll(".neural-only").forEach(element => element.classList.toggle("hidden", !neural));
+  document.querySelectorAll(".density-only").forEach(element => element.classList.toggle("hidden", strategy === "bnhmm"));
   const scope = document.querySelector("#training-scope");
   const perSymbol = scope.querySelector('option[value="per-symbol"]');
-  perSymbol.disabled = stock;
-  if (stock) scope.value = "sector-pooled";
-  document.querySelector("#brand-subtitle").textContent = stock
-    ? "StockTransformer · conservation language model"
-    : "BNHMM · Bayesian hidden-state model";
-  document.querySelector("#state-section-title").textContent = stock
+  perSymbol.disabled = stock || fk;
+  if (stock || fk) scope.value = "sector-pooled";
+  document.querySelector("#brand-subtitle").textContent = fk
+    ? "FKStock · Bayesian Feynman-Kac model"
+    : stock ? "StockTransformer · conservation language model"
+      : "BNHMM · Bayesian hidden-state model";
+  document.querySelector("#state-section-title").textContent = stock || fk
     ? "每日价格-成交量密度态"
     : "每日相空间态";
-  document.querySelector("#model-section-title").textContent = stock
-    ? "第三层 · StockTransformer"
-    : "短期记忆与贝叶斯模型";
-  document.querySelector("#model-backbone-spec").textContent = stock
-    ? "守恒 Token Transformer"
-    : "确定性 Transformer";
-  const noDataset = stock && state.datasets.length === 0;
+  if (neural) {
+    document.querySelector("#model-section-title").textContent = stock
+      ? "第三层 · StockTransformer"
+      : "短期记忆与贝叶斯模型";
+    document.querySelector("#model-backbone-spec").textContent = stock
+      ? "守恒 Token Transformer"
+      : "确定性 Transformer";
+  }
+  const noDataset = (stock || fk) && state.datasets.length === 0;
   document.querySelector("#run-button").disabled = noDataset;
   document.querySelector("#form-error").textContent = noDataset
-    ? "StockTransformer 需要可用的概念板块数据集"
+    ? `${fk ? "FKStock" : "StockTransformer"} 需要可用的概念板块数据集`
     : "";
 }
 
@@ -198,6 +217,7 @@ function syncDatasetSelection() {
 }
 
 function syncModelConstraints() {
+  const fk = currentStrategy() === "fk-stock";
   const velocityField = document.querySelector("[name=velocity_bins]");
   const latentField = document.querySelector("[name=latent_states]");
   const transitionRankField = document.querySelector("[name=transition_rank]");
@@ -243,13 +263,28 @@ function syncModelConstraints() {
   const width = Number(widthField.value);
   const heads = Number(headsField.value);
   headsField.setCustomValidity(
-    width && heads && width % heads !== 0
+    !fk && width && heads && width % heads !== 0
       ? "状态编码宽度必须能被注意力头数整除"
       : "",
   );
   auxiliaryInitialField.setCustomValidity(
-    Number(auxiliaryInitialField.value) < Number(auxiliaryFloorField.value)
+    !fk && Number(auxiliaryInitialField.value) < Number(auxiliaryFloorField.value)
       ? "辅助初始权重不能低于辅助权重下限"
+      : "",
+  );
+  const fkLookback = document.querySelector("[name=fk_drift_lookback_sessions]");
+  const fkHistory = document.querySelector("[name=fk_minimum_return_history]");
+  const fkFloor = document.querySelector("[name=fk_potential_floor]");
+  const fkMaximum = document.querySelector("[name=fk_maximum_potential]");
+  fkHistory.max = fkLookback.value;
+  fkHistory.setCustomValidity(
+    fk && Number(fkHistory.value) > Number(fkLookback.value)
+      ? "最少成熟收益不能超过漂移回看日"
+      : "",
+  );
+  fkMaximum.setCustomValidity(
+    fk && Number(fkMaximum.value) < Number(fkFloor.value)
+      ? "最大有效势不能低于势能下限"
       : "",
   );
 }
@@ -381,7 +416,7 @@ function renderJobList() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `job-item${job.id === state.selectedId ? " active" : ""}`;
-    const strategy = job.request.strategy === "stock-transformer" ? "StockTransformer" : "BNHMM";
+    const strategy = ({ bnhmm: "BNHMM", "stock-transformer": "StockTransformer", "fk-stock": "FKStock" })[job.request.strategy] || job.request.strategy;
     button.innerHTML = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
     button.addEventListener("click", () => { state.selectedId = job.id; refreshAll(); });
     return button;
@@ -404,10 +439,17 @@ function renderJob(job) {
   badge.className = `status-badge ${job.status}`;
   badge.textContent = statusText[job.status];
   const stock = job.request.strategy === "stock-transformer";
+  const fk = job.request.strategy === "fk-stock";
   const dataset = state.datasets.find(
     item => item.dataset_id === job.request.dataset_id,
   );
-  if (stock) {
+  if (fk) {
+    const fields = job.summary?.folds?.at(-1)?.outer_field_diagnostics;
+    const fieldText = fields
+      ? `μ=${formatNumber(fields.effective_drift_mean, 4)} · σ²=${formatNumber(fields.diffusion_variance_mean, 4)} · V=${formatNumber(fields.effective_potential_mean, 3)}`
+      : `${job.request.conservation_grid_points}点守恒网格`;
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 守恒密度 → 贝叶斯局部生成元 → Feynman-Kac · ${fieldText} · CPU 闭式求解`;
+  } else if (stock) {
     const law = job.summary?.folds?.at(-1)?.conservation_law;
     const tokens = job.summary?.folds?.at(-1)?.token_diagnostics;
     const lawText = law
@@ -470,8 +512,8 @@ function renderJob(job) {
   document.querySelector("#delete-button").classList.toggle("hidden", active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
-    ? "等待 GPU 任务"
-    : stock ? "StockTransformer 三层 Walk-forward 运行中" : "BNHMM Walk-forward 运行中";
+    ? (fk ? "等待 FKStock 任务" : "等待 GPU 任务")
+    : fk ? "FKStock 三层 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -588,7 +630,7 @@ function renderSymbolResult(job, symbol, summary) {
 
 function renderJobGpuMemory(job) {
   const element = document.querySelector("#run-gpu-memory");
-  const isGpu = String(job.request.device).startsWith("cuda:");
+  const isGpu = job.request.strategy !== "fk-stock" && String(job.request.device).startsWith("cuda:");
   const trackingAvailable = Object.prototype.hasOwnProperty.call(job, "peak_gpu_memory_mib");
   if (isGpu && job.status === "running" && !trackingAvailable) {
     element.classList.remove("hidden");
@@ -717,7 +759,7 @@ function renderMetrics(summary) {
 
 function renderFolds(folds) {
   const table = document.querySelector("#fold-table");
-  table.innerHTML = folds.map(fold => `<tr><td>${escapeHtml(fold.symbol || "共享（旧）")}</td><td>${fold.fold + 1}</td><td>${fold.tuning_start}</td><td>${fold.test_start} → ${fold.test_end}</td><td>${fold.selected_epochs}</td><td>${fold.pretest_sequences}</td><td>${fold.outer_test_predictions}</td><td>${formatNumber(fold.tuning_best_validation_loss, 4)}</td></tr>`).join("");
+  table.innerHTML = folds.map(fold => `<tr><td>${escapeHtml(fold.symbol || "共享（旧）")}</td><td>${fold.fold + 1}</td><td>${fold.tuning_start}</td><td>${fold.test_start} → ${fold.test_end}</td><td>${fold.selected_epochs ?? "闭式"}</td><td>${fold.pretest_sequences ?? fold.generator_fit_rows ?? "—"}</td><td>${fold.outer_test_predictions}</td><td>${formatNumber(fold.tuning_best_validation_loss ?? fold.tuning_metrics?.log_loss, 4)}</td></tr>`).join("");
 }
 
 function renderSymbolMetrics(rows) {
@@ -733,7 +775,7 @@ function renderArtifacts(job, artifacts) {
   setImage("residual-image", artifacts["residuals.png"], cache);
   setImage("calibration-image", artifacts["calibration_acf.png"], cache);
   const row = document.querySelector("#download-row");
-  const names = { "evaluation.json": "评估数据", "predictions.json": "OOS 预测", "run-summary.json": "运行摘要" };
+  const names = { "evaluation.json": "评估数据", "predictions.json": "OOS 预测", "fk-diagnostics.json": "FK 场诊断", "run-summary.json": "运行摘要" };
   row.innerHTML = Object.entries(names).filter(([name]) => artifacts[name]).map(([name, label]) => `<a href="${artifacts[name]}" download>${label}</a>`).join("");
 }
 
@@ -798,7 +840,7 @@ function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
   document.querySelectorAll("[name=strategy]").forEach(field => field.addEventListener("change", changeStrategy));
-  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial"]) {
+  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial", "fk_drift_lookback_sessions", "fk_minimum_return_history", "fk_potential_floor", "fk_maximum_potential"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);

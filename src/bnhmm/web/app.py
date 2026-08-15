@@ -98,6 +98,13 @@ def config(request: Request) -> dict[str, Any]:
         "feedforward_dim": 128,
         "pretrain_epochs": 0,
     }
+    fk_defaults = {
+        **defaults,
+        "strategy": "fk-stock",
+        "training_scope": "sector-pooled",
+        "device": "cpu",
+        "mc_samples": 64,
+    }
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
@@ -106,6 +113,7 @@ def config(request: Request) -> dict[str, Any]:
         "strategy_defaults": {
             "bnhmm": defaults,
             "stock-transformer": stock_defaults,
+            "fk-stock": fk_defaults,
         },
         "datasets": [item.as_json() for item in datasets],
     }
@@ -221,6 +229,7 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "calibration_acf.png",
             "evaluation.json",
             "predictions.json",
+            "fk-diagnostics.json",
             "run-summary.json",
         )
         if store.artifact_path(record.id, name) is not None

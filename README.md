@@ -57,6 +57,27 @@ have separate configuration and data contracts; none can fit or reach backward
 through another layer. See `docs/stock-transformer-v1-report.md` for the equations,
 implementation boundaries, tests, and the first semiconductor-sector experiment.
 
+## FKStock
+
+FKStock is a third, independent strategy for testing a stochastic-process route
+without tokenization or neural-network training. It projects each session's
+relative-volume density onto a fixed price grid, discovers the training-only
+continuity law `delta rho + div J = 0`, and uses its deterministic and stochastic
+currents as conditions for a Bayesian local price generator. Bayesian ridge
+regression estimates the next-session standardized-return drift, diffusion, and
+coefficient covariance in closed form. A short-horizon Feynman-Kac solver then
+attenuates unstable drift with an effective potential and maps the resulting
+return distribution to strong-bear, weak-bear, weak-bull, and strong-bull
+posterior probabilities.
+
+FKStock always uses sector-pooled training, but transitions and rolling return
+history never cross symbol boundaries. Every walk-forward fold discovers the
+conservation law and fits the generator only from labels mature before its
+cutoff; the frozen outer model records its cutoff and complete coefficient
+posterior. FKStock runs on CPU and has no epochs, network depth, hidden states,
+attention heads, or token parameters. See `docs/fk-stock-v1-report.md` for the
+equations, leakage controls, and the first semiconductor experiment.
+
 Self-supervised pretraining uses only states available before each walk-forward
 cutoff. It reconstructs randomly masked daily metadata and fixed-width
 mass/location/spread summaries, then predicts their next-session values from

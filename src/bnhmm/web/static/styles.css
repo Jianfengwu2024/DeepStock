@@ -49,7 +49,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .two-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .three-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
-.strategy-switch { display: grid; grid-template-columns: 1fr 1.45fr; gap: 3px; margin: 0 0 13px; padding: 3px; background: var(--panel-muted); border: 1px solid var(--line); border-radius: 6px; }
+.strategy-switch { display: grid; grid-template-columns: .9fr 1.45fr .9fr; gap: 3px; margin: 0 0 13px; padding: 3px; background: var(--panel-muted); border: 1px solid var(--line); border-radius: 6px; }
 .strategy-switch label { display: block; margin: 0; }
 .strategy-switch input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .strategy-switch span { display: grid; place-items: center; min-height: 32px; padding: 0 8px; color: var(--muted); border: 1px solid transparent; border-radius: 4px; font-size: 11px; font-weight: 750; cursor: pointer; }

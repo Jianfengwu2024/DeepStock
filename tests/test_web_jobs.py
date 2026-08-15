@@ -180,6 +180,36 @@ class WebJobTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(strategy="stock-transformer")
 
+    def test_fk_stock_command_contains_only_closed_form_parameters(self) -> None:
+        request = WalkForwardJobRequest(
+            strategy="fk-stock",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            fk_drift_lookback_sessions=15,
+        )
+        command = build_command(request, Path("/tmp/fk-result"))
+        self.assertIn("fk-stock-walk-forward", command)
+        self.assertIn("--fk-drift-lookback-sessions", command)
+        self.assertIn("--fk-noise-potential-weight", command)
+        self.assertIn("--conservation-grid-points", command)
+        self.assertNotIn("--epochs", command)
+        self.assertNotIn("--device", command)
+        self.assertNotIn("--d-model", command)
+        self.assertNotIn("--latent-states", command)
+        self.assertNotIn("--maximum-tokens", command)
+
+    def test_fk_stock_rejects_non_sector_scope_and_invalid_potential(self) -> None:
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(strategy="fk-stock")
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(
+                strategy="fk-stock",
+                training_scope="sector-pooled",
+                dataset_id="semiconductor",
+                fk_potential_floor=2.0,
+                fk_maximum_potential=1.0,
+            )
+
     def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
         output = "123, 512\n456, 900\n123, 256\n"
         with patch(

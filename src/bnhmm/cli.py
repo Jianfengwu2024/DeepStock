@@ -699,6 +699,187 @@ def _stock_transformer_walk_forward(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fk_stock_walk_forward(args: argparse.Namespace) -> int:
+    from .evaluation import (
+        DecisionPolicy,
+        DecisionPolicyConfig,
+        evaluate_predictions,
+        save_evaluation_report,
+    )
+    from .fk_stock import (
+        FKGeneratorConfig,
+        FKStockPipelineConfig,
+        FeynmanKacConfig,
+        run_fk_stock_walk_forward,
+    )
+    from .stock_transformer import ConservationConfig
+    from .walk_forward import WalkForwardConfig
+
+    source = DuckDBBarSource(args.duckdb_path)
+    symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
+    if not symbols:
+        symbols = source.list_symbols(args.symbol_limit)
+    profile_config = ProfileConfig(
+        bin_width_bps=args.bin_width_bps,
+        max_profile_bins=args.max_profile_bins,
+        state_timeframes=("1d",),
+        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
+        relative_volume_min_observations=args.normalization_lookback_sessions,
+    )
+    label_config = LabelConfig(
+        forward_sessions=1,
+        standardization_lookback_sessions=args.return_standardization_lookback,
+        standardization_min_observations=args.return_standardization_min_observations,
+        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
+        strong_threshold_sigma=args.strong_threshold_sigma,
+    )
+    observations = []
+    data_summary: dict[str, dict[str, int]] = {}
+    for symbol in symbols:
+        bars = source.fetch(symbol, "1m", args.start, args.end)
+        states = PriceVolumeProfileBuilder(profile_config).build(bars)
+        if not states:
+            continue
+        labeled = ProfileLabelBuilder(label_config).build(states)
+        observations.append(labeled)
+        data_summary[symbol] = {
+            "bars": len(bars),
+            "profile_states": len(states),
+            "observations": len(labeled),
+        }
+    if not observations:
+        raise ValueError("none of the requested symbols produced observations")
+    conservation_config = ConservationConfig(
+        grid_points=args.conservation_grid_points,
+        ridge=args.conservation_ridge,
+    )
+    generator_config = FKGeneratorConfig(
+        drift_lookback_sessions=args.fk_drift_lookback_sessions,
+        ridge=args.fk_ridge,
+        minimum_return_history=args.fk_minimum_return_history,
+        minimum_fit_rows=args.fk_minimum_fit_rows,
+        minimum_noise_variance=args.fk_minimum_noise_variance,
+    )
+    solver_config = FeynmanKacConfig(
+        strong_threshold_sigma=args.strong_threshold_sigma,
+        potential_floor=args.fk_potential_floor,
+        noise_potential_weight=args.fk_noise_potential_weight,
+        uncertainty_potential_weight=args.fk_uncertainty_potential_weight,
+        incoherence_potential_weight=args.fk_incoherence_potential_weight,
+        maximum_potential=args.fk_maximum_potential,
+        mc_samples=args.mc_samples,
+        seed=args.seed,
+    )
+    pipeline_config = FKStockPipelineConfig()
+    walk_config = WalkForwardConfig(
+        minimum_train_sessions=args.minimum_train_sessions,
+        tuning_sessions=args.tuning_sessions,
+        test_sessions=args.test_sessions,
+        step_sessions=args.step_sessions,
+        max_folds=args.max_folds,
+    )
+    result = run_fk_stock_walk_forward(
+        observations,
+        conservation_config,
+        generator_config,
+        solver_config,
+        pipeline_config,
+        walk_config,
+        output_dir=args.output_dir,
+        dataset_id=args.dataset_id,
+    )
+    policy = DecisionPolicy(
+        DecisionPolicyConfig(
+            uncertainty_aversion=args.uncertainty_aversion,
+            transaction_cost_bps=args.transaction_cost_bps,
+        )
+    )
+    report = evaluate_predictions(
+        result.predictions,
+        result.regime_return_means,
+        result.regime_return_variances,
+        policy=policy,
+    )
+    save_evaluation_report(args.output_dir, report)
+    per_symbol = []
+    for symbol in data_summary:
+        predictions = [item for item in result.predictions if item.symbol == symbol]
+        if not predictions:
+            continue
+        symbol_report = evaluate_predictions(
+            predictions,
+            result.regime_return_means,
+            result.regime_return_variances,
+            policy=policy,
+        )
+        per_symbol.append(
+            {
+                "symbol": symbol,
+                "oos_predictions": len(predictions),
+                "accuracy": symbol_report["accuracy"],
+                "majority_baseline": symbol_report["majority_baseline"],
+                "balanced_accuracy": symbol_report["balanced_accuracy"],
+                "brier_score": symbol_report["brier_score"],
+                "log_loss": symbol_report["log_loss"],
+                "backtest": {
+                    key: symbol_report["backtest"][key]
+                    for key in ("total_return", "max_drawdown")
+                },
+            }
+        )
+    summary = {
+        "strategy": "fk-stock",
+        "symbols": list(data_summary),
+        "model_scope": "sector-pooled",
+        "dataset_id": args.dataset_id,
+        "three_layer_protocol": {
+            "conservation": "stochastic-continuity-v1",
+            "generator": "bayesian-local-diffusion-v1",
+            "solver": "feynman-kac-effective-potential-v1",
+        },
+        "conservation_config": asdict(conservation_config),
+        "generator_config": asdict(generator_config),
+        "solver_config": asdict(solver_config),
+        "pipeline_config": asdict(pipeline_config),
+        "walk_forward_config": asdict(walk_config),
+        "data": data_summary,
+        "per_symbol": per_symbol,
+        "folds": list(result.folds),
+        "oos_predictions": len(result.predictions),
+        "accuracy": report["accuracy"],
+        "majority_baseline": report["majority_baseline"],
+        "balanced_accuracy": report["balanced_accuracy"],
+        "macro_f1": report["macro_f1"],
+        "class_support": report["class_support"],
+        "predicted_class_counts": report["predicted_class_counts"],
+        "confusion_matrix": report["confusion_matrix"],
+        "brier_score": report["brier_score"],
+        "log_loss": report["log_loss"],
+        "ranked_probability_score": report["ranked_probability_score"],
+        "baselines": report["baselines"],
+        "validation_gate": report["validation_gate"],
+        "return_residual": report["return_residual"],
+        "standardized_residual": report["standardized_residual"],
+        "backtest": {
+            key: report["backtest"][key]
+            for key in (
+                "total_return",
+                "benchmark_return",
+                "max_drawdown",
+                "average_abs_position",
+                "active_position_ratio",
+                "average_turnover",
+            )
+        },
+        "output_dir": args.output_dir,
+    }
+    Path(args.output_dir, "run-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bnhmm")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -883,6 +1064,44 @@ def build_parser() -> argparse.ArgumentParser:
     stock.add_argument("--transaction-cost-bps", type=float, default=10.0)
     stock.add_argument("--seed", type=int, default=7)
     stock.set_defaults(handler=_stock_transformer_walk_forward)
+
+    fk = subparsers.add_parser("fk-stock-walk-forward")
+    fk.add_argument("--duckdb-path", required=True)
+    fk.add_argument("--symbols", default="")
+    fk.add_argument("--symbol-limit", type=int, default=10)
+    fk.add_argument("--dataset-id", required=True)
+    fk.add_argument("--start", required=True)
+    fk.add_argument("--end", required=True)
+    fk.add_argument("--output-dir", required=True)
+    fk.add_argument("--strong-threshold-sigma", type=float, default=0.75)
+    fk.add_argument("--return-standardization-lookback", type=int, default=20)
+    fk.add_argument("--return-standardization-min-observations", type=int, default=10)
+    fk.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
+    fk.add_argument("--minimum-train-sessions", type=int, default=252)
+    fk.add_argument("--tuning-sessions", type=int, default=60)
+    fk.add_argument("--test-sessions", type=int, default=60)
+    fk.add_argument("--step-sessions", type=int, default=60)
+    fk.add_argument("--max-folds", type=int)
+    fk.add_argument("--bin-width-bps", type=float, default=10.0)
+    fk.add_argument("--max-profile-bins", type=int, default=512)
+    fk.add_argument("--normalization-lookback-sessions", type=int, default=10)
+    fk.add_argument("--conservation-grid-points", type=int, default=64)
+    fk.add_argument("--conservation-ridge", type=float, default=1e-3)
+    fk.add_argument("--fk-drift-lookback-sessions", type=int, default=20)
+    fk.add_argument("--fk-ridge", type=float, default=1.0)
+    fk.add_argument("--fk-minimum-return-history", type=int, default=5)
+    fk.add_argument("--fk-minimum-fit-rows", type=int, default=20)
+    fk.add_argument("--fk-minimum-noise-variance", type=float, default=1e-4)
+    fk.add_argument("--fk-potential-floor", type=float, default=0.0)
+    fk.add_argument("--fk-noise-potential-weight", type=float, default=0.75)
+    fk.add_argument("--fk-uncertainty-potential-weight", type=float, default=0.75)
+    fk.add_argument("--fk-incoherence-potential-weight", type=float, default=0.25)
+    fk.add_argument("--fk-maximum-potential", type=float, default=4.0)
+    fk.add_argument("--mc-samples", type=int, default=64)
+    fk.add_argument("--uncertainty-aversion", type=float, default=2.0)
+    fk.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    fk.add_argument("--seed", type=int, default=7)
+    fk.set_defaults(handler=_fk_stock_walk_forward)
     return parser
 
 

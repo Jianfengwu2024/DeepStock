@@ -32,7 +32,7 @@ class DuplicateJobNameError(RuntimeError):
 
 
 class WalkForwardJobRequest(BaseModel):
-    strategy: Literal["bnhmm", "stock-transformer"] = "bnhmm"
+    strategy: Literal["bnhmm", "stock-transformer", "fk-stock"] = "bnhmm"
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
@@ -74,6 +74,16 @@ class WalkForwardJobRequest(BaseModel):
     minimum_token_bins: int = Field(2, ge=1, le=64)
     maximum_tokens: int = Field(16, ge=2, le=128)
     boundary_threshold: float = Field(1.5, gt=0.0, le=20.0)
+    fk_drift_lookback_sessions: int = Field(20, ge=2, le=252)
+    fk_ridge: float = Field(1.0, gt=0.0, le=1000.0)
+    fk_minimum_return_history: int = Field(5, ge=2, le=252)
+    fk_minimum_fit_rows: int = Field(20, ge=2, le=1000000)
+    fk_minimum_noise_variance: float = Field(1e-4, gt=0.0, le=100.0)
+    fk_potential_floor: float = Field(0.0, ge=0.0, le=20.0)
+    fk_noise_potential_weight: float = Field(0.75, ge=0.0, le=20.0)
+    fk_uncertainty_potential_weight: float = Field(0.75, ge=0.0, le=20.0)
+    fk_incoherence_potential_weight: float = Field(0.25, ge=0.0, le=20.0)
+    fk_maximum_potential: float = Field(4.0, ge=0.0, le=100.0)
     profile_protocol: Literal[
         "phase-space-joint-return-v6",
         "phase-space-joint-v5",
@@ -152,8 +162,8 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("unsupported current training scope")
             if self.training_scope == "sector-pooled" and not self.dataset_id:
                 raise ValueError("sector-pooled jobs require a sector dataset")
-            if self.strategy == "stock-transformer" and self.training_scope != "sector-pooled":
-                raise ValueError("StockTransformer currently requires a sector dataset")
+            if self.strategy in {"stock-transformer", "fk-stock"} and self.training_scope != "sector-pooled":
+                raise ValueError(f"{self.strategy} currently requires a sector dataset")
             if self.profile_protocol != "phase-space-joint-return-v6":
                 raise ValueError("current jobs require the v6 phase-space profile")
             if self.sequence_protocol != "fixed-recent-endpoint-v1":
@@ -166,6 +176,10 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("current jobs require a rolling stride of one")
             if self.sequence_length > 20:
                 raise ValueError("recent context cannot exceed twenty trading states")
+            if self.fk_minimum_return_history > self.fk_drift_lookback_sessions:
+                raise ValueError("FK return history cannot exceed its drift lookback")
+            if self.fk_maximum_potential < self.fk_potential_floor:
+                raise ValueError("FK maximum potential cannot be below its floor")
         if self.d_model % self.heads:
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
@@ -233,6 +247,8 @@ def gpu_memory_for_pid(process_id: int) -> int:
 def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]:
     if request.strategy == "stock-transformer":
         return _build_stock_transformer_command(request, output_dir)
+    if request.strategy == "fk-stock":
+        return _build_fk_stock_command(request, output_dir)
     command = [
         sys.executable,
         "-m",
@@ -431,6 +447,86 @@ def _build_stock_transformer_command(
     ]
     if request.dataset_id:
         command.extend(("--dataset-id", request.dataset_id))
+    if request.max_folds is not None:
+        command.extend(("--max-folds", str(request.max_folds)))
+    return command
+
+
+def _build_fk_stock_command(
+    request: WalkForwardJobRequest, output_dir: Path
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "bnhmm.cli",
+        "fk-stock-walk-forward",
+        "--duckdb-path",
+        request.database_path,
+        "--symbols",
+        ",".join(request.symbols),
+        "--dataset-id",
+        str(request.dataset_id),
+        "--start",
+        request.start.isoformat(),
+        "--end",
+        request.end.isoformat(),
+        "--output-dir",
+        str(output_dir),
+        "--strong-threshold-sigma",
+        str(request.strong_threshold_sigma),
+        "--return-standardization-lookback",
+        str(request.return_standardization_lookback),
+        "--return-standardization-min-observations",
+        str(request.return_standardization_min_observations),
+        "--minimum-return-scale-percent",
+        str(request.minimum_return_scale_percent),
+        "--minimum-train-sessions",
+        str(request.minimum_train_sessions),
+        "--tuning-sessions",
+        str(request.tuning_sessions),
+        "--test-sessions",
+        str(request.test_sessions),
+        "--step-sessions",
+        str(request.step_sessions),
+        "--bin-width-bps",
+        str(request.bin_width_bps),
+        "--max-profile-bins",
+        str(request.max_profile_bins),
+        "--normalization-lookback-sessions",
+        str(request.normalization_lookback_sessions),
+        "--conservation-grid-points",
+        str(request.conservation_grid_points),
+        "--conservation-ridge",
+        str(request.conservation_ridge),
+        "--fk-drift-lookback-sessions",
+        str(request.fk_drift_lookback_sessions),
+        "--fk-ridge",
+        str(request.fk_ridge),
+        "--fk-minimum-return-history",
+        str(request.fk_minimum_return_history),
+        "--fk-minimum-fit-rows",
+        str(request.fk_minimum_fit_rows),
+        "--fk-minimum-noise-variance",
+        str(request.fk_minimum_noise_variance),
+        "--fk-potential-floor",
+        str(request.fk_potential_floor),
+        "--fk-noise-potential-weight",
+        str(request.fk_noise_potential_weight),
+        "--fk-uncertainty-potential-weight",
+        str(request.fk_uncertainty_potential_weight),
+        "--fk-incoherence-potential-weight",
+        str(request.fk_incoherence_potential_weight),
+        "--fk-maximum-potential",
+        str(request.fk_maximum_potential),
+        "--mc-samples",
+        str(request.mc_samples),
+        "--uncertainty-aversion",
+        str(request.uncertainty_aversion),
+        "--transaction-cost-bps",
+        str(request.transaction_cost_bps),
+        "--seed",
+        str(request.seed),
+    ]
     if request.max_folds is not None:
         command.extend(("--max-folds", str(request.max_folds)))
     return command
