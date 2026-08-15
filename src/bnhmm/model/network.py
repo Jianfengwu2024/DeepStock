@@ -179,6 +179,8 @@ class BayesianMotifTokenizer(nn.Module):
         self.state_feature_dim = state_feature_dim
         self.feature_mode = feature_mode
         self.joint_velocity_channels = joint_velocity_channels
+        self.velocity_bins = velocity_bins
+        self.hydrodynamic_channels = 10
         if not 0.0 <= auxiliary_gate_floor < 1.0:
             raise ValueError("auxiliary gate floor must be in [0, 1)")
         if not auxiliary_gate_floor <= auxiliary_gate_initial < 1.0:
@@ -202,7 +204,7 @@ class BayesianMotifTokenizer(nn.Module):
             bayesian=bayesian,
         )
         self.joint_velocity_branch = BayesianMotifBranch(
-            self.joint_velocity_channels,
+            self.hydrodynamic_channels,
             d_model,
             motif_dim,
             include_coordinates=False,
@@ -282,7 +284,9 @@ class BayesianMotifTokenizer(nn.Module):
         )
         price_values = torch.stack((profiles[..., 0], profiles[..., 3]), dim=-1)
         volume_values = profiles[..., 1:3]
-        joint_velocity_values = profiles[..., 4:]
+        joint_velocity_values, flow_order = self.hydrodynamic_velocity_features(
+            profiles[..., 4:], profile_mask
+        )
         branch_inputs = (
             volume_values,
             joint_velocity_values,
@@ -309,6 +313,8 @@ class BayesianMotifTokenizer(nn.Module):
                 triple_positions,
                 sample=sample,
             )
+            if index == 1:
+                residual = residual * flow_order.unsqueeze(-1).unsqueeze(-1)
             tokens = tokens + gates[index] * residual
         tokens = tokens * profile_mask.unsqueeze(-1)
         scores = self.pool_score(torch.tanh(tokens), sample=sample).squeeze(-1)
@@ -334,6 +340,95 @@ class BayesianMotifTokenizer(nn.Module):
     def set_auxiliary_warmup(self, enabled: bool) -> None:
         self.auxiliary_force_full.fill_(enabled)
 
+    def hydrodynamic_velocity_features(
+        self, joint_flat: Tensor, profile_mask: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        """Coarse-grain signed velocity into Z2-aware density and flow fields."""
+        expected = self.velocity_bins**2
+        if joint_flat.shape[-1] != expected:
+            raise ValueError("joint velocity channels do not match velocity bins")
+        joint = joint_flat.reshape(
+            *joint_flat.shape[:-1], self.velocity_bins, self.velocity_bins
+        )
+        dtype = joint.dtype
+        centers = torch.linspace(
+            -1.0 + 1.0 / self.velocity_bins,
+            1.0 - 1.0 / self.velocity_bins,
+            self.velocity_bins,
+            dtype=dtype,
+            device=joint.device,
+        )
+        price_velocity = centers.view(
+            *((1,) * (joint.ndim - 2)), self.velocity_bins, 1
+        )
+        volume_velocity = centers.view(
+            *((1,) * (joint.ndim - 2)), 1, self.velocity_bins
+        )
+        density = joint.sum(dim=(-1, -2))
+        denominator = density.clamp_min(1e-8)
+        mean_price = (joint * price_velocity).sum(dim=(-1, -2)) / denominator
+        mean_volume = (joint * volume_velocity).sum(dim=(-1, -2)) / denominator
+        centered_price = price_velocity - mean_price.unsqueeze(-1).unsqueeze(-1)
+        centered_volume = volume_velocity - mean_volume.unsqueeze(-1).unsqueeze(-1)
+        variance_price = (
+            joint * centered_price.square()
+        ).sum(dim=(-1, -2)) / denominator
+        variance_volume = (
+            joint * centered_volume.square()
+        ).sum(dim=(-1, -2)) / denominator
+        covariance = (
+            joint * centered_price * centered_volume
+        ).sum(dim=(-1, -2)) / denominator
+
+        price_current = density * mean_price
+        volume_current = density * mean_volume
+        price_temperature = density * variance_price.clamp_min(0.0).sqrt()
+        volume_temperature = density * variance_volume.clamp_min(0.0).sqrt()
+        covariance_flux = density * covariance
+        odd = 0.5 * (joint - joint.flip(dims=(-2,)))
+        odd_amplitude = odd.abs().sum(dim=(-1, -2))
+        local_laminar = density * mean_price / torch.sqrt(
+            mean_price.square() + variance_price + 1e-8
+        )
+
+        mask = profile_mask.to(dtype)
+        total_current = (price_current * mask).sum(dim=-1)
+        absolute_current = (price_current.abs() * mask).sum(dim=-1).clamp_min(1e-8)
+        signed_coherence = total_current / absolute_current
+        coherent_flow = density * signed_coherence.unsqueeze(-1)
+        current_divergence = torch.zeros_like(price_current)
+        if price_current.shape[-1] > 1:
+            current_divergence[..., 0] = price_current[..., 1] - price_current[..., 0]
+            current_divergence[..., -1] = (
+                price_current[..., -1] - price_current[..., -2]
+            )
+        if price_current.shape[-1] > 2:
+            current_divergence[..., 1:-1] = 0.5 * (
+                price_current[..., 2:] - price_current[..., :-2]
+            )
+
+        total_odd = (odd_amplitude * mask).sum(dim=-1).clamp(0.0, 1.0)
+        flow_order = torch.sqrt(
+            (total_odd * signed_coherence.abs()).clamp(0.0, 1.0)
+        )
+        features = torch.stack(
+            (
+                density,
+                price_current,
+                volume_current,
+                price_temperature,
+                volume_temperature,
+                covariance_flux,
+                odd_amplitude,
+                local_laminar,
+                coherent_flow,
+                current_divergence,
+            ),
+            dim=-1,
+        )
+        features = features * mask.unsqueeze(-1)
+        return features, flow_order
+
     @staticmethod
     def _coordinate_features(coordinates: Tensor, dtype: torch.dtype) -> Tensor:
         coordinates = coordinates.to(dtype=dtype)
@@ -358,7 +453,7 @@ class BNHMMNetwork(nn.Module):
         state_feature_dim: int = 9,
         latent_states: int = 20,
         output_states: int = REGIME_COUNT,
-        feature_mode: str = "gated-full",
+        feature_mode: str = "price-velocity",
         auxiliary_gate_floor: float = 0.25,
         auxiliary_gate_initial: float = 0.75,
         bayesian_backbone: bool = False,

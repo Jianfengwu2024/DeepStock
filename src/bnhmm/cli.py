@@ -144,6 +144,7 @@ def _train(args: argparse.Namespace) -> int:
         learning_rate=args.learning_rate,
         kl_weight=args.kl_weight,
         ordinal_weight=args.ordinal_weight,
+        symmetry_weight=args.symmetry_weight,
         pretrain_epochs=args.pretrain_epochs,
         auxiliary_warmup_epochs=args.auxiliary_warmup_epochs,
         pretrain_mask_probability=args.pretrain_mask_probability,
@@ -342,6 +343,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         learning_rate=args.learning_rate,
         kl_weight=args.kl_weight,
         ordinal_weight=args.ordinal_weight,
+        symmetry_weight=args.symmetry_weight,
         pretrain_epochs=args.pretrain_epochs,
         auxiliary_warmup_epochs=args.auxiliary_warmup_epochs,
         pretrain_mask_probability=args.pretrain_mask_probability,
@@ -433,6 +435,19 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "velocity_bins": args.velocity_bins,
             "velocity_clip": args.velocity_clip,
             "velocity_smoothing": args.velocity_smoothing,
+            "velocity_representation": "z2-hydrodynamic-v1",
+            "hydrodynamic_fields": [
+                "density",
+                "price_current",
+                "volume_current",
+                "price_temperature",
+                "volume_temperature",
+                "covariance_flux",
+                "z2_odd_amplitude",
+                "local_laminar_order",
+                "global_signed_coherence",
+                "current_divergence",
+            ],
             "price_coordinate": "log-price-relative-to-previous-close",
         },
         "return_standardization": {
@@ -515,6 +530,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--kl-weight", type=float, default=1e-3)
     train.add_argument("--ordinal-weight", type=float, default=0.25)
+    train.add_argument("--symmetry-weight", type=float, default=0.2)
     train.add_argument("--pretrain-epochs", type=int, default=10)
     train.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     train.add_argument("--deterministic-training", action="store_true")
@@ -533,7 +549,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
-        default="gated-full",
+        default="price-velocity",
     )
     train.add_argument("--auxiliary-gate-floor", type=float, default=0.25)
     train.add_argument("--auxiliary-gate-initial", type=float, default=0.75)
@@ -578,6 +594,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--learning-rate", type=float, default=3e-4)
     walk.add_argument("--kl-weight", type=float, default=1e-3)
     walk.add_argument("--ordinal-weight", type=float, default=0.25)
+    walk.add_argument("--symmetry-weight", type=float, default=0.2)
     walk.add_argument("--pretrain-epochs", type=int, default=10)
     walk.add_argument("--pretrain-mask-probability", type=float, default=0.15)
     walk.add_argument("--deterministic-training", action="store_true")
@@ -600,7 +617,7 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
-        default="gated-full",
+        default="price-velocity",
     )
     walk.add_argument("--auxiliary-gate-floor", type=float, default=0.25)
     walk.add_argument("--auxiliary-gate-initial", type=float, default=0.75)

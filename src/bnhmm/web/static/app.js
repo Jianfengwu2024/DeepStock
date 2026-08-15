@@ -12,7 +12,7 @@ const state = {
 };
 
 const numberFields = new Set([
-  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "auxiliary_gate_floor", "auxiliary_gate_initial", "auxiliary_warmup_epochs", "forward_sessions", "strong_threshold_sigma",
+  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "symmetry_weight", "auxiliary_gate_floor", "auxiliary_gate_initial", "auxiliary_warmup_epochs", "forward_sessions", "strong_threshold_sigma",
   "return_standardization_lookback", "return_standardization_min_observations", "minimum_return_scale_percent",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
   "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
@@ -335,7 +335,7 @@ function renderJob(job) {
     "gated-full": "价格主干 + 门控成交量/联合速度",
     "price-only": "仅价格",
     "price-volume": "价格 + 成交量",
-    "price-velocity": "价格 + 联合速度",
+    "price-velocity": "价格 + Z2 流态（推荐）",
     "legacy-entangled": "旧混合特征",
   })[job.request.feature_mode] || "旧混合特征";
   const auxiliaryMode = job.request.feature_mode === "price-only"

@@ -565,6 +565,8 @@ def _state_diagnostics(
     device: str | torch.device,
 ) -> dict[str, float | int]:
     latent_rows: list[np.ndarray] = []
+    flow_orders: list[float] = []
+    signed_currents: list[float] = []
     model.eval()
     for offset in range(0, len(sequences), 64):
         items = sequences[offset : offset + 64]
@@ -578,6 +580,10 @@ def _state_diagnostics(
             valid_mask=batch["valid_mask"].to(device),
             sample=False,
         )
+        hydro, flow_order = model.tokenizer.hydrodynamic_velocity_features(
+            batch["profiles"].to(device)[..., 4:],
+            batch["profile_mask"].to(device),
+        )
         latent_rows.extend(
             output.latent_probabilities[index, len(sequence) - 1]
             .detach()
@@ -585,6 +591,12 @@ def _state_diagnostics(
             .numpy()
             for index, sequence in enumerate(items)
         )
+        for index, sequence in enumerate(items):
+            endpoint = len(sequence) - 1
+            flow_orders.append(float(flow_order[index, endpoint].detach().cpu()))
+            signed_currents.append(
+                float(hydro[index, endpoint, :, 1].sum().detach().cpu())
+            )
     latent = np.asarray(latent_rows, dtype=np.float64)
     mean_usage = latent.mean(axis=0)
     entropy = -(latent * np.log(np.clip(latent, 1e-12, 1.0))).sum(axis=1)
@@ -594,6 +606,8 @@ def _state_diagnostics(
     prior = np.asarray(
         [item.prior_probability for item in predictions], dtype=np.float64
     )
+    flow_order_values = np.asarray(flow_orders, dtype=np.float64)
+    signed_current_values = np.asarray(signed_currents, dtype=np.float64)
     return {
         "mean_effective_latent_states": float(np.exp(entropy).mean()),
         "mean_max_latent_probability": float(latent.max(axis=1).mean()),
@@ -603,6 +617,12 @@ def _state_diagnostics(
         "mean_regime_evidence_l1": float(np.abs(probability - prior).sum(axis=1).mean()),
         "minimum_mean_latent_usage": float(mean_usage.min()),
         "maximum_mean_latent_usage": float(mean_usage.max()),
+        "mean_z2_flow_order": float(flow_order_values.mean()),
+        "p90_z2_flow_order": float(np.quantile(flow_order_values, 0.9)),
+        "active_laminar_ratio": float((flow_order_values >= 0.25).mean()),
+        "mean_absolute_price_current": float(
+            np.abs(signed_current_values).mean()
+        ),
     }
 
 

@@ -47,6 +47,7 @@ class WalkForwardJobRequest(BaseModel):
     learning_rate: float = Field(3e-4, gt=0, le=1.0)
     kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
     ordinal_weight: float = Field(0.25, ge=0.0, le=10.0)
+    symmetry_weight: float = Field(0.2, ge=0.0, le=10.0)
     pretrain_epochs: int = Field(10, ge=0, le=1000)
     pretrain_mask_probability: float = Field(0.15, gt=0.0, lt=1.0)
     deterministic_training: bool = False
@@ -92,7 +93,7 @@ class WalkForwardJobRequest(BaseModel):
         "price-volume",
         "price-velocity",
         "legacy-entangled",
-    ] = "gated-full"
+    ] = "price-velocity"
     auxiliary_gate_floor: float = Field(0.25, ge=0.0, lt=1.0)
     auxiliary_gate_initial: float = Field(0.75, ge=0.0, lt=1.0)
     auxiliary_warmup_epochs: int = Field(3, ge=0, le=1000)
@@ -250,6 +251,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.kl_weight),
         "--ordinal-weight",
         str(request.ordinal_weight),
+        "--symmetry-weight",
+        str(request.symmetry_weight),
         "--pretrain-epochs",
         str(request.pretrain_epochs),
         "--pretrain-mask-probability",

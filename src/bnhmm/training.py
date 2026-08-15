@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass
+from math import isqrt
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -28,7 +29,7 @@ class ModelConfig:
     state_feature_dim: int = 9
     latent_states: int = 20
     output_states: int = REGIME_COUNT
-    feature_mode: str = "gated-full"
+    feature_mode: str = "price-velocity"
     auxiliary_gate_floor: float = 0.25
     auxiliary_gate_initial: float = 0.75
     bayesian_backbone: bool = False
@@ -64,6 +65,7 @@ class TrainerConfig:
     brier_weight: float = 0.25
     ordinal_weight: float = 0.25
     consistency_weight: float = 0.25
+    symmetry_weight: float = 0.2
     pretrain_epochs: int = 10
     auxiliary_warmup_epochs: int = 3
     pretrain_mask_probability: float = 0.15
@@ -88,6 +90,7 @@ class TrainerConfig:
             self.brier_weight,
             self.ordinal_weight,
             self.consistency_weight,
+            self.symmetry_weight,
             self.latent_information_weight,
         )
         if any(value < 0 for value in objective_weights):
@@ -506,6 +509,7 @@ class BNHMMTrainer:
             "brier": 0.0,
             "ordinal": 0.0,
             "consistency": 0.0,
+            "symmetry": 0.0,
             "kl": 0.0,
             "latent_information": 0.0,
             "accuracy": 0.0,
@@ -513,6 +517,10 @@ class BNHMMTrainer:
         token_count = 0
         for cpu_batch in loader:
             batch = {key: value.to(self.device) for key, value in cpu_batch.items()}
+            original_batch_size = len(batch["profiles"])
+            symmetry_active = training and self.config.symmetry_weight > 0.0
+            if symmetry_active:
+                batch = self._augment_z2_batch(batch)
             if optimizer is not None:
                 optimizer.zero_grad(set_to_none=True)
             with torch.set_grad_enabled(training):
@@ -536,14 +544,22 @@ class BNHMMTrainer:
                     ordinal_weight=self.config.ordinal_weight,
                     consistency_weight=self.config.consistency_weight,
                     latent_information_weight=self.config.latent_information_weight,
-                    class_weights=self.model.class_weights,
+                    class_weights=(
+                        None if symmetry_active else self.model.class_weights
+                    ),
                     student_df=self.config.student_df,
                     strong_bear_threshold=self.model.strong_bear_threshold,
                     direction_threshold=self.model.direction_threshold,
                     strong_bull_threshold=self.model.strong_bull_threshold,
                 )
+                symmetry = (
+                    self._z2_symmetry_loss(output, batch, original_batch_size)
+                    if symmetry_active
+                    else output.return_mean.new_zeros(())
+                )
+                total_loss = loss.total + self.config.symmetry_weight * symmetry
                 if optimizer is not None:
-                    loss.total.backward()
+                    total_loss.backward()
                     clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
                     optimizer.step()
 
@@ -553,13 +569,14 @@ class BNHMMTrainer:
                 (probability.argmax(dim=-1) == batch["targets"])
                 & batch["target_mask"]
             ).sum()
-            totals["loss"] += float(loss.total.detach()) * tokens
+            totals["loss"] += float(total_loss.detach()) * tokens
             predictive_loss = (
                 loss.return_nll
                 + self.config.classification_weight * loss.classification
                 + self.config.brier_weight * loss.brier
                 + self.config.ordinal_weight * loss.ordinal
                 + self.config.consistency_weight * loss.consistency
+                + self.config.symmetry_weight * symmetry
             )
             totals["predictive_loss"] += float(predictive_loss.detach()) * tokens
             totals["return_nll"] += float(loss.return_nll.detach()) * tokens
@@ -568,6 +585,7 @@ class BNHMMTrainer:
             totals["brier"] += float(loss.brier.detach()) * tokens
             totals["ordinal"] += float(loss.ordinal.detach()) * tokens
             totals["consistency"] += float(loss.consistency.detach()) * tokens
+            totals["symmetry"] += float(symmetry.detach()) * tokens
             totals["kl"] += float(loss.kl.detach()) * tokens
             totals["latent_information"] += float(loss.latent_information.detach()) * tokens
             totals["accuracy"] += float(correct.detach())
@@ -575,6 +593,82 @@ class BNHMMTrainer:
         if not token_count:
             raise ValueError("data loader produced no valid tokens")
         return {key: value / token_count for key, value in totals.items()}
+
+    def _augment_z2_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Append the exact up/down mirror of each state using the same model draw."""
+        mirrored = {key: value.clone() for key, value in batch.items()}
+        velocity_channels = batch["profiles"].shape[-1] - 4
+        velocity_bins = isqrt(velocity_channels)
+        if velocity_bins**2 != velocity_channels:
+            raise ValueError("Z2 augmentation requires a square velocity grid")
+        mirrored["profiles"].zero_()
+        mirrored["bin_coordinates"].zero_()
+        for batch_index in range(len(batch["profiles"])):
+            for state_index in range(batch["profiles"].shape[1]):
+                valid_bins = int(
+                    batch["profile_mask"][batch_index, state_index].sum().item()
+                )
+                if not valid_bins:
+                    continue
+                profile = batch["profiles"][
+                    batch_index, state_index, :valid_bins
+                ]
+                scalar = profile[:, :4].flip(dims=(0,))
+                scalar[:, 3] = -scalar[:, 3]
+                velocity = profile[:, 4:].reshape(
+                    valid_bins, velocity_bins, velocity_bins
+                )
+                velocity = velocity.flip(dims=(0, 1)).reshape(
+                    valid_bins, velocity_channels
+                )
+                mirrored["profiles"][
+                    batch_index, state_index, :valid_bins
+                ] = torch.cat((scalar, velocity), dim=-1)
+                mirrored["bin_coordinates"][
+                    batch_index, state_index, :valid_bins
+                ] = -batch["bin_coordinates"][
+                    batch_index, state_index, :valid_bins
+                ].flip(dims=(0,))
+
+        features = batch["state_features"]
+        mirrored_features = mirrored["state_features"]
+        mirrored_features[..., 0:3] = -features[..., 0:3]
+        mirrored_features[..., 3] = -features[..., 4]
+        mirrored_features[..., 4] = -features[..., 3]
+        mirrored["targets"] = REGIME_COUNT - 1 - batch["targets"]
+        mirrored["forward_returns"] = -batch["forward_returns"]
+        mirrored["standardized_returns"] = -batch["standardized_returns"]
+        mirrored["return_locations"] = -batch["return_locations"]
+        return {
+            key: torch.cat((batch[key], mirrored[key]), dim=0) for key in batch
+        }
+
+    @staticmethod
+    def _z2_symmetry_loss(
+        output: Any, batch: dict[str, Tensor], original_batch_size: int
+    ) -> Tensor:
+        probability = torch.softmax(output.regime_logits, dim=-1)
+        original_probability = probability[:original_batch_size]
+        mirrored_probability = probability[original_batch_size:]
+        mask = batch["valid_mask"][:original_batch_size].to(probability.dtype)
+        denominator = mask.sum().clamp_min(1.0)
+        class_error = (
+            mirrored_probability - original_probability.flip(dims=(-1,))
+        ).square().mean(dim=-1)
+        return_error = torch.nn.functional.smooth_l1_loss(
+            output.return_mean[original_batch_size:],
+            -output.return_mean[:original_batch_size],
+            reduction="none",
+        )
+        variance_error = torch.nn.functional.smooth_l1_loss(
+            output.return_log_variance[original_batch_size:],
+            output.return_log_variance[:original_batch_size],
+            reduction="none",
+        )
+        return (
+            ((class_error + return_error + 0.25 * variance_error) * mask).sum()
+            / denominator
+        )
 
 
 def save_checkpoint(
@@ -589,7 +683,7 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 15,
+            "format_version": 16,
             "regime_protocol": REGIME_PROTOCOL,
             "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),

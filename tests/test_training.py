@@ -342,6 +342,33 @@ class TrainerTests(unittest.TestCase):
         self.assertEqual(result.history[1]["auxiliary_warmup"], 0.0)
         self.assertGreaterEqual(result.history[1]["joint_velocity_gate"], 0.25)
 
+    def test_z2_mirror_is_an_involution(self) -> None:
+        model = ModelConfig(
+            max_profile_bins=32,
+            d_model=16,
+            motif_dim=4,
+            heads=4,
+            layers=1,
+            feedforward_dim=32,
+            max_sequence_length=8,
+        ).build(seed=7)
+        trainer = BNHMMTrainer(model, TrainerConfig(epochs=1, batch_size=1))
+        batch = collate_profile_sequences([sequence(4)])
+        first = trainer._augment_z2_batch(batch)
+        mirrored = {
+            key: value[1:].clone() for key, value in first.items()
+        }
+        second = trainer._augment_z2_batch(mirrored)
+
+        for key in (
+            "profiles",
+            "bin_coordinates",
+            "state_features",
+            "targets",
+            "standardized_returns",
+        ):
+            self.assertTrue(torch.allclose(second[key][1:], batch[key]))
+
 
 if __name__ == "__main__":
     unittest.main()

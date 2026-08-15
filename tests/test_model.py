@@ -74,7 +74,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(
             torch.allclose(
                 self.model.tokenizer.effective_auxiliary_gates(),
-                torch.full((2,), 0.75),
+                torch.tensor([0.0, 0.75]),
                 atol=1e-6,
             )
         )
@@ -82,12 +82,13 @@ class BNHMMNetworkTests(unittest.TestCase):
     def test_auxiliary_warmup_forces_enabled_branches_to_full_weight(self) -> None:
         self.model.tokenizer.set_auxiliary_warmup(True)
         self.assertEqual(
-            self.model.tokenizer.effective_auxiliary_gates().tolist(), [1.0, 1.0]
+            self.model.tokenizer.effective_auxiliary_gates().tolist(), [0.0, 1.0]
         )
         self.model.tokenizer.set_auxiliary_warmup(False)
-        gates = self.model.tokenizer.effective_auxiliary_gates()
-        self.assertTrue(torch.all(gates >= 0.25))
-        self.assertTrue(torch.all(gates < 1.0))
+        gates = self.model.tokenizer.effective_auxiliary_gates().detach()
+        self.assertEqual(float(gates[0]), 0.0)
+        self.assertGreaterEqual(float(gates[1]), 0.25)
+        self.assertLess(float(gates[1]), 1.0)
 
     def test_posterior_separates_uncertainty(self) -> None:
         values = profiles(batch=1)
@@ -301,6 +302,31 @@ class BNHMMNetworkTests(unittest.TestCase):
         )
 
         self.assertTrue(torch.equal(residual, torch.zeros_like(residual)))
+
+    def test_hydrodynamic_order_detects_z2_symmetry_breaking(self) -> None:
+        mask = torch.ones(1, 1, 5, dtype=torch.bool)
+        symmetric = torch.zeros(1, 1, 5, 3, 3)
+        symmetric[..., 0, 1] = 0.1
+        symmetric[..., 2, 1] = 0.1
+        symmetric_features, symmetric_order = (
+            self.model.tokenizer.hydrodynamic_velocity_features(
+                symmetric.reshape(1, 1, 5, 9), mask
+            )
+        )
+        self.assertTrue(
+            torch.allclose(symmetric_features[..., 1], torch.zeros(1, 1, 5))
+        )
+        self.assertEqual(float(symmetric_order), 0.0)
+
+        directed = torch.zeros(1, 1, 5, 3, 3)
+        directed[..., 2, 1] = 0.2
+        directed_features, directed_order = (
+            self.model.tokenizer.hydrodynamic_velocity_features(
+                directed.reshape(1, 1, 5, 9), mask
+            )
+        )
+        self.assertTrue(torch.all(directed_features[..., 1] > 0))
+        self.assertGreater(float(directed_order), 0.0)
 
 
 if __name__ == "__main__":
