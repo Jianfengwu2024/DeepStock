@@ -8,6 +8,7 @@ from bnhmm.fk_stock import (
     BayesianGeneratorPosterior,
     FKFeatureRow,
     FeynmanKacConfig,
+    FeynmanKacPotentialConfig,
     FeynmanKacSolver,
 )
 
@@ -47,7 +48,7 @@ def posterior(drift: float) -> BayesianGeneratorPosterior:
 
 class FeynmanKacSolverTests(unittest.TestCase):
     def test_drift_sign_controls_direction_and_probabilities_sum_to_one(self) -> None:
-        solver = FeynmanKacSolver(FeynmanKacConfig(mc_samples=128))
+        solver = FeynmanKacSolver(FeynmanKacConfig())
         bullish, _ = solver.predict(row(), posterior(1.0))
         bearish, _ = solver.predict(row(), posterior(-1.0))
 
@@ -59,9 +60,11 @@ class FeynmanKacSolverTests(unittest.TestCase):
 
     def test_effective_potential_shrinks_directional_drift(self) -> None:
         solver = FeynmanKacSolver(
-            FeynmanKacConfig(
+            FeynmanKacConfig(),
+            FeynmanKacPotentialConfig(
                 noise_potential_weight=2.0,
                 incoherence_potential_weight=1.0,
+                maximum_potential=4.0,
                 mc_samples=64,
             )
         )

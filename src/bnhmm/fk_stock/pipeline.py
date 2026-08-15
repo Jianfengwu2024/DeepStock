@@ -115,8 +115,10 @@ def run_fk_stock_walk_forward(
             "strategy": "fk-stock",
             "dataset_id": dataset_id,
             "training_cutoff": str(fold.test_start),
-            "conservation_config": asdict(conservation_config),
-            "conservation_law": final_law.as_json(),
+            "conservation_config": (
+                asdict(conservation_config) if final_law is not None else None
+            ),
+            "conservation_law": final_law.as_json() if final_law is not None else None,
             "generator_config": asdict(generator_config),
             "generator_posterior": final_posterior.as_json(),
             "solver_config": asdict(solver_config),
@@ -139,7 +141,9 @@ def run_fk_stock_walk_forward(
             "tuning_metrics": _prediction_metrics(tuning_predictions),
             "tuning_field_diagnostics": _diagnostic_summary(tuning_diagnostics),
             "outer_field_diagnostics": _diagnostic_summary(diagnostics),
-            "conservation_law": final_law.as_json(),
+            "active_features": list(final_posterior.feature_names),
+            "effective_potential": "disabled-by-ablation",
+            "conservation_law": final_law.as_json() if final_law is not None else None,
         }
         (fold_dir / "summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -169,7 +173,10 @@ def _fit_generator(
     observations: Sequence[ProfileObservations],
     conservation_config: ConservationConfig,
     generator: FKGenerator,
-) -> tuple[ConservationLaw, BayesianGeneratorPosterior]:
+) -> tuple[ConservationLaw | None, BayesianGeneratorPosterior]:
+    if not generator.requires_conservation_law:
+        rows = generator.build_rows(observations)
+        return None, generator.fit(rows)
     projector = DensityProjector(conservation_config)
     series = []
     for item in observations:

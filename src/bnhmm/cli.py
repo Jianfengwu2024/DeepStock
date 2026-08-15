@@ -749,26 +749,10 @@ def _fk_stock_walk_forward(args: argparse.Namespace) -> int:
         }
     if not observations:
         raise ValueError("none of the requested symbols produced observations")
-    conservation_config = ConservationConfig(
-        grid_points=args.conservation_grid_points,
-        ridge=args.conservation_ridge,
-    )
-    generator_config = FKGeneratorConfig(
-        drift_lookback_sessions=args.fk_drift_lookback_sessions,
-        ridge=args.fk_ridge,
-        minimum_return_history=args.fk_minimum_return_history,
-        minimum_fit_rows=args.fk_minimum_fit_rows,
-        minimum_noise_variance=args.fk_minimum_noise_variance,
-    )
+    conservation_config = ConservationConfig()
+    generator_config = FKGeneratorConfig()
     solver_config = FeynmanKacConfig(
         strong_threshold_sigma=args.strong_threshold_sigma,
-        potential_floor=args.fk_potential_floor,
-        noise_potential_weight=args.fk_noise_potential_weight,
-        uncertainty_potential_weight=args.fk_uncertainty_potential_weight,
-        incoherence_potential_weight=args.fk_incoherence_potential_weight,
-        maximum_potential=args.fk_maximum_potential,
-        mc_samples=args.mc_samples,
-        seed=args.seed,
     )
     pipeline_config = FKStockPipelineConfig()
     walk_config = WalkForwardConfig(
@@ -833,11 +817,10 @@ def _fk_stock_walk_forward(args: argparse.Namespace) -> int:
         "model_scope": "sector-pooled",
         "dataset_id": args.dataset_id,
         "three_layer_protocol": {
-            "conservation": "stochastic-continuity-v1",
-            "generator": "bayesian-local-diffusion-v1",
-            "solver": "feynman-kac-effective-potential-v1",
+            "input": "rolling-standardized-return-diffusion-v2",
+            "generator": "single-feature-bayesian-ridge-v2",
+            "solver": "zero-potential-posterior-v2",
         },
-        "conservation_config": asdict(conservation_config),
         "generator_config": asdict(generator_config),
         "solver_config": asdict(solver_config),
         "pipeline_config": asdict(pipeline_config),
@@ -871,6 +854,119 @@ def _fk_stock_walk_forward(args: argparse.Namespace) -> int:
                 "average_turnover",
             )
         },
+        "output_dir": args.output_dir,
+    }
+    Path(args.output_dir, "run-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _fk_stock_ablation(args: argparse.Namespace) -> int:
+    from .fk_stock import (
+        FKAblationConfig,
+        FKGeneratorConfig,
+        FeynmanKacConfig,
+        FeynmanKacPotentialConfig,
+        run_fk_stock_ablation,
+    )
+    from .stock_transformer import ConservationConfig
+    from .walk_forward import WalkForwardConfig
+
+    source = DuckDBBarSource(args.duckdb_path)
+    symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
+    if not symbols:
+        symbols = source.list_symbols(args.symbol_limit)
+    profile_config = ProfileConfig(
+        bin_width_bps=args.bin_width_bps,
+        max_profile_bins=args.max_profile_bins,
+        state_timeframes=("1d",),
+        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
+        relative_volume_min_observations=args.normalization_lookback_sessions,
+    )
+    label_config = LabelConfig(
+        standardization_lookback_sessions=args.return_standardization_lookback,
+        standardization_min_observations=args.return_standardization_min_observations,
+        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
+        strong_threshold_sigma=args.strong_threshold_sigma,
+    )
+    observations = []
+    data_summary: dict[str, dict[str, int]] = {}
+    for symbol in symbols:
+        bars = source.fetch(symbol, "1m", args.start, args.end)
+        states = PriceVolumeProfileBuilder(profile_config).build(bars)
+        if not states:
+            continue
+        labeled = ProfileLabelBuilder(label_config).build(states)
+        observations.append(labeled)
+        data_summary[symbol] = {
+            "bars": len(bars),
+            "profile_states": len(states),
+            "observations": len(labeled),
+        }
+    if not observations:
+        raise ValueError("none of the requested symbols produced observations")
+    conservation_config = ConservationConfig(
+        grid_points=args.conservation_grid_points,
+        ridge=args.conservation_ridge,
+    )
+    generator_config = FKGeneratorConfig(
+        drift_lookback_sessions=args.fk_drift_lookback_sessions,
+        ridge=args.fk_ridge,
+        minimum_return_history=args.fk_minimum_return_history,
+        minimum_fit_rows=args.fk_minimum_fit_rows,
+        minimum_noise_variance=args.fk_minimum_noise_variance,
+    )
+    solver_config = FeynmanKacConfig(
+        strong_threshold_sigma=args.strong_threshold_sigma,
+    )
+    potential_config = FeynmanKacPotentialConfig(
+        potential_floor=args.fk_potential_floor,
+        noise_potential_weight=args.fk_noise_potential_weight,
+        uncertainty_potential_weight=args.fk_uncertainty_potential_weight,
+        incoherence_potential_weight=args.fk_incoherence_potential_weight,
+        maximum_potential=args.fk_maximum_potential,
+        mc_samples=args.mc_samples,
+        seed=args.seed,
+    )
+    walk_config = WalkForwardConfig(
+        minimum_train_sessions=args.minimum_train_sessions,
+        tuning_sessions=args.tuning_sessions,
+        test_sessions=args.test_sessions,
+        step_sessions=args.test_sessions,
+        max_folds=1,
+    )
+    result = run_fk_stock_ablation(
+        observations,
+        conservation_config,
+        generator_config,
+        solver_config,
+        potential_config,
+        walk_config,
+        output_dir=args.output_dir,
+        dataset_id=args.dataset_id,
+        ablation_config=FKAblationConfig(
+            log_loss_tolerance=args.ablation_log_loss_tolerance,
+            brier_tolerance=args.ablation_brier_tolerance,
+        ),
+    )
+    selected_outer = next(
+        item
+        for item in result.outer_potential_results
+        if item["name"] == result.selected_potential
+    )
+    summary = {
+        "strategy": "fk-stock-ablation",
+        "dataset_id": args.dataset_id,
+        "symbols_requested": len(symbols),
+        "symbols_loaded": len(observations),
+        "selected_features": list(result.selected_features),
+        "selected_feature_count": len(result.selected_features),
+        "selected_potential": result.selected_potential,
+        "selected_outer_metrics": selected_outer,
+        "fold": result.fold,
+        "data": data_summary,
         "output_dir": args.output_dir,
     }
     Path(args.output_dir, "run-summary.json").write_text(
@@ -1085,23 +1181,45 @@ def build_parser() -> argparse.ArgumentParser:
     fk.add_argument("--bin-width-bps", type=float, default=10.0)
     fk.add_argument("--max-profile-bins", type=int, default=512)
     fk.add_argument("--normalization-lookback-sessions", type=int, default=10)
-    fk.add_argument("--conservation-grid-points", type=int, default=64)
-    fk.add_argument("--conservation-ridge", type=float, default=1e-3)
-    fk.add_argument("--fk-drift-lookback-sessions", type=int, default=20)
-    fk.add_argument("--fk-ridge", type=float, default=1.0)
-    fk.add_argument("--fk-minimum-return-history", type=int, default=5)
-    fk.add_argument("--fk-minimum-fit-rows", type=int, default=20)
-    fk.add_argument("--fk-minimum-noise-variance", type=float, default=1e-4)
-    fk.add_argument("--fk-potential-floor", type=float, default=0.0)
-    fk.add_argument("--fk-noise-potential-weight", type=float, default=0.75)
-    fk.add_argument("--fk-uncertainty-potential-weight", type=float, default=0.75)
-    fk.add_argument("--fk-incoherence-potential-weight", type=float, default=0.25)
-    fk.add_argument("--fk-maximum-potential", type=float, default=4.0)
-    fk.add_argument("--mc-samples", type=int, default=64)
     fk.add_argument("--uncertainty-aversion", type=float, default=2.0)
     fk.add_argument("--transaction-cost-bps", type=float, default=10.0)
-    fk.add_argument("--seed", type=int, default=7)
     fk.set_defaults(handler=_fk_stock_walk_forward)
+
+    ablation = subparsers.add_parser("fk-stock-ablation")
+    ablation.add_argument("--duckdb-path", required=True)
+    ablation.add_argument("--symbols", default="")
+    ablation.add_argument("--symbol-limit", type=int, default=10)
+    ablation.add_argument("--dataset-id", required=True)
+    ablation.add_argument("--start", required=True)
+    ablation.add_argument("--end", required=True)
+    ablation.add_argument("--output-dir", required=True)
+    ablation.add_argument("--strong-threshold-sigma", type=float, default=0.75)
+    ablation.add_argument("--return-standardization-lookback", type=int, default=20)
+    ablation.add_argument("--return-standardization-min-observations", type=int, default=10)
+    ablation.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
+    ablation.add_argument("--minimum-train-sessions", type=int, default=252)
+    ablation.add_argument("--tuning-sessions", type=int, default=60)
+    ablation.add_argument("--test-sessions", type=int, default=30)
+    ablation.add_argument("--bin-width-bps", type=float, default=10.0)
+    ablation.add_argument("--max-profile-bins", type=int, default=512)
+    ablation.add_argument("--normalization-lookback-sessions", type=int, default=10)
+    ablation.add_argument("--conservation-grid-points", type=int, default=64)
+    ablation.add_argument("--conservation-ridge", type=float, default=1e-3)
+    ablation.add_argument("--fk-drift-lookback-sessions", type=int, default=20)
+    ablation.add_argument("--fk-ridge", type=float, default=1.0)
+    ablation.add_argument("--fk-minimum-return-history", type=int, default=5)
+    ablation.add_argument("--fk-minimum-fit-rows", type=int, default=20)
+    ablation.add_argument("--fk-minimum-noise-variance", type=float, default=1e-4)
+    ablation.add_argument("--fk-potential-floor", type=float, default=0.0)
+    ablation.add_argument("--fk-noise-potential-weight", type=float, default=0.75)
+    ablation.add_argument("--fk-uncertainty-potential-weight", type=float, default=0.75)
+    ablation.add_argument("--fk-incoherence-potential-weight", type=float, default=0.25)
+    ablation.add_argument("--fk-maximum-potential", type=float, default=4.0)
+    ablation.add_argument("--mc-samples", type=int, default=16)
+    ablation.add_argument("--seed", type=int, default=7)
+    ablation.add_argument("--ablation-log-loss-tolerance", type=float, default=1e-3)
+    ablation.add_argument("--ablation-brier-tolerance", type=float, default=5e-4)
+    ablation.set_defaults(handler=_fk_stock_ablation)
     return parser
 
 

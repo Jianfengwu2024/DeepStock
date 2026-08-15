@@ -81,7 +81,7 @@
           </div>
         </details>
 
-        <details class="form-section" open>
+        <details class="form-section neural-only" open>
           <summary id="state-section-title">每日相空间态</summary>
           <div class="fixed-spec-grid">
             <div class="fixed-spec"><span>状态构造</span><strong>1 分钟线 → 每日态</strong></div>
@@ -89,8 +89,8 @@
             <div class="fixed-spec bnhmm-only"><span>日状态元数据</span><strong>9 个归一化特征</strong></div>
             <div class="fixed-spec bnhmm-only"><span>直方图输入</span><strong id="profile-channel-count">4 + 3² = 13 通道</strong></div>
             <div class="fixed-spec bnhmm-only"><span>速度表示</span><strong>Z2 流体矩 + 层流序参量</strong></div>
-            <div class="fixed-spec density-only hidden"><span>守恒密度</span><strong>价格坐标上的归一化成交量</strong></div>
-            <div class="fixed-spec density-only hidden"><span>使用范围</span><strong>作为价格生成元的条件场</strong></div>
+            <div class="fixed-spec stock-only hidden"><span>守恒密度</span><strong>价格坐标上的归一化成交量</strong></div>
+            <div class="fixed-spec stock-only hidden"><span>使用范围</span><strong>作为价格生成元的条件场</strong></div>
           </div>
           <label class="bnhmm-only">输入特征组合（消融测试）
             <select name="feature_mode">
@@ -117,53 +117,43 @@
           </div>
         </details>
 
-        <details class="form-section density-only hidden" open>
+        <details class="form-section stock-only hidden" open>
           <summary>守恒密度与生成链</summary>
-          <div class="pipeline-steps stock-only hidden" aria-label="StockTransformer 三层流水线">
+          <div class="pipeline-steps" aria-label="StockTransformer 三层流水线">
             <div><span>1</span><strong>守恒量发现</strong><small>拟合随机连续性方程</small></div>
             <i data-lucide="arrow-down"></i>
             <div><span>2</span><strong>分词与断句</strong><small>只读取守恒流和残差</small></div>
             <i data-lucide="arrow-down"></i>
             <div><span>3</span><strong>Transformer</strong><small>只读取守恒 token</small></div>
           </div>
-          <div class="pipeline-steps fk-only hidden" aria-label="FKStock 三层求解链">
-            <div><span>1</span><strong>守恒密度</strong><small>分离确定流与随机流</small></div>
-            <i data-lucide="arrow-down"></i>
-            <div><span>2</span><strong>贝叶斯生成元</strong><small>闭式估计漂移、扩散与参数协方差</small></div>
-            <i data-lucide="arrow-down"></i>
-            <div><span>3</span><strong>Feynman-Kac</strong><small>有效势约束后的四状态后验</small></div>
-          </div>
           <div class="parameter-group-title">守恒量发现</div>
           <div class="two-columns">
             <label>固定价格网格<input name="conservation_grid_points" type="number" min="16" max="512"></label>
             <label>守恒拟合正则<input name="conservation_ridge" type="number" min="0" max="10" step="0.0001"></label>
           </div>
-          <div class="parameter-group-title stock-only hidden">守恒分词与断句</div>
-          <div class="two-columns stock-only hidden">
+          <div class="parameter-group-title">守恒分词与断句</div>
+          <div class="two-columns">
             <label>最小词宽<input name="minimum_token_bins" type="number" min="1" max="64"></label>
             <label>每日最大 Token<input name="maximum_tokens" type="number" min="2" max="128"></label>
             <label>断句阈值<input name="boundary_threshold" type="number" min="0.01" max="20" step="0.01"></label>
           </div>
-          <div class="fk-only hidden">
-            <div class="parameter-group-title">贝叶斯局部生成元</div>
-            <div class="two-columns">
-              <label>漂移回看日<input name="fk_drift_lookback_sessions" type="number" min="2" max="252"></label>
-              <label>最少成熟收益<input name="fk_minimum_return_history" type="number" min="2" max="252"></label>
-              <label>生成元 Ridge<input name="fk_ridge" type="number" min="0.000001" max="1000" step="0.01"></label>
-              <label>最少拟合样本<input name="fk_minimum_fit_rows" type="number" min="2"></label>
-              <label>扩散方差下限<input name="fk_minimum_noise_variance" type="number" min="0.000001" max="100" step="0.0001"></label>
-            </div>
-            <div class="parameter-group-title">有效势</div>
-            <div class="two-columns">
-              <label>势能下限<input name="fk_potential_floor" type="number" min="0" max="20" step="0.05"></label>
-              <label>随机流势权重<input name="fk_noise_potential_weight" type="number" min="0" max="20" step="0.05"></label>
-              <label>认知不确定性势权重<input name="fk_uncertainty_potential_weight" type="number" min="0" max="20" step="0.05"></label>
-              <label>流不一致势权重<input name="fk_incoherence_potential_weight" type="number" min="0" max="20" step="0.05"></label>
-              <label>最大有效势<input name="fk_maximum_potential" type="number" min="0" max="100" step="0.1"></label>
-            </div>
+          <div class="isolation-note"><i data-lucide="shield-check"></i><span>每个滚动窗口只用训练期发现守恒方程；守恒层、分词层和模型层没有交叉拟合。</span></div>
+        </details>
+
+        <details class="form-section fk-only hidden" open>
+          <summary>消融后最小模型</summary>
+          <div class="pipeline-steps" aria-label="FKStock 最小求解链">
+            <div><span>1</span><strong>滚动扩散</strong><small>只读取已成熟收益的波动尺度</small></div>
+            <i data-lucide="arrow-down"></i>
+            <div><span>2</span><strong>贝叶斯后验</strong><small>单特征 Ridge 生成元</small></div>
           </div>
-          <div class="isolation-note stock-only hidden"><i data-lucide="shield-check"></i><span>每个滚动窗口只用训练期发现守恒方程；守恒层、分词层和模型层没有交叉拟合。</span></div>
-          <div class="isolation-note fk-only hidden"><i data-lucide="shield-check"></i><span>成交量密度不是价格概率。它只约束局部价格生成元；每折外测前冻结守恒律、漂移、扩散与有效势参数。</span></div>
+          <div class="fixed-spec-grid">
+            <div class="fixed-spec"><span>有效输入</span><strong>近期标准化收益扩散度</strong></div>
+            <div class="fixed-spec"><span>输入维数</span><strong>1</strong></div>
+            <div class="fixed-spec"><span>有效势</span><strong>已由消融实验移除</strong></div>
+            <div class="fixed-spec"><span>守恒密度</span><strong>已由消融实验移除</strong></div>
+          </div>
+          <div class="isolation-note"><i data-lucide="shield-check"></i><span>正式模型不再计算守恒流、密度几何、漂移或上一日收益；固定实现参数不作为调参旋钮。</span></div>
         </details>
 
         <details class="form-section" open>
@@ -179,7 +169,7 @@
             <label>收益标准化回看日<input name="return_standardization_lookback" type="number" min="2" max="252"></label>
             <label>最少标准化样本<input name="return_standardization_min_observations" type="number" min="2" max="252"></label>
             <label>波动率下限（%）<input name="minimum_return_scale_percent" type="number" min="0.01" max="5" step="0.01"></label>
-            <label>后验 MC 采样<input name="mc_samples" type="number" min="2" max="256"></label>
+            <label class="neural-only">后验 MC 采样<input name="mc_samples" type="number" min="2" max="256"></label>
           </div>
         </details>
 

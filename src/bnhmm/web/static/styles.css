@@ -125,10 +125,11 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .empty-state strong { font-size: 13px; }
 .job-view { max-width: 1240px; margin: 0 auto; }
 .run-toolbar { min-height: 50px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.run-actions { display: flex; align-items: center; gap: 7px; }
-.run-title-row { display: flex; align-items: center; gap: 10px; }
-.run-title-row h2 { margin: 0; font-size: 18px; }
-.run-meta { margin-top: 6px; color: var(--muted); font-size: 11px; }
+.run-toolbar > div:first-child { flex: 1 1 auto; min-width: 0; }
+.run-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; }
+.run-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.run-title-row h2 { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 18px; line-height: 1.25; }
+.run-meta { margin-top: 6px; overflow-wrap: anywhere; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .run-gpu-memory { display: inline-flex; margin-top: 7px; padding: 4px 7px; color: var(--blue); background: #eaf3f9; border-radius: 3px; font-size: 10px; font-weight: 700; }
 .progress-band { margin: 15px 0; padding: 12px; background: var(--amber-soft); border-left: 3px solid #d78a1c; }
 .progress-track { height: 3px; margin-bottom: 9px; overflow: hidden; background: #f0d6ad; }

@@ -56,7 +56,7 @@ class FKPipelineTests(unittest.TestCase):
                     minimum_return_history=2,
                     minimum_fit_rows=8,
                 ),
-                FeynmanKacConfig(mc_samples=8),
+                FeynmanKacConfig(),
                 FKStockPipelineConfig(),
                 WalkForwardConfig(
                     minimum_train_sessions=12,
@@ -75,6 +75,8 @@ class FKPipelineTests(unittest.TestCase):
         self.assertEqual(len(result.folds), 1)
         self.assertGreater(len(result.predictions), 0)
         self.assertEqual(model["strategy"], "fk-stock")
+        self.assertEqual(model["generator_posterior"]["feature_names"], ["rolling_diffusion"])
+        self.assertIsNone(model["conservation_law"])
         self.assertIn("generator_posterior", model)
         self.assertIn("outer_field_diagnostics", result.folds[0])
         self.assertTrue(

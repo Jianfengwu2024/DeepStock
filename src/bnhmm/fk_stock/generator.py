@@ -30,6 +30,17 @@ FEATURE_NAMES = (
     "stochastic_current_fraction",
     "density_gradient_energy",
 )
+SELECTED_FEATURES = ("rolling_diffusion",)
+CONSERVATION_FEATURES = frozenset(
+    {
+        "signed_conservation_flow",
+        "current_coherence",
+        "density_center_change",
+        "density_spread_change",
+        "stochastic_current_fraction",
+        "density_gradient_energy",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +50,7 @@ class FKGeneratorConfig:
     minimum_return_history: int = 5
     minimum_fit_rows: int = 20
     minimum_noise_variance: float = 1e-4
+    active_features: tuple[str, ...] = SELECTED_FEATURES
 
     def __post_init__(self) -> None:
         if self.drift_lookback_sessions < 2:
@@ -49,6 +61,11 @@ class FKGeneratorConfig:
             raise ValueError("generator regularization and sample count must be positive")
         if self.minimum_noise_variance <= 0:
             raise ValueError("minimum generator variance must be positive")
+        if len(self.active_features) != len(set(self.active_features)):
+            raise ValueError("active FK features must be unique")
+        unsupported = set(self.active_features) - set(FEATURE_NAMES)
+        if unsupported:
+            raise ValueError(f"unsupported FK features: {sorted(unsupported)}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +119,12 @@ class BayesianGeneratorPosterior:
             raise ValueError("generator posterior requires fitted observations")
 
     def design_vector(self, row: FKFeatureRow) -> FloatArray:
-        normalized = (row.features - self.feature_location) / self.feature_scale
+        indices = np.asarray(
+            [FEATURE_NAMES.index(name) for name in self.feature_names], dtype=np.int64
+        )
+        normalized = (
+            row.features[indices] - self.feature_location
+        ) / self.feature_scale
         return np.concatenate((np.ones(1, dtype=np.float64), normalized))
 
     def as_json(self) -> dict[str, object]:
@@ -123,12 +145,21 @@ class FKGenerator:
     def __init__(self, config: FKGeneratorConfig | None = None) -> None:
         self.config = config or FKGeneratorConfig()
 
+    @property
+    def requires_conservation_law(self) -> bool:
+        return bool(set(self.config.active_features) & CONSERVATION_FEATURES)
+
     def fit(self, rows: Sequence[FKFeatureRow]) -> BayesianGeneratorPosterior:
         if len(rows) < self.config.minimum_fit_rows:
             raise ValueError(
                 f"FK generator needs at least {self.config.minimum_fit_rows} rows"
             )
-        features = np.asarray([row.features for row in rows], dtype=np.float64)
+        indices = np.asarray(
+            [FEATURE_NAMES.index(name) for name in self.config.active_features],
+            dtype=np.int64,
+        )
+        all_features = np.asarray([row.features for row in rows], dtype=np.float64)
+        features = all_features[:, indices]
         targets = np.asarray([row.standardized_return for row in rows], dtype=np.float64)
         location = features.mean(axis=0)
         scale = features.std(axis=0, ddof=1)
@@ -158,44 +189,83 @@ class FKGenerator:
             noise_variance=noise_variance,
             class_prior=class_prior,
             fit_rows=len(rows),
+            feature_names=self.config.active_features,
         )
 
     def build_rows(
         self,
         observations: Sequence[ProfileObservations],
-        law: ConservationLaw,
-        conservation_config: ConservationConfig,
+        law: ConservationLaw | None = None,
+        conservation_config: ConservationConfig | None = None,
     ) -> list[FKFeatureRow]:
-        projector = DensityProjector(conservation_config)
-        discoverer = ConservationLawDiscoverer(conservation_config)
+        if self.requires_conservation_law and (law is None or conservation_config is None):
+            raise ValueError("active conservation features require a fitted law")
+        projector = (
+            DensityProjector(conservation_config)
+            if self.requires_conservation_law and conservation_config is not None
+            else None
+        )
+        discoverer = (
+            ConservationLawDiscoverer(conservation_config)
+            if self.requires_conservation_law and conservation_config is not None
+            else None
+        )
         rows: list[FKFeatureRow] = []
         for item in observations:
-            frames = _frames(item, projector)
-            for index in range(1, len(frames)):
+            frames = _frames(item, projector) if projector is not None else None
+            for index in range(1, len(item)):
                 signal_time = item.signal_times[index]
                 matured = np.flatnonzero(item.target_times < signal_time)
                 matured = matured[-self.config.drift_lookback_sessions :]
                 if len(matured) < self.config.minimum_return_history:
                     continue
-                transition = discoverer.transform(frames[index - 1], frames[index], law)
                 known_returns = item.standardized_returns[matured]
-                current_l1 = max(float(np.abs(transition.current).sum()), 1e-10)
-                signed_flow = float(transition.current.sum() / current_l1)
-                coherence = float(abs(transition.current.sum()) / current_l1)
-                stochastic_fraction = float(
-                    np.linalg.norm(transition.stochastic_current)
-                    / max(np.linalg.norm(transition.current), 1e-10)
-                )
-                grid = discoverer.grid
-                previous_center = float(grid @ transition.previous_density)
-                current_center = float(grid @ transition.density)
-                previous_spread = float(
-                    np.sqrt(np.maximum(((grid - previous_center) ** 2) @ transition.previous_density, 0.0))
-                )
-                current_spread = float(
-                    np.sqrt(np.maximum(((grid - current_center) ** 2) @ transition.density, 0.0))
-                )
-                continuity_error = float(np.sqrt(np.mean(np.square(transition.continuity_residual))))
+                signed_flow = 0.0
+                coherence = 1.0
+                stochastic_fraction = 0.0
+                center_change = 0.0
+                spread_change = 0.0
+                gradient_energy = 0.0
+                continuity_error = 0.0
+                if frames is not None and discoverer is not None and law is not None:
+                    transition = discoverer.transform(
+                        frames[index - 1], frames[index], law
+                    )
+                    current_l1 = max(float(np.abs(transition.current).sum()), 1e-10)
+                    signed_flow = float(transition.current.sum() / current_l1)
+                    coherence = float(abs(transition.current.sum()) / current_l1)
+                    stochastic_fraction = float(
+                        np.linalg.norm(transition.stochastic_current)
+                        / max(np.linalg.norm(transition.current), 1e-10)
+                    )
+                    grid = discoverer.grid
+                    previous_center = float(grid @ transition.previous_density)
+                    current_center = float(grid @ transition.density)
+                    previous_spread = float(
+                        np.sqrt(
+                            np.maximum(
+                                ((grid - previous_center) ** 2)
+                                @ transition.previous_density,
+                                0.0,
+                            )
+                        )
+                    )
+                    current_spread = float(
+                        np.sqrt(
+                            np.maximum(
+                                ((grid - current_center) ** 2) @ transition.density,
+                                0.0,
+                            )
+                        )
+                    )
+                    center_change = current_center - previous_center
+                    spread_change = current_spread - previous_spread
+                    gradient_energy = float(
+                        np.sqrt(np.mean(np.square(transition.density_gradient)))
+                    )
+                    continuity_error = float(
+                        np.sqrt(np.mean(np.square(transition.continuity_residual)))
+                    )
                 features = np.asarray(
                     (
                         known_returns.mean(),
@@ -203,10 +273,10 @@ class FKGenerator:
                         known_returns.std(ddof=1),
                         signed_flow,
                         coherence,
-                        current_center - previous_center,
-                        current_spread - previous_spread,
+                        center_change,
+                        spread_change,
                         stochastic_fraction,
-                        np.sqrt(np.mean(np.square(transition.density_gradient))),
+                        gradient_energy,
                     ),
                     dtype=np.float64,
                 )

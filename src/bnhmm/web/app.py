@@ -103,7 +103,6 @@ def config(request: Request) -> dict[str, Any]:
         "strategy": "fk-stock",
         "training_scope": "sector-pooled",
         "device": "cpu",
-        "mc_samples": 64,
     }
     return {
         "devices": _devices(),

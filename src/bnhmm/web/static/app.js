@@ -23,10 +23,6 @@ const numberFields = new Set([
   "transaction_cost_bps", "seed", "conservation_weight",
   "conservation_grid_points", "conservation_ridge", "minimum_token_bins",
   "maximum_tokens", "boundary_threshold",
-  "fk_drift_lookback_sessions", "fk_ridge", "fk_minimum_return_history",
-  "fk_minimum_fit_rows", "fk_minimum_noise_variance", "fk_potential_floor",
-  "fk_noise_potential_weight", "fk_uncertainty_potential_weight",
-  "fk_incoherence_potential_weight", "fk_maximum_potential",
 ]);
 
 const strategyParameterFields = {
@@ -42,13 +38,7 @@ const strategyParameterFields = {
     "minimum_token_bins", "maximum_tokens", "boundary_threshold", "sequence_length",
     "d_model", "heads", "layers", "feedforward_dim", "dropout", "mc_samples", "device",
   ],
-  "fk-stock": [
-    "conservation_grid_points", "conservation_ridge", "fk_drift_lookback_sessions",
-    "fk_ridge", "fk_minimum_return_history", "fk_minimum_fit_rows",
-    "fk_minimum_noise_variance", "fk_potential_floor", "fk_noise_potential_weight",
-    "fk_uncertainty_potential_weight", "fk_incoherence_potential_weight",
-    "fk_maximum_potential", "mc_samples", "device",
-  ],
+  "fk-stock": [],
 };
 
 const statusText = {
@@ -144,7 +134,6 @@ function syncStrategySelection() {
   document.querySelectorAll(".stock-only").forEach(element => element.classList.toggle("hidden", !stock));
   document.querySelectorAll(".fk-only").forEach(element => element.classList.toggle("hidden", !fk));
   document.querySelectorAll(".neural-only").forEach(element => element.classList.toggle("hidden", !neural));
-  document.querySelectorAll(".density-only").forEach(element => element.classList.toggle("hidden", strategy === "bnhmm"));
   const scope = document.querySelector("#training-scope");
   const perSymbol = scope.querySelector('option[value="per-symbol"]');
   perSymbol.disabled = stock || fk;
@@ -270,21 +259,6 @@ function syncModelConstraints() {
   auxiliaryInitialField.setCustomValidity(
     !fk && Number(auxiliaryInitialField.value) < Number(auxiliaryFloorField.value)
       ? "辅助初始权重不能低于辅助权重下限"
-      : "",
-  );
-  const fkLookback = document.querySelector("[name=fk_drift_lookback_sessions]");
-  const fkHistory = document.querySelector("[name=fk_minimum_return_history]");
-  const fkFloor = document.querySelector("[name=fk_potential_floor]");
-  const fkMaximum = document.querySelector("[name=fk_maximum_potential]");
-  fkHistory.max = fkLookback.value;
-  fkHistory.setCustomValidity(
-    fk && Number(fkHistory.value) > Number(fkLookback.value)
-      ? "最少成熟收益不能超过漂移回看日"
-      : "",
-  );
-  fkMaximum.setCustomValidity(
-    fk && Number(fkMaximum.value) < Number(fkFloor.value)
-      ? "最大有效势不能低于势能下限"
       : "",
   );
 }
@@ -446,9 +420,9 @@ function renderJob(job) {
   if (fk) {
     const fields = job.summary?.folds?.at(-1)?.outer_field_diagnostics;
     const fieldText = fields
-      ? `μ=${formatNumber(fields.effective_drift_mean, 4)} · σ²=${formatNumber(fields.diffusion_variance_mean, 4)} · V=${formatNumber(fields.effective_potential_mean, 3)}`
-      : `${job.request.conservation_grid_points}点守恒网格`;
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 守恒密度 → 贝叶斯局部生成元 → Feynman-Kac · ${fieldText} · CPU 闭式求解`;
+      ? `μ=${formatNumber(fields.effective_drift_mean, 4)} · σ²=${formatNumber(fields.diffusion_variance_mean, 4)}`
+      : "单特征贝叶斯生成元";
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 滚动扩散 → 贝叶斯后验 · ${fieldText} · 1 个有效输入`;
   } else if (stock) {
     const law = job.summary?.folds?.at(-1)?.conservation_law;
     const tokens = job.summary?.folds?.at(-1)?.token_diagnostics;
@@ -513,7 +487,7 @@ function renderJob(job) {
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
     ? (fk ? "等待 FKStock 任务" : "等待 GPU 任务")
-    : fk ? "FKStock 三层 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : "BNHMM Walk-forward 运行中";
+    : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -840,7 +814,7 @@ function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
   document.querySelectorAll("[name=strategy]").forEach(field => field.addEventListener("change", changeStrategy));
-  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial", "fk_drift_lookback_sessions", "fk_minimum_return_history", "fk_potential_floor", "fk_maximum_potential"]) {
+  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);

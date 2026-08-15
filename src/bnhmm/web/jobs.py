@@ -74,16 +74,6 @@ class WalkForwardJobRequest(BaseModel):
     minimum_token_bins: int = Field(2, ge=1, le=64)
     maximum_tokens: int = Field(16, ge=2, le=128)
     boundary_threshold: float = Field(1.5, gt=0.0, le=20.0)
-    fk_drift_lookback_sessions: int = Field(20, ge=2, le=252)
-    fk_ridge: float = Field(1.0, gt=0.0, le=1000.0)
-    fk_minimum_return_history: int = Field(5, ge=2, le=252)
-    fk_minimum_fit_rows: int = Field(20, ge=2, le=1000000)
-    fk_minimum_noise_variance: float = Field(1e-4, gt=0.0, le=100.0)
-    fk_potential_floor: float = Field(0.0, ge=0.0, le=20.0)
-    fk_noise_potential_weight: float = Field(0.75, ge=0.0, le=20.0)
-    fk_uncertainty_potential_weight: float = Field(0.75, ge=0.0, le=20.0)
-    fk_incoherence_potential_weight: float = Field(0.25, ge=0.0, le=20.0)
-    fk_maximum_potential: float = Field(4.0, ge=0.0, le=100.0)
     profile_protocol: Literal[
         "phase-space-joint-return-v6",
         "phase-space-joint-v5",
@@ -176,10 +166,6 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("current jobs require a rolling stride of one")
             if self.sequence_length > 20:
                 raise ValueError("recent context cannot exceed twenty trading states")
-            if self.fk_minimum_return_history > self.fk_drift_lookback_sessions:
-                raise ValueError("FK return history cannot exceed its drift lookback")
-            if self.fk_maximum_potential < self.fk_potential_floor:
-                raise ValueError("FK maximum potential cannot be below its floor")
         if self.d_model % self.heads:
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
@@ -494,38 +480,10 @@ def _build_fk_stock_command(
         str(request.max_profile_bins),
         "--normalization-lookback-sessions",
         str(request.normalization_lookback_sessions),
-        "--conservation-grid-points",
-        str(request.conservation_grid_points),
-        "--conservation-ridge",
-        str(request.conservation_ridge),
-        "--fk-drift-lookback-sessions",
-        str(request.fk_drift_lookback_sessions),
-        "--fk-ridge",
-        str(request.fk_ridge),
-        "--fk-minimum-return-history",
-        str(request.fk_minimum_return_history),
-        "--fk-minimum-fit-rows",
-        str(request.fk_minimum_fit_rows),
-        "--fk-minimum-noise-variance",
-        str(request.fk_minimum_noise_variance),
-        "--fk-potential-floor",
-        str(request.fk_potential_floor),
-        "--fk-noise-potential-weight",
-        str(request.fk_noise_potential_weight),
-        "--fk-uncertainty-potential-weight",
-        str(request.fk_uncertainty_potential_weight),
-        "--fk-incoherence-potential-weight",
-        str(request.fk_incoherence_potential_weight),
-        "--fk-maximum-potential",
-        str(request.fk_maximum_potential),
-        "--mc-samples",
-        str(request.mc_samples),
         "--uncertainty-aversion",
         str(request.uncertainty_aversion),
         "--transaction-cost-bps",
         str(request.transaction_cost_bps),
-        "--seed",
-        str(request.seed),
     ]
     if request.max_folds is not None:
         command.extend(("--max-folds", str(request.max_folds)))

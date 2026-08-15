@@ -16,17 +16,25 @@ from .generator import BayesianGeneratorPosterior, FKFeatureRow
 @dataclass(frozen=True, slots=True)
 class FeynmanKacConfig:
     strong_threshold_sigma: float = 0.75
-    potential_floor: float = 0.0
-    noise_potential_weight: float = 0.75
-    uncertainty_potential_weight: float = 0.75
-    incoherence_potential_weight: float = 0.25
-    maximum_potential: float = 4.0
-    mc_samples: int = 64
-    seed: int = 7
 
     def __post_init__(self) -> None:
         if self.strong_threshold_sigma <= 0:
             raise ValueError("strong-state threshold must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class FeynmanKacPotentialConfig:
+    """Research-only effective-potential terms retained for reproducible ablation."""
+
+    potential_floor: float = 0.0
+    noise_potential_weight: float = 0.0
+    uncertainty_potential_weight: float = 0.0
+    incoherence_potential_weight: float = 0.0
+    maximum_potential: float = 0.0
+    mc_samples: int = 16
+    seed: int = 7
+
+    def __post_init__(self) -> None:
         if min(
             self.potential_floor,
             self.noise_potential_weight,
@@ -43,8 +51,13 @@ class FeynmanKacConfig:
 class FeynmanKacSolver:
     """Apply an effective killing potential to a Bayesian local diffusion."""
 
-    def __init__(self, config: FeynmanKacConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: FeynmanKacConfig | None = None,
+        potential_config: FeynmanKacPotentialConfig | None = None,
+    ) -> None:
         self.config = config or FeynmanKacConfig()
+        self.potential_config = potential_config
 
     def predict(
         self, row: FKFeatureRow, posterior: BayesianGeneratorPosterior
@@ -59,27 +72,33 @@ class FeynmanKacSolver:
         noise_fraction = row.stochastic_current_fraction / (
             1.0 + row.stochastic_current_fraction
         )
-        potential = float(
-            np.clip(
-                self.config.potential_floor
-                + self.config.noise_potential_weight * noise_fraction
-                + self.config.uncertainty_potential_weight * epistemic_fraction
-                + self.config.incoherence_potential_weight
-                * (1.0 - row.current_coherence),
-                self.config.potential_floor,
-                self.config.maximum_potential,
+        potential = 0.0
+        if self.potential_config is not None:
+            potential = float(
+                np.clip(
+                    self.potential_config.potential_floor
+                    + self.potential_config.noise_potential_weight * noise_fraction
+                    + self.potential_config.uncertainty_potential_weight
+                    * epistemic_fraction
+                    + self.potential_config.incoherence_potential_weight
+                    * (1.0 - row.current_coherence),
+                    self.potential_config.potential_floor,
+                    self.potential_config.maximum_potential,
+                )
             )
-        )
         survival = float(np.exp(-potential))
         drift = raw_drift * survival
         epistemic_variance = raw_epistemic * survival**2
         aleatoric_variance = posterior.noise_variance
 
+        sample_count = (
+            self.potential_config.mc_samples if self.potential_config is not None else 16
+        )
         rng = np.random.default_rng(self._row_seed(row))
         coefficients = rng.multivariate_normal(
             posterior.coefficient_mean,
             posterior.coefficient_covariance,
-            size=self.config.mc_samples,
+            size=sample_count,
             check_valid="ignore",
         )
         sampled_drift = (coefficients @ design) * survival
@@ -137,7 +156,8 @@ class FeynmanKacSolver:
         return record, diagnostics
 
     def _row_seed(self, row: FKFeatureRow) -> int:
-        payload = f"{self.config.seed}|{row.symbol}|{row.signal_time}".encode("utf-8")
+        seed = self.potential_config.seed if self.potential_config is not None else 7
+        payload = f"{seed}|{row.symbol}|{row.signal_time}".encode("utf-8")
         digest = blake2b(payload, digest_size=8).digest()
         return int.from_bytes(digest, "little")
 
