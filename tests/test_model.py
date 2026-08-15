@@ -72,8 +72,22 @@ class BNHMMNetworkTests(unittest.TestCase):
         )
         self.assertIsNotNone(self.model.tokenizer.auxiliary_gate_logits.grad)
         self.assertTrue(
-            torch.all(self.model.tokenizer.effective_auxiliary_gates() < 0.05)
+            torch.allclose(
+                self.model.tokenizer.effective_auxiliary_gates(),
+                torch.full((2,), 0.75),
+                atol=1e-6,
+            )
         )
+
+    def test_auxiliary_warmup_forces_enabled_branches_to_full_weight(self) -> None:
+        self.model.tokenizer.set_auxiliary_warmup(True)
+        self.assertEqual(
+            self.model.tokenizer.effective_auxiliary_gates().tolist(), [1.0, 1.0]
+        )
+        self.model.tokenizer.set_auxiliary_warmup(False)
+        gates = self.model.tokenizer.effective_auxiliary_gates()
+        self.assertTrue(torch.all(gates >= 0.25))
+        self.assertTrue(torch.all(gates < 1.0))
 
     def test_posterior_separates_uncertainty(self) -> None:
         values = profiles(batch=1)

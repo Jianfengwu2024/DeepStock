@@ -6,7 +6,7 @@
   <title>BNHMM Lab</title>
   <link rel="stylesheet" href="/static/styles.css?v=0.10.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.10.0" defer></script>
+  <script src="/static/app.js?v=0.13.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -84,12 +84,17 @@
           </div>
           <label>输入特征组合（消融测试）
             <select name="feature_mode">
-              <option value="gated-full">价格主干 + 门控成交量/联合速度</option>
-              <option value="price-only" selected>仅价格主干</option>
+              <option value="gated-full" selected>价格主干 + 门控成交量/联合速度</option>
+              <option value="price-only">仅价格主干</option>
               <option value="price-volume">价格 + 成交量</option>
               <option value="price-velocity">价格 + 联合速度</option>
             </select>
           </label>
+          <div class="three-columns">
+            <label>辅助权重下限<input name="auxiliary_gate_floor" type="number" min="0" max="0.95" step="0.05"></label>
+            <label>辅助初始权重<input name="auxiliary_gate_initial" type="number" min="0" max="0.99" step="0.05"></label>
+            <label>全权重预热轮数<input name="auxiliary_warmup_epochs" type="number" min="0" max="1000"></label>
+          </div>
           <div class="two-columns">
             <label>每柱基点<input name="bin_width_bps" type="number" min="1" max="100" step="1"></label>
             <label>单日最大柱数<input name="max_profile_bins" type="number" min="8" max="2048"></label>

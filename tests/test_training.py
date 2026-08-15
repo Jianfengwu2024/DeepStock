@@ -317,6 +317,31 @@ class TrainerTests(unittest.TestCase):
         self.assertEqual(result.best_epoch, 1)
         self.assertTrue(np.isnan(result.best_validation_loss))
 
+    def test_auxiliary_gate_warmup_is_recorded_and_then_released(self) -> None:
+        model = ModelConfig(
+            max_profile_bins=32,
+            d_model=16,
+            motif_dim=4,
+            heads=4,
+            layers=1,
+            feedforward_dim=32,
+            max_sequence_length=8,
+        ).build(seed=7)
+        result = BNHMMTrainer(
+            model,
+            TrainerConfig(
+                epochs=2,
+                batch_size=1,
+                pretrain_epochs=0,
+                auxiliary_warmup_epochs=1,
+            ),
+        ).fit_fixed([sequence(4)])
+
+        self.assertEqual(result.history[0]["auxiliary_warmup"], 1.0)
+        self.assertEqual(result.history[0]["joint_velocity_gate"], 1.0)
+        self.assertEqual(result.history[1]["auxiliary_warmup"], 0.0)
+        self.assertGreaterEqual(result.history[1]["joint_velocity_gate"], 0.25)
+
 
 if __name__ == "__main__":
     unittest.main()

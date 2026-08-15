@@ -12,7 +12,7 @@ const state = {
 };
 
 const numberFields = new Set([
-  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "forward_sessions", "strong_threshold_sigma",
+  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "auxiliary_gate_floor", "auxiliary_gate_initial", "auxiliary_warmup_epochs", "forward_sessions", "strong_threshold_sigma",
   "return_standardization_lookback", "return_standardization_min_observations", "minimum_return_scale_percent",
   "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
   "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
@@ -113,6 +113,8 @@ function syncModelConstraints() {
   const standardizationMinimumField = document.querySelector("[name=return_standardization_min_observations]");
   const widthField = document.querySelector("[name=d_model]");
   const headsField = document.querySelector("[name=heads]");
+  const auxiliaryFloorField = document.querySelector("[name=auxiliary_gate_floor]");
+  const auxiliaryInitialField = document.querySelector("[name=auxiliary_gate_initial]");
   const velocityBins = Number(velocityField.value || 3);
   const minimum = 4 + velocityBins ** 2;
   latentField.min = String(minimum);
@@ -149,6 +151,11 @@ function syncModelConstraints() {
   headsField.setCustomValidity(
     width && heads && width % heads !== 0
       ? "状态编码宽度必须能被注意力头数整除"
+      : "",
+  );
+  auxiliaryInitialField.setCustomValidity(
+    Number(auxiliaryInitialField.value) < Number(auxiliaryFloorField.value)
+      ? "辅助初始权重不能低于辅助权重下限"
       : "",
   );
 }
@@ -331,6 +338,9 @@ function renderJob(job) {
     "price-velocity": "价格 + 联合速度",
     "legacy-entangled": "旧混合特征",
   })[job.request.feature_mode] || "旧混合特征";
+  const auxiliaryMode = job.request.feature_mode === "price-only"
+    ? "辅助分支关闭"
+    : `辅助门 ${Number(job.request.auxiliary_gate_initial ?? 0.05).toFixed(2)} 初始 / ${Number(job.request.auxiliary_gate_floor ?? 0).toFixed(2)} 下限 / ${job.request.auxiliary_warmup_epochs ?? 0} 轮全权重`;
   const outputMode = job.request.profile_protocol === "phase-space-joint-return-v6"
     ? ((job.summary?.class_support?.length ?? 4) === 3
       ? "连续收益后验 → 空/平/多（旧）"
@@ -345,7 +355,7 @@ function renderJob(job) {
     : job.request.strong_threshold_sigma == null
       ? `强弱分界 ±${Number(job.request.strong_threshold_percent ?? 1.5).toFixed(2)}%（旧）`
       : `强弱分界 ±${Number(job.request.strong_threshold_sigma).toFixed(2)}σ · ${job.request.return_standardization_lookback}日标准化`;
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${latentStates} 隐状态 → ${outputHead} · ${outputMode} · ${thresholdText} · ${stateMode} · ${profileMode} · ${job.request.device}`;
+  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${auxiliaryMode} · ${latentStates} 隐状态 → ${outputHead} · ${outputMode} · ${thresholdText} · ${stateMode} · ${profileMode} · ${job.request.device}`;
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
@@ -677,7 +687,7 @@ function applySymbols() {
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
-  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads"]) {
+  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);

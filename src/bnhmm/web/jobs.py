@@ -92,7 +92,10 @@ class WalkForwardJobRequest(BaseModel):
         "price-volume",
         "price-velocity",
         "legacy-entangled",
-    ] = "price-only"
+    ] = "gated-full"
+    auxiliary_gate_floor: float = Field(0.25, ge=0.0, lt=1.0)
+    auxiliary_gate_initial: float = Field(0.75, ge=0.0, lt=1.0)
+    auxiliary_warmup_epochs: int = Field(3, ge=0, le=1000)
     motif_dim: int = Field(16, ge=2, le=512)
     heads: int = Field(4, ge=1, le=64)
     layers: int = Field(2, ge=1, le=48)
@@ -164,6 +167,8 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("latent_states cannot be fewer than profile channels")
         if not legacy and self.transition_rank > self.latent_states:
             raise ValueError("transition_rank cannot exceed latent_states")
+        if self.auxiliary_gate_initial < self.auxiliary_gate_floor:
+            raise ValueError("auxiliary gate initial cannot be below its floor")
         return self
 
 
@@ -281,6 +286,12 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.velocity_smoothing),
         "--feature-mode",
         request.feature_mode,
+        "--auxiliary-gate-floor",
+        str(request.auxiliary_gate_floor),
+        "--auxiliary-gate-initial",
+        str(request.auxiliary_gate_initial),
+        "--auxiliary-warmup-epochs",
+        str(request.auxiliary_warmup_epochs),
         "--state-timeframe",
         request.state_timeframe,
         "--sequence-length",

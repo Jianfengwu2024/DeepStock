@@ -29,6 +29,8 @@ class ModelConfig:
     latent_states: int = 20
     output_states: int = REGIME_COUNT
     feature_mode: str = "gated-full"
+    auxiliary_gate_floor: float = 0.25
+    auxiliary_gate_initial: float = 0.75
     bayesian_backbone: bool = False
     transition_rank: int = 4
     strong_bear_threshold: float = -0.75
@@ -63,6 +65,7 @@ class TrainerConfig:
     ordinal_weight: float = 0.25
     consistency_weight: float = 0.25
     pretrain_epochs: int = 10
+    auxiliary_warmup_epochs: int = 3
     pretrain_mask_probability: float = 0.15
     pretrain_next_weight: float = 1.0
     pretrain_profile_weight: float = 1.0
@@ -91,6 +94,8 @@ class TrainerConfig:
             raise ValueError("objective weights cannot be negative")
         if self.pretrain_epochs < 0:
             raise ValueError("pretraining epochs cannot be negative")
+        if self.auxiliary_warmup_epochs < 0:
+            raise ValueError("auxiliary warmup epochs cannot be negative")
         if not 0.0 < self.pretrain_mask_probability < 1.0:
             raise ValueError("pretraining mask probability must be between zero and one")
         if self.pretrain_next_weight < 0:
@@ -277,6 +282,9 @@ class BNHMMTrainer:
         best_state: dict[str, Tensor] | None = None
 
         for epoch in range(1, self.config.epochs + 1):
+            self.model.tokenizer.set_auxiliary_warmup(
+                epoch <= self.config.auxiliary_warmup_epochs
+            )
             kl_scale = min(epoch / self.config.kl_anneal_epochs, 1.0)
             train_metrics = self._run_epoch(train_loader, optimizer, kl_scale=kl_scale)
             validation_metrics = self._run_epoch(validation_loader, None, kl_scale=0.0)
@@ -285,6 +293,7 @@ class BNHMMTrainer:
             row.update(
                 {f"validation_{key}": value for key, value in validation_metrics.items()}
             )
+            row.update(self._auxiliary_gate_metrics())
             history.append(row)
             if validation_metrics["predictive_loss"] < best_loss:
                 best_loss = validation_metrics["predictive_loss"]
@@ -330,10 +339,14 @@ class BNHMMTrainer:
         )
         history: list[dict[str, float]] = []
         for epoch in range(1, self.config.epochs + 1):
+            self.model.tokenizer.set_auxiliary_warmup(
+                epoch <= self.config.auxiliary_warmup_epochs
+            )
             kl_scale = min(epoch / self.config.kl_anneal_epochs, 1.0)
             metrics = self._run_epoch(loader, optimizer, kl_scale=kl_scale)
             row = {"epoch": float(epoch)}
             row.update({f"train_{key}": value for key, value in metrics.items()})
+            row.update(self._auxiliary_gate_metrics())
             history.append(row)
         return TrainingResult(
             tuple(history),
@@ -360,6 +373,7 @@ class BNHMMTrainer:
     ) -> tuple[dict[str, float], ...]:
         if self.config.pretrain_epochs == 0:
             return ()
+        self.model.tokenizer.set_auxiliary_warmup(True)
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
@@ -456,7 +470,18 @@ class BNHMMTrainer:
                     "next_profile_loss": next_profile_total / batch_count,
                 }
             )
+        self.model.tokenizer.set_auxiliary_warmup(False)
         return tuple(history)
+
+    def _auxiliary_gate_metrics(self) -> dict[str, float]:
+        gates = self.model.tokenizer.effective_auxiliary_gates().detach().cpu()
+        return {
+            "auxiliary_warmup": float(
+                bool(self.model.tokenizer.auxiliary_force_full)
+            ),
+            "relative_volume_gate": float(gates[0]),
+            "joint_velocity_gate": float(gates[1]),
+        }
 
     def _reset_training_seed(self) -> None:
         torch.manual_seed(self.config.seed)
@@ -564,7 +589,7 @@ def save_checkpoint(
     destination.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format_version": 14,
+            "format_version": 15,
             "regime_protocol": REGIME_PROTOCOL,
             "regime_names": list(REGIME_NAMES),
             "model_state": model.state_dict(),

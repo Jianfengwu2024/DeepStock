@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isqrt
+from math import isqrt, log
 
 import torch
 from torch import Tensor, nn
@@ -155,6 +155,8 @@ class BayesianMotifTokenizer(nn.Module):
         d_model: int,
         motif_dim: int,
         feature_mode: str,
+        auxiliary_gate_floor: float,
+        auxiliary_gate_initial: float,
         *,
         bayesian: bool,
     ) -> None:
@@ -177,6 +179,11 @@ class BayesianMotifTokenizer(nn.Module):
         self.state_feature_dim = state_feature_dim
         self.feature_mode = feature_mode
         self.joint_velocity_channels = joint_velocity_channels
+        if not 0.0 <= auxiliary_gate_floor < 1.0:
+            raise ValueError("auxiliary gate floor must be in [0, 1)")
+        if not auxiliary_gate_floor <= auxiliary_gate_initial < 1.0:
+            raise ValueError("auxiliary gate initial must be between floor and one")
+        self.auxiliary_gate_floor = float(auxiliary_gate_floor)
         linear = BayesianLinear if bayesian else DeterministicLinear
         self.price_branch = BayesianMotifBranch(
             2,
@@ -202,7 +209,14 @@ class BayesianMotifTokenizer(nn.Module):
             bias=False,
             bayesian=bayesian,
         )
-        self.auxiliary_gate_logits = nn.Parameter(torch.full((2,), -3.0))
+        scaled_initial = (
+            auxiliary_gate_initial - auxiliary_gate_floor
+        ) / (1.0 - auxiliary_gate_floor)
+        scaled_initial = min(max(scaled_initial, 1e-6), 1.0 - 1e-6)
+        initial_logit = log(scaled_initial / (1.0 - scaled_initial))
+        self.auxiliary_gate_logits = nn.Parameter(
+            torch.full((2,), initial_logit)
+        )
         enabled = {
             "gated-full": (1.0, 1.0),
             "price-only": (0.0, 0.0),
@@ -214,6 +228,9 @@ class BayesianMotifTokenizer(nn.Module):
         )
         self.register_buffer(
             "auxiliary_enabled", torch.tensor(enabled), persistent=True
+        )
+        self.register_buffer(
+            "auxiliary_force_full", torch.tensor(False), persistent=True
         )
         self.pool_score = linear(d_model, 1)
         self.metadata = linear(state_feature_dim, d_model)
@@ -307,7 +324,15 @@ class BayesianMotifTokenizer(nn.Module):
         return self.output_norm(combined)
 
     def effective_auxiliary_gates(self) -> Tensor:
-        return torch.sigmoid(self.auxiliary_gate_logits) * self.auxiliary_enabled
+        if bool(self.auxiliary_force_full):
+            return self.auxiliary_enabled
+        learned = self.auxiliary_gate_floor + (
+            1.0 - self.auxiliary_gate_floor
+        ) * torch.sigmoid(self.auxiliary_gate_logits)
+        return learned * self.auxiliary_enabled
+
+    def set_auxiliary_warmup(self, enabled: bool) -> None:
+        self.auxiliary_force_full.fill_(enabled)
 
     @staticmethod
     def _coordinate_features(coordinates: Tensor, dtype: torch.dtype) -> Tensor:
@@ -334,6 +359,8 @@ class BNHMMNetwork(nn.Module):
         latent_states: int = 20,
         output_states: int = REGIME_COUNT,
         feature_mode: str = "gated-full",
+        auxiliary_gate_floor: float = 0.25,
+        auxiliary_gate_initial: float = 0.75,
         bayesian_backbone: bool = False,
         transition_rank: int = 4,
         strong_bear_threshold: float = -0.75,
@@ -360,12 +387,16 @@ class BNHMMNetwork(nn.Module):
             raise ValueError("transition rank must be between one and latent states")
         if not strong_bear_threshold < direction_threshold < strong_bull_threshold:
             raise ValueError("return regime thresholds must be ordered")
+        if not 0.0 <= auxiliary_gate_floor <= auxiliary_gate_initial < 1.0:
+            raise ValueError("auxiliary gate values must satisfy 0 <= floor <= initial < 1")
         self.max_profile_bins = max_profile_bins
         self.profile_channels = profile_channels
         self.state_feature_dim = state_feature_dim
         self.latent_states = latent_states
         self.output_states = output_states
         self.feature_mode = feature_mode
+        self.auxiliary_gate_floor = float(auxiliary_gate_floor)
+        self.auxiliary_gate_initial = float(auxiliary_gate_initial)
         self.bayesian_backbone = bayesian_backbone
         self.transition_rank = transition_rank
         self.strong_bear_threshold = float(strong_bear_threshold)
@@ -381,6 +412,8 @@ class BNHMMNetwork(nn.Module):
             d_model,
             motif_dim,
             feature_mode,
+            auxiliary_gate_floor,
+            auxiliary_gate_initial,
             bayesian=bayesian_backbone,
         )
         self.timeframe_embedding = nn.Embedding(2, d_model)

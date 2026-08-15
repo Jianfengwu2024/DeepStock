@@ -128,6 +128,8 @@ def _train(args: argparse.Namespace) -> int:
         direction_threshold=label_config.direction_threshold,
         strong_bull_threshold=label_config.strong_bull_threshold,
         feature_mode=args.feature_mode,
+        auxiliary_gate_floor=args.auxiliary_gate_floor,
+        auxiliary_gate_initial=args.auxiliary_gate_initial,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -143,6 +145,7 @@ def _train(args: argparse.Namespace) -> int:
         kl_weight=args.kl_weight,
         ordinal_weight=args.ordinal_weight,
         pretrain_epochs=args.pretrain_epochs,
+        auxiliary_warmup_epochs=args.auxiliary_warmup_epochs,
         pretrain_mask_probability=args.pretrain_mask_probability,
         sample_during_training=not args.deterministic_training,
         seed=args.seed,
@@ -323,6 +326,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
         direction_threshold=label_config.direction_threshold,
         strong_bull_threshold=label_config.strong_bull_threshold,
         feature_mode=args.feature_mode,
+        auxiliary_gate_floor=args.auxiliary_gate_floor,
+        auxiliary_gate_initial=args.auxiliary_gate_initial,
         d_model=args.d_model,
         motif_dim=args.motif_dim,
         heads=args.heads,
@@ -338,6 +343,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         kl_weight=args.kl_weight,
         ordinal_weight=args.ordinal_weight,
         pretrain_epochs=args.pretrain_epochs,
+        auxiliary_warmup_epochs=args.auxiliary_warmup_epochs,
         pretrain_mask_probability=args.pretrain_mask_probability,
         sample_during_training=not args.deterministic_training,
         seed=args.seed,
@@ -527,8 +533,11 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
-        default="price-only",
+        default="gated-full",
     )
+    train.add_argument("--auxiliary-gate-floor", type=float, default=0.25)
+    train.add_argument("--auxiliary-gate-initial", type=float, default=0.75)
+    train.add_argument("--auxiliary-warmup-epochs", type=int, default=3)
     train.add_argument(
         "--state-timeframe",
         choices=("daily", "mixed"),
@@ -591,8 +600,11 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
-        default="price-only",
+        default="gated-full",
     )
+    walk.add_argument("--auxiliary-gate-floor", type=float, default=0.25)
+    walk.add_argument("--auxiliary-gate-initial", type=float, default=0.75)
+    walk.add_argument("--auxiliary-warmup-epochs", type=int, default=3)
     walk.add_argument(
         "--state-timeframe",
         choices=("daily", "mixed"),

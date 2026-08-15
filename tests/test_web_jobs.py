@@ -91,6 +91,10 @@ class WebJobTests(unittest.TestCase):
         self.assertEqual(WalkForwardJobRequest(sequence_length=20).sequence_length, 20)
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(sequence_length=21)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(
+                auxiliary_gate_floor=0.8, auxiliary_gate_initial=0.7
+            )
 
     def test_command_contains_model_and_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(
@@ -121,7 +125,13 @@ class WebJobTests(unittest.TestCase):
         self.assertNotIn("shell=True", command)
         self.assertEqual(request.training_scope, "per-symbol")
         self.assertEqual(request.profile_protocol, "phase-space-joint-return-v6")
-        self.assertEqual(request.feature_mode, "price-only")
+        self.assertEqual(request.feature_mode, "gated-full")
+        self.assertEqual(request.auxiliary_gate_floor, 0.25)
+        self.assertEqual(request.auxiliary_gate_initial, 0.75)
+        self.assertEqual(request.auxiliary_warmup_epochs, 3)
+        self.assertIn("--auxiliary-gate-floor", command)
+        self.assertIn("--auxiliary-gate-initial", command)
+        self.assertIn("--auxiliary-warmup-epochs", command)
         self.assertEqual(request.sequence_length, 5)
         self.assertEqual(request.sequence_stride, 1)
         self.assertEqual(request.sequence_protocol, "fixed-recent-endpoint-v1")
