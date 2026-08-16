@@ -12,13 +12,41 @@ from bnhmm.data.dataset import ProfileLabelBuilder
 from bnhmm.training import ModelConfig, TrainerConfig
 from bnhmm.walk_forward import (
     WalkForwardConfig,
+    _state_diagnostics,
     build_walk_forward_folds,
     run_walk_forward,
 )
 from test_profile import synthetic_sessions
+from test_training import sequence
 
 
 class WalkForwardTests(unittest.TestCase):
+    def test_state_diagnostics_aggregate_local_price_region_flow(self) -> None:
+        model = ModelConfig(
+            max_profile_bins=32,
+            d_model=16,
+            motif_dim=4,
+            heads=4,
+            layers=1,
+            feedforward_dim=32,
+            max_sequence_length=8,
+        ).build(seed=7)
+        item = sequence(4, length=4, bins=8)
+        prediction = SimpleNamespace(
+            probability_mean=(0.25, 0.25, 0.25, 0.25),
+            prior_probability=(0.25, 0.25, 0.25, 0.25),
+        )
+
+        diagnostics = _state_diagnostics(
+            model, [item], [prediction], device="cpu"
+        )
+
+        self.assertGreater(diagnostics["observed_local_flow_bins"], 0)
+        self.assertGreaterEqual(diagnostics["mean_z2_flow_order"], 0.0)
+        self.assertLessEqual(diagnostics["mean_z2_flow_order"], 1.0)
+        self.assertGreaterEqual(diagnostics["active_laminar_ratio"], 0.0)
+        self.assertLessEqual(diagnostics["active_laminar_ratio"], 1.0)
+
     def test_folds_keep_inner_tuning_before_outer_test(self) -> None:
         states = PriceVolumeProfileBuilder().build(synthetic_sessions(33))
         observations = ProfileLabelBuilder(

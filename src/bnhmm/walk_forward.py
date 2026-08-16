@@ -593,9 +593,15 @@ def _state_diagnostics(
         )
         for index, sequence in enumerate(items):
             endpoint = len(sequence) - 1
-            flow_orders.append(float(flow_order[index, endpoint].detach().cpu()))
-            signed_currents.append(
-                float(hydro[index, endpoint, :, 1].sum().detach().cpu())
+            local_mask = (
+                batch["profile_mask"][index, endpoint].to(device)
+                & (hydro[index, endpoint, :, 0] > 0)
+            )
+            flow_orders.extend(
+                flow_order[index, endpoint][local_mask].detach().cpu().tolist()
+            )
+            signed_currents.extend(
+                hydro[index, endpoint, :, 1][local_mask].detach().cpu().tolist()
             )
     latent = np.asarray(latent_rows, dtype=np.float64)
     mean_usage = latent.mean(axis=0)
@@ -606,8 +612,9 @@ def _state_diagnostics(
     prior = np.asarray(
         [item.prior_probability for item in predictions], dtype=np.float64
     )
-    flow_order_values = np.asarray(flow_orders, dtype=np.float64)
-    signed_current_values = np.asarray(signed_currents, dtype=np.float64)
+    observed_local_flow_bins = len(flow_orders)
+    flow_order_values = np.asarray(flow_orders or [0.0], dtype=np.float64)
+    signed_current_values = np.asarray(signed_currents or [0.0], dtype=np.float64)
     return {
         "mean_effective_latent_states": float(np.exp(entropy).mean()),
         "mean_max_latent_probability": float(latent.max(axis=1).mean()),
@@ -617,6 +624,7 @@ def _state_diagnostics(
         "mean_regime_evidence_l1": float(np.abs(probability - prior).sum(axis=1).mean()),
         "minimum_mean_latent_usage": float(mean_usage.min()),
         "maximum_mean_latent_usage": float(mean_usage.max()),
+        "observed_local_flow_bins": observed_local_flow_bins,
         "mean_z2_flow_order": float(flow_order_values.mean()),
         "p90_z2_flow_order": float(np.quantile(flow_order_values, 0.9)),
         "active_laminar_ratio": float((flow_order_values >= 0.25).mean()),
