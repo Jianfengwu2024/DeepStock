@@ -224,6 +224,7 @@
         <div class="header-actions">
           <div class="gpu-monitor" id="gpu-monitor" aria-label="GPU 显存占用"></div>
           <span class="status-badge neutral" id="global-status">空闲</span>
+          <button class="mini-button history-edit-button" type="button" id="edit-history-button"><i data-lucide="pencil"></i><span>编辑</span></button>
           <button class="icon-button" type="button" id="refresh-button" title="刷新"><i data-lucide="refresh-cw"></i></button>
         </div>
       </header>
@@ -231,6 +232,11 @@
       <div class="workspace-grid">
         <nav class="run-history" aria-label="历史测试">
           <div class="section-title"><h2>历史测试</h2><span id="run-count">0</span></div>
+          <div class="history-batch-actions hidden" id="history-batch-actions">
+            <label class="history-select-all"><input type="checkbox" id="history-select-all"><span>全选</span></label>
+            <span id="history-selected-count">已选 0</span>
+            <button class="danger-button" type="button" id="batch-delete-button"><i data-lucide="trash-2"></i><span>删除</span></button>
+          </div>
           <div id="job-list" class="job-list"></div>
         </nav>
 

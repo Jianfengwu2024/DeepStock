@@ -10,6 +10,9 @@ const state = {
   symbolReportCache: new Map(),
   strategyFormValues: new Map(),
   activeStrategy: "bnhmm",
+  historyEditing: false,
+  historySelected: new Set(),
+  historyDeleting: false,
   polling: false,
 };
 
@@ -386,15 +389,63 @@ function renderEmptyState() {
 function renderJobList() {
   const list = document.querySelector("#job-list");
   document.querySelector("#run-count").textContent = state.jobs.length;
+  const activeIds = new Set(
+    state.jobs
+      .filter(job => ["queued", "running"].includes(job.status))
+      .map(job => job.id),
+  );
+  const existingIds = new Set(state.jobs.map(job => job.id));
+  for (const identifier of state.historySelected) {
+    if (!existingIds.has(identifier) || activeIds.has(identifier)) {
+      state.historySelected.delete(identifier);
+    }
+  }
+  renderHistoryEditor(activeIds);
   list.replaceChildren(...state.jobs.map(job => {
+    const strategy = ({ bnhmm: "BNHMM", "stock-transformer": "StockTransformer", "fk-stock": "FKStock" })[job.request.strategy] || job.request.strategy;
+    const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
+    if (state.historyEditing) {
+      const label = document.createElement("label");
+      const disabled = activeIds.has(job.id) || state.historyDeleting;
+      label.className = `job-item selection-mode${state.historySelected.has(job.id) ? " selected" : ""}${disabled ? " disabled" : ""}`;
+      label.title = activeIds.has(job.id) ? "运行中的任务不能删除" : "";
+      label.innerHTML = `<input class="history-job-checkbox" type="checkbox" ${state.historySelected.has(job.id) ? "checked" : ""} ${disabled ? "disabled" : ""}><div class="job-item-content">${content}</div>`;
+      label.querySelector("input").addEventListener("change", event => {
+        if (event.target.checked) state.historySelected.add(job.id);
+        else state.historySelected.delete(job.id);
+        renderJobList();
+      });
+      return label;
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.className = `job-item${job.id === state.selectedId ? " active" : ""}`;
-    const strategy = ({ bnhmm: "BNHMM", "stock-transformer": "StockTransformer", "fk-stock": "FKStock" })[job.request.strategy] || job.request.strategy;
-    button.innerHTML = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
+    button.innerHTML = content;
     button.addEventListener("click", () => { state.selectedId = job.id; refreshAll(); });
     return button;
   }));
+  icons();
+}
+
+function renderHistoryEditor(activeIds) {
+  const editButton = document.querySelector("#edit-history-button");
+  editButton.innerHTML = state.historyEditing
+    ? '<i data-lucide="check"></i><span>完成</span>'
+    : '<i data-lucide="pencil"></i><span>编辑</span>';
+  editButton.disabled = state.historyDeleting;
+  const actions = document.querySelector("#history-batch-actions");
+  actions.classList.toggle("hidden", !state.historyEditing);
+  if (!state.historyEditing) return;
+  const eligible = state.jobs.filter(job => !activeIds.has(job.id));
+  const selectedEligible = eligible.filter(job => state.historySelected.has(job.id));
+  const selectAll = document.querySelector("#history-select-all");
+  selectAll.checked = eligible.length > 0 && selectedEligible.length === eligible.length;
+  selectAll.indeterminate = selectedEligible.length > 0 && selectedEligible.length < eligible.length;
+  selectAll.disabled = eligible.length === 0 || state.historyDeleting;
+  document.querySelector("#history-selected-count").textContent = `已选 ${selectedEligible.length}`;
+  const deleteButton = document.querySelector("#batch-delete-button");
+  deleteButton.disabled = selectedEligible.length === 0 || state.historyDeleting;
+  deleteButton.querySelector("span").textContent = state.historyDeleting ? "删除中" : "删除";
 }
 
 function renderGlobalStatus() {
@@ -820,6 +871,18 @@ function setupEvents() {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);
+  document.querySelector("#edit-history-button").addEventListener("click", () => {
+    state.historyEditing = !state.historyEditing;
+    if (!state.historyEditing) state.historySelected.clear();
+    renderJobList();
+  });
+  document.querySelector("#history-select-all").addEventListener("change", event => {
+    const eligible = state.jobs.filter(job => !["queued", "running"].includes(job.status));
+    state.historySelected.clear();
+    if (event.target.checked) eligible.forEach(job => state.historySelected.add(job.id));
+    renderJobList();
+  });
+  document.querySelector("#batch-delete-button").addEventListener("click", deleteSelectedJobs);
   document.querySelector("#choose-symbols").addEventListener("click", openSymbolDialog);
   document.querySelector("#training-scope").addEventListener("change", syncDatasetSelection);
   document.querySelector("#dataset-select").addEventListener("change", syncDatasetSelection);
@@ -854,6 +917,44 @@ async function deleteSelectedJob() {
     window.alert(`删除失败：${exception.message}`);
   } finally {
     button.disabled = false;
+  }
+}
+
+async function deleteSelectedJobs() {
+  const jobs = state.jobs.filter(
+    job => state.historySelected.has(job.id) && !["queued", "running"].includes(job.status),
+  );
+  if (!jobs.length || state.historyDeleting) return;
+  if (!window.confirm(`确定删除选中的 ${jobs.length} 个测试及其全部检查点和报告吗？此操作不可撤销。`)) return;
+  state.historyDeleting = true;
+  renderJobList();
+  const results = await Promise.allSettled(
+    jobs.map(job => api(`/api/jobs/${encodeURIComponent(job.id)}`, { method: "DELETE" })),
+  );
+  const deletedIds = new Set(
+    results
+      .map((result, index) => result.status === "fulfilled" ? jobs[index].id : null)
+      .filter(Boolean),
+  );
+  state.jobs = state.jobs.filter(job => !deletedIds.has(job.id));
+  deletedIds.forEach(identifier => {
+    state.historySelected.delete(identifier);
+    state.resultScopeByJob.delete(identifier);
+    for (const key of state.symbolReportCache.keys()) {
+      if (key.startsWith(`${identifier}:`)) state.symbolReportCache.delete(key);
+    }
+  });
+  if (deletedIds.has(state.selectedId)) state.selectedId = state.jobs[0]?.id || null;
+  const failures = results.filter(result => result.status === "rejected");
+  state.historyDeleting = false;
+  if (!failures.length) {
+    state.historyEditing = false;
+    state.historySelected.clear();
+  }
+  renderJobList();
+  await refreshAll();
+  if (failures.length) {
+    window.alert(`已删除 ${deletedIds.size} 个，${failures.length} 个删除失败：${failures[0].reason.message}`);
   }
 }
 
