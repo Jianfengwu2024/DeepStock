@@ -47,6 +47,7 @@ class WalkForwardJobRequest(BaseModel):
     batch_size: int = Field(8, ge=1, le=512)
     learning_rate: float = Field(3e-4, gt=0, le=1.0)
     kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
+    ordinal_weight: float = Field(0.25, ge=0.0, le=10.0)
     symmetry_weight: float = Field(0.2, ge=0.0, le=10.0)
     conservation_weight: float = Field(0.5, ge=0.0, le=10.0)
     pretrain_epochs: int = Field(10, ge=0, le=1000)
@@ -75,6 +76,7 @@ class WalkForwardJobRequest(BaseModel):
     maximum_tokens: int = Field(16, ge=2, le=128)
     boundary_threshold: float = Field(1.5, gt=0.0, le=20.0)
     profile_protocol: Literal[
+        "phase-space-10m-local-flow-v8",
         "phase-space-10m-joint-return-v7",
         "phase-space-joint-return-v6",
         "phase-space-joint-v5",
@@ -82,7 +84,7 @@ class WalkForwardJobRequest(BaseModel):
         "phase-space-log-v3",
         "variable-log-bins-v2",
         "legacy-fixed-bins",
-    ] = "phase-space-10m-joint-return-v7"
+    ] = "phase-space-10m-local-flow-v8"
     sequence_protocol: Literal[
         "fixed-recent-endpoint-v1", "legacy-overlapping-window-v1"
     ] = "fixed-recent-endpoint-v1"
@@ -99,7 +101,7 @@ class WalkForwardJobRequest(BaseModel):
         "price-volume",
         "price-velocity",
         "legacy-entangled",
-    ] = "price-volume"
+    ] = "price-velocity"
     auxiliary_gate_floor: float = Field(0.25, ge=0.0, lt=1.0)
     auxiliary_gate_initial: float = Field(0.75, ge=0.0, lt=1.0)
     auxiliary_warmup_epochs: int = Field(3, ge=0, le=1000)
@@ -153,8 +155,8 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("sector-pooled jobs require a sector dataset")
             if self.strategy in {"stock-transformer", "fk-stock"} and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
-            if self.profile_protocol != "phase-space-10m-joint-return-v7":
-                raise ValueError("current jobs require the v7 ten-minute phase-space profile")
+            if self.profile_protocol != "phase-space-10m-local-flow-v8":
+                raise ValueError("current jobs require the v8 local-flow phase-space profile")
             if self.sequence_protocol != "fixed-recent-endpoint-v1":
                 raise ValueError("current jobs require fixed recent endpoint windows")
             if self.state_timeframe != "daily":
@@ -263,6 +265,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.learning_rate),
         "--kl-weight",
         str(request.kl_weight),
+        "--ordinal-weight",
+        str(request.ordinal_weight),
         "--symmetry-weight",
         str(request.symmetry_weight),
         "--pretrain-epochs",

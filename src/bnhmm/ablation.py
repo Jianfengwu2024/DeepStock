@@ -35,6 +35,8 @@ class BNHMMAblationConfig:
     confirmation_seeds: tuple[int, ...] = (7, 17, 29)
     log_loss_tolerance: float = 1e-3
     brier_tolerance: float = 5e-4
+    accuracy_tolerance: float = 0.0
+    balanced_accuracy_tolerance: float = 0.0
     minimum_seed_pass_ratio: float = 2.0 / 3.0
 
     def __post_init__(self) -> None:
@@ -44,7 +46,15 @@ class BNHMMAblationConfig:
             raise ValueError("screening seed must be one of the confirmation seeds")
         if len(set(self.confirmation_seeds)) != len(self.confirmation_seeds):
             raise ValueError("confirmation seeds must be unique")
-        if self.log_loss_tolerance < 0 or self.brier_tolerance < 0:
+        if any(
+            value < 0
+            for value in (
+                self.log_loss_tolerance,
+                self.brier_tolerance,
+                self.accuracy_tolerance,
+                self.balanced_accuracy_tolerance,
+            )
+        ):
             raise ValueError("ablation tolerances cannot be negative")
         if not 0.0 < self.minimum_seed_pass_ratio <= 1.0:
             raise ValueError("minimum seed pass ratio must be in (0, 1]")
@@ -67,6 +77,8 @@ class BNHMMAblationResult:
     confirmation: tuple[dict[str, object], ...]
     outer_metrics: dict[str, object]
     fold: dict[str, object]
+    promotion_recommended: bool
+    promotion_reasons: tuple[str, ...]
 
 
 def run_bnhmm_ablation(
@@ -136,7 +148,10 @@ def run_bnhmm_ablation(
         )
         screening.append(result)
         input_results.append((candidate, result))
-    current = _select_smallest_near_best(input_results, config)
+    input_gate_passed = any(
+        bool(result["passes_tuning_gate"]) for _, result in input_results
+    )
+    current = _select_smallest_near_best(input_results, config, fallback=baseline)
     current_result = next(
         result for candidate, result in input_results if candidate == current
     )
@@ -268,6 +283,10 @@ def run_bnhmm_ablation(
         "outer_sequences": len(test_sequences),
         "selection_used_outer_test": False,
     }
+    promotion_reasons = _promotion_reasons(current_result)
+    if not input_gate_passed:
+        promotion_reasons.insert(0, "no input candidate passed the tuning baseline gate")
+    promotion_recommended = input_gate_passed and not promotion_reasons
     result = BNHMMAblationResult(
         selected_candidate=selected,
         selected_predictions=tuple(predictions),
@@ -275,6 +294,8 @@ def run_bnhmm_ablation(
         confirmation=tuple(confirmation),
         outer_metrics=outer_metrics,
         fold=fold_payload,
+        promotion_recommended=promotion_recommended,
+        promotion_reasons=tuple(promotion_reasons),
     )
     _save_result(result, config, output_dir)
     _emit(progress, "ablation-complete", candidate=selected.name, **outer_metrics)
@@ -355,7 +376,7 @@ def _evaluate_candidate(
         del trainer, model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    return {
+    summary: dict[str, object] = {
         "name": candidate.name,
         "stage": candidate.stage,
         "model_config": asdict(candidate.model),
@@ -365,6 +386,8 @@ def _evaluate_candidate(
         "seed_results": seed_results,
         **_mean_metrics(seed_results),
     }
+    summary["passes_tuning_gate"] = not _promotion_reasons(summary)
+    return summary
 
 
 def _evaluate_outer(
@@ -455,6 +478,8 @@ def _metrics(predictions: Sequence[PredictionRecord]) -> dict[str, object]:
             -np.log(np.clip(prior[np.arange(len(targets)), targets], 1e-12, 1.0)).mean()
         ),
         "prior_brier_score": float(np.square(one_hot - prior).sum(axis=1).mean()),
+        "majority_baseline": float(support.max() / len(targets)),
+        "random_balanced_baseline": 1.0 / REGIME_COUNT,
         "class_support": support.tolist(),
         "predicted_class_counts": np.bincount(
             predicted, minlength=REGIME_COUNT
@@ -463,7 +488,16 @@ def _metrics(predictions: Sequence[PredictionRecord]) -> dict[str, object]:
 
 
 def _mean_metrics(seed_results: Sequence[dict[str, object]]) -> dict[str, float]:
-    names = ("accuracy", "balanced_accuracy", "log_loss", "brier_score")
+    names = (
+        "accuracy",
+        "balanced_accuracy",
+        "log_loss",
+        "brier_score",
+        "prior_log_loss",
+        "prior_brier_score",
+        "majority_baseline",
+        "random_balanced_baseline",
+    )
     return {
         f"mean_{name}": float(np.mean([float(row[name]) for row in seed_results]))
         for name in names
@@ -473,18 +507,27 @@ def _mean_metrics(seed_results: Sequence[dict[str, object]]) -> dict[str, float]
 def _select_smallest_near_best(
     results: Sequence[tuple[BNHMMCandidate, dict[str, object]]],
     config: BNHMMAblationConfig,
+    *,
+    fallback: BNHMMCandidate,
 ) -> BNHMMCandidate:
-    best_log = min(float(result["mean_log_loss"]) for _, result in results)
-    best_brier = min(float(result["mean_brier_score"]) for _, result in results)
-    eligible = [
+    qualified = [
         (candidate, result)
         for candidate, result in results
+        if bool(result["passes_tuning_gate"])
+    ]
+    if not qualified:
+        return fallback
+    best_log = min(float(result["mean_log_loss"]) for _, result in qualified)
+    best_brier = min(float(result["mean_brier_score"]) for _, result in qualified)
+    eligible = [
+        (candidate, result)
+        for candidate, result in qualified
         if float(result["mean_log_loss"]) <= best_log + config.log_loss_tolerance
         and float(result["mean_brier_score"]) <= best_brier + config.brier_tolerance
     ]
     if not eligible:
         eligible = sorted(
-            results,
+            qualified,
             key=lambda item: (
                 float(item[1]["mean_log_loss"]),
                 float(item[1]["mean_brier_score"]),
@@ -509,6 +552,11 @@ def _noninferior(
         <= float(reference["mean_log_loss"]) + config.log_loss_tolerance
         and float(candidate["mean_brier_score"])
         <= float(reference["mean_brier_score"]) + config.brier_tolerance
+        and float(candidate["mean_accuracy"])
+        >= float(reference["mean_accuracy"]) - config.accuracy_tolerance
+        and float(candidate["mean_balanced_accuracy"])
+        >= float(reference["mean_balanced_accuracy"])
+        - config.balanced_accuracy_tolerance
     )
     reference_by_seed = {
         int(row["seed"]): row for row in reference["seed_results"]  # type: ignore[index]
@@ -525,9 +573,29 @@ def _noninferior(
             <= float(baseline["log_loss"]) + config.log_loss_tolerance
             and float(row["brier_score"])
             <= float(baseline["brier_score"]) + config.brier_tolerance
+            and float(row["accuracy"])
+            >= float(baseline["accuracy"]) - config.accuracy_tolerance
+            and float(row["balanced_accuracy"])
+            >= float(baseline["balanced_accuracy"])
+            - config.balanced_accuracy_tolerance
         )
     seed_pass = compared > 0 and passed / compared >= config.minimum_seed_pass_ratio
     return mean_pass and seed_pass
+
+
+def _promotion_reasons(result: dict[str, object]) -> list[str]:
+    reasons: list[str] = []
+    if float(result["mean_accuracy"]) < float(result["mean_majority_baseline"]):
+        reasons.append("accuracy did not beat the tuning majority baseline")
+    if float(result["mean_balanced_accuracy"]) <= float(
+        result["mean_random_balanced_baseline"]
+    ):
+        reasons.append("balanced accuracy did not beat the random reference")
+    if float(result["mean_log_loss"]) >= float(result["mean_prior_log_loss"]):
+        reasons.append("log loss did not beat the training prior")
+    if float(result["mean_brier_score"]) >= float(result["mean_prior_brier_score"]):
+        reasons.append("Brier score did not beat the training prior")
+    return reasons
 
 
 def _seed_epoch(result: dict[str, object], seed: int) -> int:
@@ -557,6 +625,8 @@ def _save_result(
         "confirmation": list(result.confirmation),
         "outer_metrics": result.outer_metrics,
         "fold": result.fold,
+        "promotion_recommended": result.promotion_recommended,
+        "promotion_reasons": list(result.promotion_reasons),
     }
     (destination / "ablation.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -590,6 +660,8 @@ def _markdown_report(payload: dict[str, object]) -> str:
         f"- Active objectives: {', '.join(selected['active_objectives'])}",
         f"- Tuning start: {fold['tuning_start']}",
         f"- Outer test: {fold['test_start']} to {fold['test_end']}",
+        f"- Production promotion recommended: {payload['promotion_recommended']}",
+        f"- Promotion blockers: {', '.join(payload['promotion_reasons']) or 'none'}",
         "",
         "## Untouched outer test",
         "",

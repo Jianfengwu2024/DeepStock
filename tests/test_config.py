@@ -51,7 +51,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.velocity_aggregation_minutes, 10)
         self.assertEqual(config.velocity_smoothing, 0.25)
         self.assertEqual(config.profile_channels, PROFILE_CHANNELS)
-        self.assertEqual(PROFILE_PROTOCOL, "phase-space-10m-joint-return-v7")
+        self.assertEqual(PROFILE_PROTOCOL, "phase-space-10m-local-flow-v8")
         self.assertEqual(SEQUENCE_PROTOCOL, "fixed-recent-endpoint-v1")
         with self.assertRaises(ValueError):
             ProfileConfig(velocity_bins=8)

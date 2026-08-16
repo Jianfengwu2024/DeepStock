@@ -24,6 +24,7 @@ class BNHMMAblationTests(unittest.TestCase):
         def fake_candidate(candidate, seeds, *args, **kwargs):
             del args, kwargs
             penalty = 0.0 if "price-only" in candidate.name else 0.01
+            passes_gate = "price-only" in candidate.name
             seed_results = [
                 {
                     "seed": seed,
@@ -44,6 +45,11 @@ class BNHMMAblationTests(unittest.TestCase):
                 "mean_brier_score": 0.7 + penalty,
                 "mean_accuracy": 0.3,
                 "mean_balanced_accuracy": 0.3,
+                "mean_prior_log_loss": 1.1,
+                "mean_prior_brier_score": 0.75,
+                "mean_majority_baseline": 0.25,
+                "mean_random_balanced_baseline": 0.25,
+                "passes_tuning_gate": passes_gate,
             }
 
         outer_metrics = {
@@ -83,31 +89,78 @@ class BNHMMAblationTests(unittest.TestCase):
         outer.assert_called_once()
         self.assertFalse(result.fold["selection_used_outer_test"])
         self.assertEqual(outer.call_args.args[0].name, result.selected_candidate.name)
+        self.assertTrue(result.promotion_recommended)
 
     def test_noninferior_reduction_requires_two_of_three_seeds(self) -> None:
         from bnhmm.ablation import _noninferior
 
         baseline_rows = [
-            {"seed": seed, "log_loss": 1.0, "brier_score": 0.7}
+            {
+                "seed": seed,
+                "log_loss": 1.0,
+                "brier_score": 0.7,
+                "accuracy": 0.3,
+                "balanced_accuracy": 0.3,
+            }
             for seed in (7, 17, 29)
         ]
         reduced_rows = [
-            {"seed": 7, "log_loss": 1.0, "brier_score": 0.7},
-            {"seed": 17, "log_loss": 1.0, "brier_score": 0.7},
-            {"seed": 29, "log_loss": 1.1, "brier_score": 0.8},
+            {
+                "seed": 7,
+                "log_loss": 1.0,
+                "brier_score": 0.7,
+                "accuracy": 0.3,
+                "balanced_accuracy": 0.3,
+            },
+            {
+                "seed": 17,
+                "log_loss": 1.0,
+                "brier_score": 0.7,
+                "accuracy": 0.3,
+                "balanced_accuracy": 0.3,
+            },
+            {
+                "seed": 29,
+                "log_loss": 1.1,
+                "brier_score": 0.8,
+                "accuracy": 0.2,
+                "balanced_accuracy": 0.2,
+            },
         ]
         baseline = {
             "mean_log_loss": 1.0,
             "mean_brier_score": 0.7,
+            "mean_accuracy": 0.3,
+            "mean_balanced_accuracy": 0.3,
             "seed_results": baseline_rows,
         }
         reduced = {
             "mean_log_loss": 1.0,
             "mean_brier_score": 0.7,
+            "mean_accuracy": 0.3,
+            "mean_balanced_accuracy": 0.3,
             "seed_results": reduced_rows,
         }
 
         self.assertTrue(_noninferior(reduced, baseline, BNHMMAblationConfig()))
+
+    def test_promotion_gate_rejects_below_majority_accuracy(self) -> None:
+        from bnhmm.ablation import _promotion_reasons
+
+        reasons = _promotion_reasons(
+            {
+                "mean_accuracy": 0.31,
+                "mean_majority_baseline": 0.33,
+                "mean_balanced_accuracy": 0.27,
+                "mean_random_balanced_baseline": 0.25,
+                "mean_log_loss": 1.30,
+                "mean_prior_log_loss": 1.35,
+                "mean_brier_score": 0.70,
+                "mean_prior_brier_score": 0.73,
+            }
+        )
+
+        self.assertIn("accuracy did not beat the tuning majority baseline", reasons)
 
 
 if __name__ == "__main__":

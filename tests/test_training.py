@@ -338,10 +338,11 @@ class TrainerTests(unittest.TestCase):
         ).fit_fixed([sequence(4)])
 
         self.assertEqual(result.history[0]["auxiliary_warmup"], 1.0)
-        self.assertEqual(result.history[0]["relative_volume_gate"], 1.0)
-        self.assertEqual(result.history[0]["joint_velocity_gate"], 0.0)
+        self.assertEqual(result.history[0]["relative_volume_gate"], 0.0)
+        self.assertEqual(result.history[0]["joint_velocity_gate"], 1.0)
         self.assertEqual(result.history[1]["auxiliary_warmup"], 0.0)
-        self.assertGreaterEqual(result.history[1]["relative_volume_gate"], 0.25)
+        self.assertEqual(result.history[1]["relative_volume_gate"], 0.0)
+        self.assertGreaterEqual(result.history[1]["joint_velocity_gate"], 0.25)
 
     def test_z2_mirror_is_an_involution(self) -> None:
         model = ModelConfig(

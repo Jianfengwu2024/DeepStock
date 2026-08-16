@@ -2,20 +2,16 @@
 
 ## Decision
 
-The production BNHMM input is `price-volume`. Price and relative volume remain
-active; the 10-minute joint price/volume velocity field remains a research
-option but is disabled by default. The network keeps two Transformer blocks,
-20 unnamed latent states, state metadata, the conditional transition, the
-latent filter, and the direct short-return path.
+This ablation is rejected for production promotion. Its selector originally
+used only Log Loss and Brier score, so it preferred `price-volume` even though
+its tuning accuracy was below the majority-class baseline. The frozen outer
+period then confirmed the failure: accuracy fell to 26.72%, below the 27.47%
+outer majority class, and the model emitted no strong-bull predictions.
 
-Production training removes three objectives that did not produce a stable
-tuning gain: Brier loss, ordinal loss, and cross-head consistency. It retains
-Student-t return likelihood, direct classification, latent information, Z2
-mirror consistency, Bayesian KL, and causal self-supervised pretraining.
-
-This is still a research model. The frozen outer period shows a small
-probability-score improvement over the training prior, not a tradable accuracy
-advantage.
+The production baseline therefore remains `price-velocity` with Brier, ordinal,
+and cross-head consistency objectives enabled. The 10-minute velocity data
+construction and all research artifacts remain valid; only the attempted model
+promotion is withdrawn.
 
 ## Ten-Minute Joint Velocity
 
@@ -39,8 +35,9 @@ lunch break needs two blocks before its first finite difference.
 - Tuning sequences: 4,657, starting 2025-04-16.
 - Frozen outer sequences: 5,176, from 2025-07-15 through 2025-10-15.
 - Seeds: 7, 17, and 29 for every candidate.
-- A deletion required non-inferior mean Log Loss and Brier score and had to pass
-  the same test on at least two of three seeds.
+- The original deletion rule required non-inferior mean Log Loss and Brier score
+  on at least two of three seeds. This was insufficient because it omitted
+  accuracy and balanced-accuracy constraints.
 - Candidate selection used only the tuning period. The outer period was opened
   once after all decisions.
 
@@ -56,10 +53,11 @@ The full artifact is outside Git at
 | Price + 10m velocity | 75,264 | 0.32224 | 0.25734 | 1.35126 | 0.73321 |
 | Price + volume + 10m velocity | 77,856 | 0.31258 | 0.25704 | 1.34966 | 0.73212 |
 
-The full input was statistically near the selected input but used more active
-parameters. Velocity by itself did not improve probability scores. The result
-supports temporal aggregation as a cleaner representation, but does not show
-incremental predictive value from velocity in this window.
+The old probability-only rule selected price plus volume. That candidate's
+31.19% tuning accuracy was already below the roughly 32.49% majority baseline,
+so it was never eligible to replace the production model. Under the corrected
+gate no input candidate passes all of accuracy, balanced accuracy, Log Loss,
+and Brier requirements; the experiment must retain the prior baseline.
 
 ## Architecture Deletions
 
@@ -88,8 +86,10 @@ count alone is therefore not enough to remove these components.
 | No Brier loss | 1.34985 | 0.73230 | Yes |
 | Deterministic training | 1.35469 | 0.73468 | No |
 
-Accepted deletions were applied sequentially. Deterministic training was tested
-against the already reduced objective set and rejected.
+The three apparent acceptances were produced by the incomplete probability-only
+rule. They are research observations, not approved production deletions. The
+corrected rule also requires non-decreasing accuracy and balanced accuracy for
+the mean and for at least two of three seeds.
 
 ## Frozen Outer Result
 
@@ -102,5 +102,6 @@ against the already reduced objective set and rejected.
 
 Class support was `[1014, 1322, 1422, 1418]`; predicted counts were
 `[183, 2997, 1996, 0]`. The absence of strong-bull predictions and the small
-balanced-accuracy margin are explicit release blockers. The model has weak
-probability information, but it has not passed a trading-quality gate.
+balanced-accuracy margin are explicit release blockers. Probability scores alone
+cannot authorize a production change when the classifier misses its fixed
+baselines.

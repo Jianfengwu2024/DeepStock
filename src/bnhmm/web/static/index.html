@@ -62,6 +62,7 @@
           <div class="two-columns bnhmm-only">
             <label>预训练轮数<input name="pretrain_epochs" type="number" min="0"></label>
             <label>KL 权重<input name="kl_weight" type="number" min="0" max="1" step="0.0001"></label>
+            <label>有序损失权重<input name="ordinal_weight" type="number" min="0" max="10" step="0.01"></label>
             <label>Z2 镜像约束权重<input name="symmetry_weight" type="number" min="0" max="10" step="0.05"></label>
             <label>遮罩比例<input name="pretrain_mask_probability" type="number" min="0.01" max="0.99" step="0.01"></label>
           </div>
@@ -95,8 +96,8 @@
             <select name="feature_mode">
               <option value="gated-full">价格主干 + 门控成交量/联合速度</option>
               <option value="price-only">仅价格主干</option>
-              <option value="price-volume" selected>价格 + 成交量（消融推荐）</option>
-              <option value="price-velocity">价格 + 10 分钟联合速度</option>
+              <option value="price-volume">价格 + 成交量（未通过晋级门槛）</option>
+              <option value="price-velocity" selected>价格 + 10 分钟联合速度（当前基线）</option>
             </select>
           </label>
           <div class="three-columns bnhmm-only">

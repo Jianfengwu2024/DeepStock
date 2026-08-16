@@ -75,7 +75,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(
             torch.allclose(
                 self.model.tokenizer.effective_auxiliary_gates(),
-                torch.tensor([0.75, 0.0]),
+                torch.tensor([0.0, 0.75]),
                 atol=1e-6,
             )
         )
@@ -83,13 +83,13 @@ class BNHMMNetworkTests(unittest.TestCase):
     def test_auxiliary_warmup_forces_enabled_branches_to_full_weight(self) -> None:
         self.model.tokenizer.set_auxiliary_warmup(True)
         self.assertEqual(
-            self.model.tokenizer.effective_auxiliary_gates().tolist(), [1.0, 0.0]
+            self.model.tokenizer.effective_auxiliary_gates().tolist(), [0.0, 1.0]
         )
         self.model.tokenizer.set_auxiliary_warmup(False)
         gates = self.model.tokenizer.effective_auxiliary_gates().detach()
-        self.assertGreaterEqual(float(gates[0]), 0.25)
-        self.assertLess(float(gates[0]), 1.0)
-        self.assertEqual(float(gates[1]), 0.0)
+        self.assertEqual(float(gates[0]), 0.0)
+        self.assertGreaterEqual(float(gates[1]), 0.25)
+        self.assertLess(float(gates[1]), 1.0)
 
     def test_posterior_separates_uncertainty(self) -> None:
         values = profiles(batch=1)
@@ -140,14 +140,14 @@ class BNHMMNetworkTests(unittest.TestCase):
             (self.model.latent_states, self.model.latent_states),
         )
 
-    def test_production_defaults_match_strict_ablation(self) -> None:
+    def test_production_defaults_stay_on_last_accepted_baseline(self) -> None:
         model = ModelConfig()
         trainer = TrainerConfig()
 
-        self.assertEqual(model.feature_mode, "price-volume")
-        self.assertEqual(trainer.brier_weight, 0.0)
-        self.assertEqual(trainer.ordinal_weight, 0.0)
-        self.assertEqual(trainer.consistency_weight, 0.0)
+        self.assertEqual(model.feature_mode, "price-velocity")
+        self.assertEqual(trainer.brier_weight, 0.25)
+        self.assertEqual(trainer.ordinal_weight, 0.25)
+        self.assertEqual(trainer.consistency_weight, 0.25)
 
     def test_ablation_switches_remove_trainable_paths(self) -> None:
         full = BNHMMNetwork(
@@ -358,7 +358,7 @@ class BNHMMNetworkTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(residual, torch.zeros_like(residual)))
 
-    def test_hydrodynamic_order_detects_z2_symmetry_breaking(self) -> None:
+    def test_hydrodynamic_order_detects_local_z2_symmetry_breaking(self) -> None:
         mask = torch.ones(1, 1, 5, dtype=torch.bool)
         symmetric = torch.zeros(1, 1, 5, 3, 3)
         symmetric[..., 0, 1] = 0.1
@@ -371,7 +371,7 @@ class BNHMMNetworkTests(unittest.TestCase):
         self.assertTrue(
             torch.allclose(symmetric_features[..., 1], torch.zeros(1, 1, 5))
         )
-        self.assertEqual(float(symmetric_order), 0.0)
+        self.assertTrue(torch.equal(symmetric_order, torch.zeros_like(symmetric_order)))
 
         directed = torch.zeros(1, 1, 5, 3, 3)
         directed[..., 2, 1] = 0.2
@@ -381,7 +381,49 @@ class BNHMMNetworkTests(unittest.TestCase):
             )
         )
         self.assertTrue(torch.all(directed_features[..., 1] > 0))
-        self.assertGreater(float(directed_order), 0.0)
+        self.assertTrue(torch.all(directed_order > 0))
+
+    def test_opposite_local_flows_do_not_cancel_across_price_regions(self) -> None:
+        mask = torch.ones(1, 1, 7, dtype=torch.bool)
+        joint = torch.zeros(1, 1, 7, 3, 3)
+        joint[..., 1, 2, 1] = 0.4
+        joint[..., 5, 0, 1] = 0.4
+
+        features, local_order = self.model.tokenizer.hydrodynamic_velocity_features(
+            joint.reshape(1, 1, 7, 9), mask
+        )
+
+        self.assertGreater(float(features[..., 1, 6]), 0.0)
+        self.assertLess(float(features[..., 5, 6]), 0.0)
+        self.assertGreater(float(local_order[..., 1]), 0.0)
+        self.assertGreater(float(local_order[..., 5]), 0.0)
+        self.assertEqual(float(local_order[..., 3]), 0.0)
+
+    def test_sparse_local_flow_has_lower_support_confidence(self) -> None:
+        mask = torch.ones(1, 1, 5, dtype=torch.bool)
+        joint = torch.zeros(1, 1, 5, 3, 3)
+        joint[..., 1, 2, 1] = 0.5
+        joint[..., 3, 2, 1] = 0.02
+
+        features, local_order = self.model.tokenizer.hydrodynamic_velocity_features(
+            joint.reshape(1, 1, 5, 9), mask
+        )
+
+        self.assertGreater(float(features[..., 1, 6]), float(features[..., 3, 6]))
+        self.assertGreater(float(features[..., 1, 7]), float(features[..., 3, 7]))
+        self.assertGreater(float(local_order[..., 1]), float(local_order[..., 3]))
+
+    def test_masked_price_bins_never_emit_local_flow(self) -> None:
+        mask = torch.tensor([[[True, False, True]]])
+        joint = torch.zeros(1, 1, 3, 3, 3)
+        joint[..., 1, 2, 1] = 1.0
+
+        features, local_order = self.model.tokenizer.hydrodynamic_velocity_features(
+            joint.reshape(1, 1, 3, 9), mask
+        )
+
+        self.assertTrue(torch.equal(features[..., 1, :], torch.zeros(1, 1, 11)))
+        self.assertEqual(float(local_order[..., 1]), 0.0)
 
 
 if __name__ == "__main__":

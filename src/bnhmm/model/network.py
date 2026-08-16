@@ -182,7 +182,7 @@ class BayesianMotifTokenizer(nn.Module):
         self.include_metadata = include_metadata
         self.joint_velocity_channels = joint_velocity_channels
         self.velocity_bins = velocity_bins
-        self.hydrodynamic_channels = 10
+        self.hydrodynamic_channels = 11
         if not 0.0 <= auxiliary_gate_floor < 1.0:
             raise ValueError("auxiliary gate floor must be in [0, 1)")
         if not auxiliary_gate_floor <= auxiliary_gate_initial < 1.0:
@@ -294,7 +294,7 @@ class BayesianMotifTokenizer(nn.Module):
         )
         price_values = torch.stack((profiles[..., 0], profiles[..., 3]), dim=-1)
         volume_values = profiles[..., 1:3]
-        joint_velocity_values, flow_order = self.hydrodynamic_velocity_features(
+        joint_velocity_values, _ = self.hydrodynamic_velocity_features(
             profiles[..., 4:], profile_mask
         )
         branch_inputs = (
@@ -323,8 +323,6 @@ class BayesianMotifTokenizer(nn.Module):
                 triple_positions,
                 sample=sample,
             )
-            if index == 1:
-                residual = residual * flow_order.unsqueeze(-1).unsqueeze(-1)
             tokens = tokens + gates[index] * residual
         tokens = tokens * profile_mask.unsqueeze(-1)
         scores = self.pool_score(torch.tanh(tokens), sample=sample).squeeze(-1)
@@ -356,7 +354,7 @@ class BayesianMotifTokenizer(nn.Module):
     def hydrodynamic_velocity_features(
         self, joint_flat: Tensor, profile_mask: Tensor
     ) -> tuple[Tensor, Tensor]:
-        """Coarse-grain signed velocity into Z2-aware density and flow fields."""
+        """Resolve Z2 breaking independently inside each local price region."""
         expected = self.velocity_bins**2
         if joint_flat.shape[-1] != expected:
             raise ValueError("joint velocity channels do not match velocity bins")
@@ -389,26 +387,68 @@ class BayesianMotifTokenizer(nn.Module):
         variance_volume = (
             joint * centered_volume.square()
         ).sum(dim=(-1, -2)) / denominator
-        covariance = (
-            joint * centered_price * centered_volume
-        ).sum(dim=(-1, -2)) / denominator
+        second_price = (joint * price_velocity.square()).sum(
+            dim=(-1, -2)
+        ) / denominator
+        second_volume = (joint * volume_velocity.square()).sum(
+            dim=(-1, -2)
+        ) / denominator
+        cross_moment = (joint * price_velocity * volume_velocity).sum(
+            dim=(-1, -2)
+        ) / denominator
 
         price_current = density * mean_price
         volume_current = density * mean_volume
         price_temperature = density * variance_price.clamp_min(0.0).sqrt()
         volume_temperature = density * variance_volume.clamp_min(0.0).sqrt()
-        covariance_flux = density * covariance
-        odd = 0.5 * (joint - joint.flip(dims=(-2,)))
-        odd_amplitude = odd.abs().sum(dim=(-1, -2))
-        local_laminar = density * mean_price / torch.sqrt(
-            mean_price.square() + variance_price + 1e-8
+        alignment_flux = density * cross_moment / torch.sqrt(
+            second_price * second_volume + 1e-8
         )
 
         mask = profile_mask.to(dtype)
-        total_current = (price_current * mask).sum(dim=-1)
-        absolute_current = (price_current.abs() * mask).sum(dim=-1).clamp_min(1e-8)
-        signed_coherence = total_current / absolute_current
-        coherent_flow = density * signed_coherence.unsqueeze(-1)
+        valid_bins = mask.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        reference_density = valid_bins.reciprocal()
+        support_confidence = density / (density + reference_density + 1e-8)
+        support_confidence = support_confidence * mask
+
+        signed_coherence = mean_price / torch.sqrt(second_price + 1e-8)
+        signed_coherence = signed_coherence.clamp(-1.0, 1.0) * mask
+        conditional = joint / denominator.unsqueeze(-1).unsqueeze(-1)
+        entropy = -(
+            conditional * conditional.clamp_min(1e-8).log()
+        ).sum(dim=(-1, -2))
+        maximum_entropy = log(float(self.velocity_bins**2))
+        concentration = (1.0 - entropy / maximum_entropy).clamp(0.0, 1.0)
+        concentration = concentration * (density > 0).to(dtype) * mask
+
+        neighbor_direction = torch.zeros_like(signed_coherence)
+        neighbor_weight = torch.zeros_like(support_confidence)
+        if signed_coherence.shape[-1] > 1:
+            neighbor_direction[..., 1:] += (
+                signed_coherence[..., :-1] * support_confidence[..., :-1]
+            )
+            neighbor_weight[..., 1:] += support_confidence[..., :-1]
+            neighbor_direction[..., :-1] += (
+                signed_coherence[..., 1:] * support_confidence[..., 1:]
+            )
+            neighbor_weight[..., :-1] += support_confidence[..., 1:]
+        neighbor_direction = neighbor_direction / neighbor_weight.clamp_min(1e-8)
+        agreement = (
+            signed_coherence * neighbor_direction
+        ).clamp_min(0.0).sqrt()
+        signed_persistence = (
+            signed_coherence.sign()
+            * agreement
+            * support_confidence
+            * (neighbor_weight > 0).to(dtype)
+        )
+        local_flow_order = (
+            signed_coherence.abs()
+            * support_confidence
+            * torch.sqrt(concentration.clamp_min(0.0))
+            * (0.5 + 0.5 * agreement)
+        ) * mask
+
         current_divergence = torch.zeros_like(price_current)
         if price_current.shape[-1] > 1:
             current_divergence[..., 0] = price_current[..., 1] - price_current[..., 0]
@@ -420,10 +460,6 @@ class BayesianMotifTokenizer(nn.Module):
                 price_current[..., 2:] - price_current[..., :-2]
             )
 
-        total_odd = (odd_amplitude * mask).sum(dim=-1).clamp(0.0, 1.0)
-        flow_order = torch.sqrt(
-            (total_odd * signed_coherence.abs()).clamp(0.0, 1.0)
-        )
         features = torch.stack(
             (
                 density,
@@ -431,16 +467,17 @@ class BayesianMotifTokenizer(nn.Module):
                 volume_current,
                 price_temperature,
                 volume_temperature,
-                covariance_flux,
-                odd_amplitude,
-                local_laminar,
-                coherent_flow,
+                alignment_flux,
+                signed_coherence * support_confidence,
+                concentration * support_confidence,
+                signed_persistence,
+                local_flow_order,
                 current_divergence,
             ),
             dim=-1,
         )
         features = features * mask.unsqueeze(-1)
-        return features, flow_order
+        return features, local_flow_order
 
     @staticmethod
     def _coordinate_features(coordinates: Tensor, dtype: torch.dtype) -> Tensor:
@@ -466,7 +503,7 @@ class BNHMMNetwork(nn.Module):
         state_feature_dim: int = 9,
         latent_states: int = 20,
         output_states: int = REGIME_COUNT,
-        feature_mode: str = "price-volume",
+        feature_mode: str = "price-velocity",
         auxiliary_gate_floor: float = 0.25,
         auxiliary_gate_initial: float = 0.75,
         bayesian_backbone: bool = False,
