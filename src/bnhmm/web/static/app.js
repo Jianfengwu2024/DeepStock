@@ -44,6 +44,12 @@ const strategyParameterFields = {
   "fk-stock": [],
 };
 
+const strategyNamePrefixes = {
+  bnhmm: "BNHMM",
+  "stock-transformer": "StockTransformer",
+  "fk-stock": "FKStock",
+};
+
 const statusText = {
   queued: "排队中", running: "运行中", completed: "已完成", failed: "失败",
   cancelled: "已停止", interrupted: "已中断",
@@ -91,6 +97,21 @@ function currentStrategy() {
   return document.querySelector("[name=strategy]:checked")?.value || "bnhmm";
 }
 
+function nextExperimentName(strategy = currentStrategy()) {
+  const prefix = strategyNamePrefixes[strategy] || strategy;
+  const pattern = new RegExp(`^${prefix}-(\\d+)$`, "i");
+  const maximum = state.jobs.reduce((value, job) => {
+    if (job.request.strategy !== strategy) return value;
+    const match = String(job.request.name || "").match(pattern);
+    return match ? Math.max(value, Number(match[1])) : value;
+  }, 0);
+  return `${prefix}-${String(maximum + 1).padStart(3, "0")}`;
+}
+
+function setNextExperimentName(strategy = currentStrategy()) {
+  document.querySelector('[name="name"]').value = nextExperimentName(strategy);
+}
+
 function readFormFields(names) {
   const form = document.querySelector("#experiment-form");
   return Object.fromEntries(names.map(name => {
@@ -121,6 +142,7 @@ function changeStrategy() {
     const fields = strategyParameterFields[strategy];
     writeFormFields(saved || Object.fromEntries(fields.map(name => [name, preset[name]])));
     state.activeStrategy = strategy;
+    setNextExperimentName(strategy);
   }
   syncStrategySelection();
   syncModelConstraints();
@@ -344,6 +366,7 @@ async function submitExperiment(event) {
     const job = await api("/api/jobs", { method: "POST", body: JSON.stringify(formPayload()) });
     state.selectedId = job.id;
     await refreshAll();
+    setNextExperimentName();
     document.querySelector("#config-panel").classList.remove("open");
   } catch (exception) {
     error.textContent = exception.message;
@@ -973,6 +996,7 @@ async function initialize() {
   fillForm(state.config.defaults);
   setupDevices(state.config.devices);
   await refreshAll();
+  setNextExperimentName();
   icons();
   setInterval(refreshAll, 2500);
 }
