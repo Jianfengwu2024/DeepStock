@@ -12,6 +12,7 @@ from torch.nn import functional as F
 from ..config import (
     DEFAULT_HOLOGRAPHIC_VOLUME_BINS,
     HOLOGRAPHIC_FIELD_COUNT,
+    HOLOGRAPHIC_FIELD_NAMES,
     PROFILE_CHANNELS,
     REGIME_COUNT,
     REGIME_SCORES,
@@ -515,6 +516,7 @@ class HolographicTokenizer(nn.Module):
         d_model: int,
         volume_bins: int,
         field_count: int,
+        convolution_layers: int,
         include_metadata: bool,
         *,
         bayesian: bool,
@@ -527,14 +529,23 @@ class HolographicTokenizer(nn.Module):
         self.state_feature_dim = state_feature_dim
         self.volume_bins = volume_bins
         self.field_count = field_count
+        self.convolution_layers = convolution_layers
         self.include_metadata = include_metadata
         linear = BayesianLinear if bayesian else DeterministicLinear
         self.cell_projection = linear(field_count + 4, d_model)
-        self.local_field = nn.Sequential(
-            nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
-            nn.GELU(),
-            nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
-        )
+        if convolution_layers == 1:
+            self.local_field = nn.Sequential(
+                nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
+                nn.GELU(),
+            )
+        elif convolution_layers == 2:
+            self.local_field = nn.Sequential(
+                nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
+                nn.GELU(),
+                nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
+            )
+        else:
+            raise ValueError("holographic convolution layers must be one or two")
         self.local_norm = nn.LayerNorm(d_model)
         self.pool_score = linear(d_model, 1)
         self.metadata = linear(state_feature_dim, d_model)
@@ -621,6 +632,8 @@ class BNHMMNetwork(nn.Module):
         tokenizer_kind: str = "profile-motif",
         holographic_volume_bins: int = DEFAULT_HOLOGRAPHIC_VOLUME_BINS,
         holographic_field_count: int = HOLOGRAPHIC_FIELD_COUNT,
+        holographic_field_names: tuple[str, ...] = HOLOGRAPHIC_FIELD_NAMES,
+        holographic_conv_layers: int = 2,
         feature_mode: str = "price-velocity",
         auxiliary_gate_floor: float = 0.25,
         auxiliary_gate_initial: float = 0.75,
@@ -664,6 +677,16 @@ class BNHMMNetwork(nn.Module):
         self.tokenizer_kind = tokenizer_kind
         self.holographic_volume_bins = holographic_volume_bins
         self.holographic_field_count = holographic_field_count
+        self.holographic_field_names = tuple(holographic_field_names)
+        self.holographic_conv_layers = holographic_conv_layers
+        if (
+            len(self.holographic_field_names) != self.holographic_field_count
+            or len(set(self.holographic_field_names))
+            != len(self.holographic_field_names)
+        ):
+            raise ValueError(
+                "holographic field names must uniquely match the field count"
+            )
         self.feature_mode = feature_mode
         self.auxiliary_gate_floor = float(auxiliary_gate_floor)
         self.auxiliary_gate_initial = float(auxiliary_gate_initial)
@@ -700,6 +723,7 @@ class BNHMMNetwork(nn.Module):
                 d_model,
                 holographic_volume_bins,
                 holographic_field_count,
+                holographic_conv_layers,
                 include_metadata,
                 bayesian=bayesian_backbone,
             )

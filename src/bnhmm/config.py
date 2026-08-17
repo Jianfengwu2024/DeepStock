@@ -20,6 +20,7 @@ REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
 REGIME_PROTOCOL = "volatility-scaled-prior-evidence-v5"
 PROFILE_PROTOCOL = "phase-space-10m-local-flow-v8"
 HOLOGRAPHIC_PROFILE_PROTOCOL = "price-volume-holographic-flow-v1"
+HOLOGRAPHIC_LITE_PROFILE_PROTOCOL = "price-volume-holographic-lite-v1"
 SEQUENCE_PROTOCOL = "fixed-recent-endpoint-v1"
 DEFAULT_VELOCITY_BINS = 3
 PROFILE_CHANNELS = 4 + DEFAULT_VELOCITY_BINS**2
@@ -35,6 +36,13 @@ HOLOGRAPHIC_FIELD_NAMES = (
     "vorticity",
 )
 HOLOGRAPHIC_FIELD_COUNT = len(HOLOGRAPHIC_FIELD_NAMES)
+HOLOGRAPHIC_LITE_FIELD_NAMES = (
+    "density",
+    "price_current",
+    "volume_current",
+    "divergence",
+    "vorticity",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +61,7 @@ class ProfileConfig:
     velocity_smoothing: float = 0.25
     holographic_volume_bins: int = DEFAULT_HOLOGRAPHIC_VOLUME_BINS
     holographic_smoothing: float = 0.75
+    holographic_fields: tuple[str, ...] = HOLOGRAPHIC_FIELD_NAMES
     feature_clip: float = 4.0
     minimum_hour_bars: int = 20
     minimum_day_bars: int = 120
@@ -97,6 +106,15 @@ class ProfileConfig:
             raise ValueError("holographic volume bins must be an odd integer of at least three")
         if self.holographic_smoothing < 0 or self.holographic_smoothing > 4:
             raise ValueError("holographic smoothing must be between zero and four")
+        if (
+            not self.holographic_fields
+            or self.holographic_fields[0] != "density"
+            or len(set(self.holographic_fields)) != len(self.holographic_fields)
+            or set(self.holographic_fields) - set(HOLOGRAPHIC_FIELD_NAMES)
+        ):
+            raise ValueError(
+                "holographic fields must be unique known fields with density first"
+            )
 
     @property
     def profile_channels(self) -> int:
@@ -105,7 +123,7 @@ class ProfileConfig:
 
     @property
     def holographic_profile_channels(self) -> int:
-        return self.holographic_volume_bins * HOLOGRAPHIC_FIELD_COUNT
+        return self.holographic_volume_bins * len(self.holographic_fields)
 
 
 @dataclass(frozen=True, slots=True)

@@ -199,7 +199,46 @@ class WebJobTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             request.model_copy(update={"latent_states": 39}).model_validate(
-                request.model_copy(update={"latent_states": 39}).model_dump()
+            request.model_copy(update={"latent_states": 39}).model_dump()
+            )
+
+    def test_holographic_lite_command_uses_fixed_fifteen_channel_contract(self) -> None:
+        fields = (
+            "density",
+            "price_current",
+            "volume_current",
+            "divergence",
+            "vorticity",
+        )
+        request = WalkForwardJobRequest(
+            strategy="holo-bnhmm-lite",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            profile_protocol="price-volume-holographic-lite-v1",
+            holographic_volume_bins=3,
+            holographic_fields=fields,
+            holographic_conv_layers=1,
+            d_model=16,
+            latent_states=16,
+            layers=1,
+            feedforward_dim=32,
+        )
+
+        command = build_command(request, Path("/tmp/holo-lite-result"))
+
+        self.assertIn("--holographic-fields", command)
+        self.assertIn(",".join(fields), command)
+        self.assertIn("--holographic-conv-layers", command)
+        self.assertEqual(request.holographic_volume_bins * len(fields), 15)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(
+                strategy="holo-bnhmm-lite",
+                training_scope="sector-pooled",
+                dataset_id="semiconductor",
+                profile_protocol="price-volume-holographic-lite-v1",
+                holographic_volume_bins=3,
+                holographic_fields=fields,
+                latent_states=14,
             )
 
     def test_stock_transformer_rejects_non_sector_scope(self) -> None:

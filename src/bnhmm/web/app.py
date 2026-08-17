@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
+from ..config import HOLOGRAPHIC_LITE_FIELD_NAMES
 from ..data.sector_dataset import SectorDatasetCatalog
 from ..data.source import DuckDBBarSource
 from .jobs import (
@@ -108,6 +109,18 @@ def config(request: Request) -> dict[str, Any]:
         "latent_states": 50,
         "pretrain_epochs": 2,
     }
+    holographic_lite_defaults = {
+        **holographic_defaults,
+        "strategy": "holo-bnhmm-lite",
+        "profile_protocol": "price-volume-holographic-lite-v1",
+        "holographic_volume_bins": 3,
+        "holographic_fields": list(HOLOGRAPHIC_LITE_FIELD_NAMES),
+        "holographic_conv_layers": 1,
+        "d_model": 16,
+        "layers": 1,
+        "feedforward_dim": 32,
+        "latent_states": 16,
+    }
     fk_defaults = {
         **defaults,
         "strategy": "fk-stock",
@@ -122,6 +135,7 @@ def config(request: Request) -> dict[str, Any]:
         "strategy_defaults": {
             "bnhmm": defaults,
             "holo-bnhmm": holographic_defaults,
+            "holo-bnhmm-lite": holographic_lite_defaults,
             "stock-transformer": stock_defaults,
             "fk-stock": fk_defaults,
         },

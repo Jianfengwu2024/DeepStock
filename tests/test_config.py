@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from bnhmm import (
+    HOLOGRAPHIC_LITE_FIELD_NAMES,
     PROFILE_CHANNELS,
     PROFILE_PROTOCOL,
     SEQUENCE_PROTOCOL,
@@ -57,6 +58,18 @@ class ConfigTests(unittest.TestCase):
             ProfileConfig(velocity_bins=8)
         with self.assertRaises(ValueError):
             ProfileConfig(velocity_aggregation_minutes=7)
+
+    def test_holographic_lite_has_fifteen_ordered_channels(self) -> None:
+        config = ProfileConfig(
+            holographic_volume_bins=3,
+            holographic_fields=HOLOGRAPHIC_LITE_FIELD_NAMES,
+        )
+
+        self.assertEqual(config.holographic_profile_channels, 15)
+        with self.assertRaises(ValueError):
+            ProfileConfig(holographic_fields=("price_current", "density"))
+        with self.assertRaises(ValueError):
+            ProfileConfig(holographic_fields=("density", "density"))
 
     def test_label_standardization_is_validated(self) -> None:
         with self.assertRaises(ValueError):

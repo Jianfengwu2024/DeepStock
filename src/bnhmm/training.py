@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, Dataset
 from .config import (
     DEFAULT_HOLOGRAPHIC_VOLUME_BINS,
     HOLOGRAPHIC_FIELD_COUNT,
+    HOLOGRAPHIC_FIELD_NAMES,
     PROFILE_CHANNELS,
     REGIME_COUNT,
     REGIME_NAMES,
@@ -39,6 +40,8 @@ class ModelConfig:
     tokenizer_kind: str = "profile-motif"
     holographic_volume_bins: int = DEFAULT_HOLOGRAPHIC_VOLUME_BINS
     holographic_field_count: int = HOLOGRAPHIC_FIELD_COUNT
+    holographic_field_names: tuple[str, ...] = HOLOGRAPHIC_FIELD_NAMES
+    holographic_conv_layers: int = 2
     feature_mode: str = "price-velocity"
     auxiliary_gate_floor: float = 0.25
     auxiliary_gate_initial: float = 0.75
@@ -630,7 +633,19 @@ class BNHMMTrainer:
                     field = profile.reshape(
                         valid_bins, volume_bins, field_count
                     ).flip(dims=(0,))
-                    field[..., (1, 5, 7)] *= -1.0
+                    odd_fields = {
+                        "price_current",
+                        "covariance_flux",
+                        "vorticity",
+                    }
+                    odd_indices = tuple(
+                        index
+                        for index, name in enumerate(
+                            self.model.holographic_field_names
+                        )
+                        if name in odd_fields
+                    )
+                    field[..., odd_indices] *= -1.0
                     mirrored_profile = field.reshape(valid_bins, -1)
                 else:
                     scalar = profile[:, :4].flip(dims=(0,))

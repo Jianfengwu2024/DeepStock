@@ -12,6 +12,8 @@ import numpy as np
 
 from .config import (
     HOLOGRAPHIC_FIELD_NAMES,
+    HOLOGRAPHIC_LITE_FIELD_NAMES,
+    HOLOGRAPHIC_LITE_PROFILE_PROTOCOL,
     HOLOGRAPHIC_PROFILE_PROTOCOL,
     REGIME_COUNT,
     REGIME_NAMES,
@@ -31,6 +33,13 @@ from .storage import apply_migrations
 
 def _state_timeframes(mode: str) -> tuple[str, ...]:
     return ("1d",) if mode == "daily" else ("60m", "1d")
+
+
+def _holographic_fields(value: str) -> tuple[str, ...]:
+    fields = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not fields:
+        raise argparse.ArgumentTypeError("at least one holographic field is required")
+    return fields
 
 
 def _regime_metadata(labels: LabelConfig) -> dict[str, object]:
@@ -298,6 +307,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         velocity_smoothing=args.velocity_smoothing,
         holographic_volume_bins=args.holographic_volume_bins,
         holographic_smoothing=args.holographic_smoothing,
+        holographic_fields=args.holographic_fields,
     )
     label_config = LabelConfig(
         forward_sessions=args.forward_sessions,
@@ -354,6 +364,9 @@ def _walk_forward(args: argparse.Namespace) -> int:
         latent_states=args.latent_states,
         tokenizer_kind="holographic-2d" if holographic else "profile-motif",
         holographic_volume_bins=profile_config.holographic_volume_bins,
+        holographic_field_count=len(profile_config.holographic_fields),
+        holographic_field_names=profile_config.holographic_fields,
+        holographic_conv_layers=args.holographic_conv_layers,
         transition_rank=args.transition_rank,
         strong_bear_threshold=label_config.strong_bear_threshold,
         direction_threshold=label_config.direction_threshold,
@@ -459,7 +472,14 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "state_timeframe": args.state_timeframe,
         "profile_protocol": {
             "version": (
-                HOLOGRAPHIC_PROFILE_PROTOCOL if holographic else PROFILE_PROTOCOL
+                (
+                    HOLOGRAPHIC_LITE_PROFILE_PROTOCOL
+                    if profile_config.holographic_fields
+                    == HOLOGRAPHIC_LITE_FIELD_NAMES
+                    else HOLOGRAPHIC_PROFILE_PROTOCOL
+                )
+                if holographic
+                else PROFILE_PROTOCOL
             ),
             "bin_width_bps": args.bin_width_bps,
             "max_profile_bins": args.max_profile_bins,
@@ -493,7 +513,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
                     "domain": ["relative_log_price", "relative_volume_level"],
                     "volume_bins": profile_config.holographic_volume_bins,
                     "field_smoothing": profile_config.holographic_smoothing,
-                    "fields": list(HOLOGRAPHIC_FIELD_NAMES),
+                    "fields": list(profile_config.holographic_fields),
                     "flow": ["price_velocity", "volume_level_velocity"],
                     "geometry": ["divergence", "vorticity"],
                 }
@@ -1286,6 +1306,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     walk.add_argument("--holographic-volume-bins", type=int, default=5)
     walk.add_argument("--holographic-smoothing", type=float, default=0.75)
+    walk.add_argument(
+        "--holographic-fields",
+        type=_holographic_fields,
+        default=HOLOGRAPHIC_FIELD_NAMES,
+        metavar="FIELD[,FIELD...]",
+    )
+    walk.add_argument("--holographic-conv-layers", type=int, choices=(1, 2), default=2)
     walk.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),

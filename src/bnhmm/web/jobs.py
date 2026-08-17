@@ -18,6 +18,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
+from ..config import HOLOGRAPHIC_FIELD_NAMES, HOLOGRAPHIC_LITE_FIELD_NAMES
+
 
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled", "interrupted"]
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -33,7 +35,11 @@ class DuplicateJobNameError(RuntimeError):
 
 class WalkForwardJobRequest(BaseModel):
     strategy: Literal[
-        "bnhmm", "holo-bnhmm", "stock-transformer", "fk-stock"
+        "bnhmm",
+        "holo-bnhmm",
+        "holo-bnhmm-lite",
+        "stock-transformer",
+        "fk-stock",
     ] = "bnhmm"
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
@@ -74,6 +80,8 @@ class WalkForwardJobRequest(BaseModel):
     velocity_smoothing: float = Field(0.25, ge=0.0, le=10.0)
     holographic_volume_bins: int = Field(5, ge=3, le=15)
     holographic_smoothing: float = Field(0.75, ge=0.0, le=4.0)
+    holographic_fields: tuple[str, ...] = HOLOGRAPHIC_FIELD_NAMES
+    holographic_conv_layers: int = Field(2, ge=1, le=2)
     conservation_grid_points: int = Field(64, ge=16, le=512)
     conservation_ridge: float = Field(1e-3, ge=0.0, le=10.0)
     minimum_token_bins: int = Field(2, ge=1, le=64)
@@ -81,6 +89,7 @@ class WalkForwardJobRequest(BaseModel):
     boundary_threshold: float = Field(1.5, gt=0.0, le=20.0)
     profile_protocol: Literal[
         "price-volume-holographic-flow-v1",
+        "price-volume-holographic-lite-v1",
         "phase-space-10m-local-flow-v8",
         "phase-space-10m-joint-return-v7",
         "phase-space-joint-return-v6",
@@ -140,6 +149,20 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("a symbol contains unsupported characters")
         return normalized
 
+    @field_validator("holographic_fields")
+    @classmethod
+    def validate_holographic_fields(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if (
+            not value
+            or value[0] != "density"
+            or len(set(value)) != len(value)
+            or set(value) - set(HOLOGRAPHIC_FIELD_NAMES)
+        ):
+            raise ValueError(
+                "holographic fields must be unique known fields with density first"
+            )
+        return value
+
     @model_validator(mode="after")
     def validate_relationships(self, info: ValidationInfo) -> "WalkForwardJobRequest":
         legacy = bool((info.context or {}).get("legacy_job"))
@@ -158,16 +181,30 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("unsupported current training scope")
             if self.training_scope == "sector-pooled" and not self.dataset_id:
                 raise ValueError("sector-pooled jobs require a sector dataset")
-            if self.strategy in {"holo-bnhmm", "stock-transformer", "fk-stock"} and self.training_scope != "sector-pooled":
+            holographic = self.strategy in {"holo-bnhmm", "holo-bnhmm-lite"}
+            if self.strategy in {"holo-bnhmm", "holo-bnhmm-lite", "stock-transformer", "fk-stock"} and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
             expected_profile = (
-                "price-volume-holographic-flow-v1"
-                if self.strategy == "holo-bnhmm"
+                (
+                    "price-volume-holographic-lite-v1"
+                    if self.strategy == "holo-bnhmm-lite"
+                    else "price-volume-holographic-flow-v1"
+                )
+                if holographic
                 else "phase-space-10m-local-flow-v8"
             )
             if self.profile_protocol != expected_profile:
                 raise ValueError(
                     f"{self.strategy} requires the {expected_profile} profile"
+                )
+            expected_fields = (
+                HOLOGRAPHIC_LITE_FIELD_NAMES
+                if self.strategy == "holo-bnhmm-lite"
+                else HOLOGRAPHIC_FIELD_NAMES
+            )
+            if holographic and self.holographic_fields != expected_fields:
+                raise ValueError(
+                    f"{self.strategy} requires its fixed holographic field set"
                 )
             if self.sequence_protocol != "fixed-recent-endpoint-v1":
                 raise ValueError("current jobs require fixed recent endpoint windows")
@@ -188,21 +225,21 @@ class WalkForwardJobRequest(BaseModel):
         if 60 % self.velocity_aggregation_minutes:
             raise ValueError("velocity_aggregation_minutes must divide 60")
         profile_channels = (
-            self.holographic_volume_bins * 8
-            if self.strategy == "holo-bnhmm"
+            self.holographic_volume_bins * len(self.holographic_fields)
+            if self.strategy in {"holo-bnhmm", "holo-bnhmm-lite"}
             else 4 + self.velocity_bins**2
         )
         if self.feature_mode == "legacy-entangled" and not legacy:
             raise ValueError("legacy-entangled is reserved for historical jobs")
         if (
             not legacy
-            and self.strategy in {"bnhmm", "holo-bnhmm"}
+            and self.strategy in {"bnhmm", "holo-bnhmm", "holo-bnhmm-lite"}
             and self.latent_states < profile_channels
         ):
             raise ValueError("latent_states cannot be fewer than profile channels")
         if (
             not legacy
-            and self.strategy in {"bnhmm", "holo-bnhmm"}
+            and self.strategy in {"bnhmm", "holo-bnhmm", "holo-bnhmm-lite"}
             and self.transition_rank > self.latent_states
         ):
             raise ValueError("transition_rank cannot exceed latent_states")
@@ -372,7 +409,7 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         "--seed",
         str(request.seed),
     ]
-    if request.strategy == "holo-bnhmm":
+    if request.strategy in {"holo-bnhmm", "holo-bnhmm-lite"}:
         command.extend(
             (
                 "--profile-kind",
@@ -381,6 +418,10 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
                 str(request.holographic_volume_bins),
                 "--holographic-smoothing",
                 str(request.holographic_smoothing),
+                "--holographic-fields",
+                ",".join(request.holographic_fields),
+                "--holographic-conv-layers",
+                str(request.holographic_conv_layers),
             )
         )
     if request.dataset_id:

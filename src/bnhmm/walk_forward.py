@@ -556,6 +556,10 @@ def _state_diagnostics(
     holographic = not hasattr(
         model.tokenizer, "hydrodynamic_velocity_features"
     )
+    holographic_field_indices = {
+        name: index
+        for index, name in enumerate(model.holographic_field_names)
+    }
     model.eval()
     for offset in range(0, len(sequences), 64):
         items = sequences[offset : offset + 64]
@@ -594,16 +598,28 @@ def _state_diagnostics(
                     grid[..., 0] > 0
                 )
                 holographic_price_currents.extend(
-                    grid[..., 1][local_mask].detach().cpu().tolist()
+                    grid[..., holographic_field_indices["price_current"]][local_mask]
+                    .detach()
+                    .cpu()
+                    .tolist()
                 )
                 holographic_volume_currents.extend(
-                    grid[..., 2][local_mask].detach().cpu().tolist()
+                    grid[..., holographic_field_indices["volume_current"]][local_mask]
+                    .detach()
+                    .cpu()
+                    .tolist()
                 )
                 holographic_divergence.extend(
-                    grid[..., 6][local_mask].detach().cpu().tolist()
+                    grid[..., holographic_field_indices["divergence"]][local_mask]
+                    .detach()
+                    .cpu()
+                    .tolist()
                 )
                 holographic_vorticity.extend(
-                    grid[..., 7][local_mask].detach().cpu().tolist()
+                    grid[..., holographic_field_indices["vorticity"]][local_mask]
+                    .detach()
+                    .cpu()
+                    .tolist()
                 )
                 continue
             local_mask = (

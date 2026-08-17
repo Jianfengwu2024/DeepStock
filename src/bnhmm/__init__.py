@@ -7,6 +7,8 @@ from .config import (
     REGIME_SCORES,
     HOLOGRAPHIC_FIELD_COUNT,
     HOLOGRAPHIC_FIELD_NAMES,
+    HOLOGRAPHIC_LITE_FIELD_NAMES,
+    HOLOGRAPHIC_LITE_PROFILE_PROTOCOL,
     HOLOGRAPHIC_PROFILE_PROTOCOL,
     PROFILE_CHANNELS,
     PROFILE_PROTOCOL,
@@ -33,6 +35,8 @@ __all__ = [
     "HolographicState",
     "HOLOGRAPHIC_FIELD_COUNT",
     "HOLOGRAPHIC_FIELD_NAMES",
+    "HOLOGRAPHIC_LITE_FIELD_NAMES",
+    "HOLOGRAPHIC_LITE_PROFILE_PROTOCOL",
     "HOLOGRAPHIC_PROFILE_PROTOCOL",
     "LabelConfig",
     "ProfileLabelBuilder",
@@ -52,5 +56,5 @@ __all__ = [
     "SequenceWindowBuilder",
 ]
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from ..config import HOLOGRAPHIC_FIELD_COUNT, ProfileConfig
+from ..config import HOLOGRAPHIC_FIELD_COUNT, HOLOGRAPHIC_FIELD_NAMES, ProfileConfig
 from ..types import BarBatch, HolographicState
 from .normalization import NormalizedSession, PhaseSpaceNormalization, RollingPhaseSpaceNormalizer
 
@@ -24,6 +24,10 @@ class HolographicProfileBuilder:
     def __init__(self, config: ProfileConfig | None = None) -> None:
         self.config = config or ProfileConfig()
         self.normalizer = RollingPhaseSpaceNormalizer(self.config)
+        self._field_indices = tuple(
+            HOLOGRAPHIC_FIELD_NAMES.index(name)
+            for name in self.config.holographic_fields
+        )
         self._normalizers: dict[str, _NormalizerState] = defaultdict(
             lambda: _NormalizerState(previous_close=None)
         )
@@ -207,6 +211,7 @@ class HolographicProfileBuilder:
         )
         if fields.shape[-1] != HOLOGRAPHIC_FIELD_COUNT:
             raise AssertionError("holographic field protocol is inconsistent")
+        fields = fields[..., self._field_indices]
         session = bars.timestamp[0].astype("datetime64[D]")
         return HolographicState(
             symbol=bars.symbol,

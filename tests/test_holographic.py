@@ -10,6 +10,7 @@ import torch
 from bnhmm import (
     BarBatch,
     HolographicProfileBuilder,
+    HOLOGRAPHIC_LITE_FIELD_NAMES,
     ProfileConfig,
     SequenceConfig,
     SequenceWindowBuilder,
@@ -200,6 +201,56 @@ class HolographicProfileTests(unittest.TestCase):
         self.assertEqual(output.regime_logits.shape, (2, 5, 4))
         output.return_mean.sum().backward()
         self.assertTrue(any(item.grad is not None for item in model.parameters()))
+
+    def test_lite_profile_keeps_only_five_core_fields(self) -> None:
+        profile_config = ProfileConfig(
+            relative_volume_min_observations=3,
+            relative_volume_lookback_sessions=3,
+            holographic_volume_bins=3,
+            holographic_fields=HOLOGRAPHIC_LITE_FIELD_NAMES,
+        )
+        states = HolographicProfileBuilder(profile_config).build(synthetic_sessions())
+        observations = ProfileLabelBuilder().build(states)
+        sequence = SequenceWindowBuilder(SequenceConfig(length=5)).build(observations)[0]
+        batch = collate_profile_sequences([sequence])
+        model = ModelConfig(
+            max_profile_bins=512,
+            profile_channels=15,
+            latent_states=16,
+            tokenizer_kind="holographic-2d",
+            holographic_volume_bins=3,
+            holographic_field_count=5,
+            holographic_field_names=HOLOGRAPHIC_LITE_FIELD_NAMES,
+            holographic_conv_layers=1,
+            d_model=16,
+            heads=4,
+            layers=1,
+            feedforward_dim=32,
+            max_sequence_length=5,
+        ).build(seed=7)
+
+        self.assertEqual(states[0].fields.shape[-2:], (3, 5))
+        self.assertEqual(observations.profiles[0].shape[-1], 15)
+        mirrored = BNHMMTrainer(model)._augment_z2_batch(batch)
+        valid = int(batch["profile_mask"][0, 0].sum())
+        original = batch["profiles"][0, 0, :valid].reshape(valid, 3, 5)
+        reflected = mirrored["profiles"][1, 0, :valid].reshape(valid, 3, 5)
+        for index in (0, 2, 3):
+            torch.testing.assert_close(reflected[..., index], original.flip(0)[..., index])
+        for index in (1, 4):
+            torch.testing.assert_close(reflected[..., index], -original.flip(0)[..., index])
+
+        output = model(
+            batch["profiles"],
+            batch["timeframe_ids"],
+            batch["state_features"],
+            batch["bin_coordinates"],
+            batch["profile_mask"],
+            valid_mask=batch["valid_mask"],
+            sample=False,
+        )
+        self.assertEqual(output.latent_probabilities.shape[-1], 16)
+        self.assertEqual(model.tokenizer.convolution_layers, 1)
 
     def test_holographic_z2_mirror_uses_field_parity(self) -> None:
         profile_config = ProfileConfig(
