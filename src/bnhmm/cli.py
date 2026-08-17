@@ -284,6 +284,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         symbols = source.list_symbols(args.symbol_limit)
     observations = []
     data_summary: dict[str, dict[str, int]] = {}
+    skipped_symbols: dict[str, str] = {}
     holographic = args.profile_kind == "holographic"
     profile_config = ProfileConfig(
         bin_width_bps=args.bin_width_bps,
@@ -314,8 +315,15 @@ def _walk_forward(args: argparse.Namespace) -> int:
         )
         states = builder.build(bars)
         if not states:
+            skipped_symbols[symbol] = "no valid profile states"
             continue
-        labeled = ProfileLabelBuilder(label_config).build(states)
+        try:
+            labeled = ProfileLabelBuilder(label_config).build(states)
+        except ValueError as error:
+            if str(error) != "profile states do not contain enough future sessions":
+                raise
+            skipped_symbols[symbol] = str(error)
+            continue
         observations.append(labeled)
         data_summary[symbol] = {
             "bars": len(bars),
@@ -508,6 +516,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "sequence_protocol": SEQUENCE_PROTOCOL,
         "walk_forward_config": asdict(walk_config),
         "data": data_summary,
+        "skipped_symbols": skipped_symbols,
         "per_symbol": per_symbol,
         "folds": list(result.folds),
         "oos_predictions": len(result.predictions),
