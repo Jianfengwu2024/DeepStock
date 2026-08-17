@@ -32,7 +32,9 @@ class DuplicateJobNameError(RuntimeError):
 
 
 class WalkForwardJobRequest(BaseModel):
-    strategy: Literal["bnhmm", "stock-transformer", "fk-stock"] = "bnhmm"
+    strategy: Literal[
+        "bnhmm", "holo-bnhmm", "stock-transformer", "fk-stock"
+    ] = "bnhmm"
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
@@ -70,12 +72,15 @@ class WalkForwardJobRequest(BaseModel):
     velocity_aggregation_minutes: int = Field(10, ge=2, le=60)
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
     velocity_smoothing: float = Field(0.25, ge=0.0, le=10.0)
+    holographic_volume_bins: int = Field(5, ge=3, le=15)
+    holographic_smoothing: float = Field(0.75, ge=0.0, le=4.0)
     conservation_grid_points: int = Field(64, ge=16, le=512)
     conservation_ridge: float = Field(1e-3, ge=0.0, le=10.0)
     minimum_token_bins: int = Field(2, ge=1, le=64)
     maximum_tokens: int = Field(16, ge=2, le=128)
     boundary_threshold: float = Field(1.5, gt=0.0, le=20.0)
     profile_protocol: Literal[
+        "price-volume-holographic-flow-v1",
         "phase-space-10m-local-flow-v8",
         "phase-space-10m-joint-return-v7",
         "phase-space-joint-return-v6",
@@ -153,10 +158,17 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("unsupported current training scope")
             if self.training_scope == "sector-pooled" and not self.dataset_id:
                 raise ValueError("sector-pooled jobs require a sector dataset")
-            if self.strategy in {"stock-transformer", "fk-stock"} and self.training_scope != "sector-pooled":
+            if self.strategy in {"holo-bnhmm", "stock-transformer", "fk-stock"} and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
-            if self.profile_protocol != "phase-space-10m-local-flow-v8":
-                raise ValueError("current jobs require the v8 local-flow phase-space profile")
+            expected_profile = (
+                "price-volume-holographic-flow-v1"
+                if self.strategy == "holo-bnhmm"
+                else "phase-space-10m-local-flow-v8"
+            )
+            if self.profile_protocol != expected_profile:
+                raise ValueError(
+                    f"{self.strategy} requires the {expected_profile} profile"
+                )
             if self.sequence_protocol != "fixed-recent-endpoint-v1":
                 raise ValueError("current jobs require fixed recent endpoint windows")
             if self.state_timeframe != "daily":
@@ -171,14 +183,28 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
             raise ValueError("velocity_bins must be odd")
+        if self.holographic_volume_bins % 2 == 0:
+            raise ValueError("holographic_volume_bins must be odd")
         if 60 % self.velocity_aggregation_minutes:
             raise ValueError("velocity_aggregation_minutes must divide 60")
-        profile_channels = 4 + self.velocity_bins**2
+        profile_channels = (
+            self.holographic_volume_bins * 8
+            if self.strategy == "holo-bnhmm"
+            else 4 + self.velocity_bins**2
+        )
         if self.feature_mode == "legacy-entangled" and not legacy:
             raise ValueError("legacy-entangled is reserved for historical jobs")
-        if not legacy and self.strategy == "bnhmm" and self.latent_states < profile_channels:
+        if (
+            not legacy
+            and self.strategy in {"bnhmm", "holo-bnhmm"}
+            and self.latent_states < profile_channels
+        ):
             raise ValueError("latent_states cannot be fewer than profile channels")
-        if not legacy and self.strategy == "bnhmm" and self.transition_rank > self.latent_states:
+        if (
+            not legacy
+            and self.strategy in {"bnhmm", "holo-bnhmm"}
+            and self.transition_rank > self.latent_states
+        ):
             raise ValueError("transition_rank cannot exceed latent_states")
         if self.auxiliary_gate_initial < self.auxiliary_gate_floor:
             raise ValueError("auxiliary gate initial cannot be below its floor")
@@ -346,6 +372,17 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         "--seed",
         str(request.seed),
     ]
+    if request.strategy == "holo-bnhmm":
+        command.extend(
+            (
+                "--profile-kind",
+                "holographic",
+                "--holographic-volume-bins",
+                str(request.holographic_volume_bins),
+                "--holographic-smoothing",
+                str(request.holographic_smoothing),
+            )
+        )
     if request.dataset_id:
         command.extend(("--dataset-id", request.dataset_id))
     if request.max_folds is not None:

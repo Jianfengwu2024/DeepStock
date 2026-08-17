@@ -5,6 +5,9 @@ from .config import (
     REGIME_NAMES,
     REGIME_PROTOCOL,
     REGIME_SCORES,
+    HOLOGRAPHIC_FIELD_COUNT,
+    HOLOGRAPHIC_FIELD_NAMES,
+    HOLOGRAPHIC_PROFILE_PROTOCOL,
     PROFILE_CHANNELS,
     PROFILE_PROTOCOL,
     SEQUENCE_PROTOCOL,
@@ -15,16 +18,22 @@ from .config import (
     SequenceConfig,
 )
 from .data.profile import PriceVolumeProfileBuilder
+from .data.holographic import HolographicProfileBuilder
 from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
 from .data.relative_volume import RelativeVolumeBaseline
 from .data.source import BrokerBarSource, DuckDBBarSource
-from .types import BarBatch, ProfileState
+from .types import BarBatch, HolographicState, ProfileState
 
 __all__ = [
     "BNHMMConfig",
     "BarBatch",
     "BrokerBarSource",
     "DuckDBBarSource",
+    "HolographicProfileBuilder",
+    "HolographicState",
+    "HOLOGRAPHIC_FIELD_COUNT",
+    "HOLOGRAPHIC_FIELD_NAMES",
+    "HOLOGRAPHIC_PROFILE_PROTOCOL",
     "LabelConfig",
     "ProfileLabelBuilder",
     "PriceVolumeProfileBuilder",
@@ -43,5 +52,5 @@ __all__ = [
     "SequenceWindowBuilder",
 ]
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 

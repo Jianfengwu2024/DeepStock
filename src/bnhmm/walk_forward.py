@@ -323,16 +323,7 @@ def _run_pooled_walk_forward(
                 predictions,
                 device=device,
             ),
-            "auxiliary_gates": dict(
-                zip(
-                    ("relative_volume", "joint_price_volume_velocity"),
-                    final_model.tokenizer.effective_auxiliary_gates()
-                    .detach()
-                    .cpu()
-                    .tolist(),
-                    strict=True,
-                )
-            ),
+            "auxiliary_gates": final_model.tokenizer.gate_diagnostics(),
         }
         (fold_dir / "summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -490,16 +481,7 @@ def _run_symbol_walk_forward(
                 predictions,
                 device=device,
             ),
-            "auxiliary_gates": dict(
-                zip(
-                    ("relative_volume", "joint_price_volume_velocity"),
-                    final_model.tokenizer.effective_auxiliary_gates()
-                    .detach()
-                    .cpu()
-                    .tolist(),
-                    strict=True,
-                )
-            ),
+            "auxiliary_gates": final_model.tokenizer.gate_diagnostics(),
         }
         (fold_dir / "summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"

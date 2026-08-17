@@ -180,6 +180,28 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--conservation-weight", command)
         self.assertNotIn("--latent-states", command)
 
+    def test_holographic_bnhmm_command_selects_two_dimensional_profile(self) -> None:
+        request = WalkForwardJobRequest(
+            strategy="holo-bnhmm",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            profile_protocol="price-volume-holographic-flow-v1",
+            latent_states=50,
+        )
+        command = build_command(request, Path("/tmp/holo-result"))
+
+        self.assertIn("walk-forward", command)
+        self.assertIn("--profile-kind", command)
+        self.assertIn("holographic", command)
+        self.assertIn("--holographic-volume-bins", command)
+        self.assertIn("--holographic-smoothing", command)
+        self.assertIn("50", command)
+
+        with self.assertRaises(ValidationError):
+            request.model_copy(update={"latent_states": 39}).model_validate(
+                request.model_copy(update={"latent_states": 39}).model_dump()
+            )
+
     def test_stock_transformer_rejects_non_sector_scope(self) -> None:
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(strategy="stock-transformer")

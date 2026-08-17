@@ -26,6 +26,7 @@ const numberFields = new Set([
   "transaction_cost_bps", "seed", "conservation_weight",
   "conservation_grid_points", "conservation_ridge", "minimum_token_bins",
   "maximum_tokens", "boundary_threshold",
+  "holographic_volume_bins", "holographic_smoothing",
 ]);
 
 const strategyParameterFields = {
@@ -35,6 +36,13 @@ const strategyParameterFields = {
     "auxiliary_gate_initial", "auxiliary_warmup_epochs", "velocity_bins", "velocity_aggregation_minutes", "velocity_clip",
     "velocity_smoothing", "sequence_length", "d_model", "motif_dim", "heads", "layers",
     "feedforward_dim", "dropout", "latent_states", "transition_rank", "mc_samples", "device",
+  ],
+  "holo-bnhmm": [
+    "pretrain_epochs", "pretrain_mask_probability", "kl_weight", "ordinal_weight",
+    "symmetry_weight", "deterministic_training", "velocity_aggregation_minutes",
+    "velocity_clip", "holographic_volume_bins", "holographic_smoothing",
+    "sequence_length", "d_model", "heads", "layers", "feedforward_dim", "dropout",
+    "latent_states", "transition_rank", "mc_samples", "device",
   ],
   "stock-transformer": [
     "conservation_weight", "conservation_grid_points", "conservation_ridge",
@@ -46,6 +54,7 @@ const strategyParameterFields = {
 
 const strategyNamePrefixes = {
   bnhmm: "BNHMM",
+  "holo-bnhmm": "HoloBNHMM",
   "stock-transformer": "StockTransformer",
   "fk-stock": "FKStock",
 };
@@ -154,34 +163,43 @@ function syncStrategySelection() {
   const strategy = currentStrategy();
   const stock = strategy === "stock-transformer";
   const fk = strategy === "fk-stock";
+  const holo = strategy === "holo-bnhmm";
+  const bayesianHmm = strategy === "bnhmm" || holo;
   const neural = !fk;
   document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", strategy !== "bnhmm"));
+  document.querySelectorAll(".holo-only").forEach(element => element.classList.toggle("hidden", !holo));
+  document.querySelectorAll(".bayesian-hmm-only").forEach(element => element.classList.toggle("hidden", !bayesianHmm));
+  document.querySelectorAll(".flow-only").forEach(element => element.classList.toggle("hidden", !bayesianHmm));
   document.querySelectorAll(".stock-only").forEach(element => element.classList.toggle("hidden", !stock));
   document.querySelectorAll(".fk-only").forEach(element => element.classList.toggle("hidden", !fk));
   document.querySelectorAll(".neural-only").forEach(element => element.classList.toggle("hidden", !neural));
   const scope = document.querySelector("#training-scope");
   const perSymbol = scope.querySelector('option[value="per-symbol"]');
-  perSymbol.disabled = stock || fk;
-  if (stock || fk) scope.value = "sector-pooled";
+  perSymbol.disabled = stock || fk || holo;
+  if (stock || fk || holo) scope.value = "sector-pooled";
+  document.querySelector('[name="profile_protocol"]').value = holo
+    ? "price-volume-holographic-flow-v1"
+    : "phase-space-10m-local-flow-v8";
   document.querySelector("#brand-subtitle").textContent = fk
     ? "FKStock · Bayesian Feynman-Kac model"
     : stock ? "StockTransformer · conservation language model"
-      : "BNHMM · Bayesian hidden-state model";
+      : holo ? "HoloBNHMM · 2D Bayesian flow field"
+        : "BNHMM · Bayesian hidden-state model";
   document.querySelector("#state-section-title").textContent = stock || fk
     ? "每日价格-成交量密度态"
-    : "每日相空间态";
+    : holo ? "每日二维全息态" : "每日相空间态";
   if (neural) {
     document.querySelector("#model-section-title").textContent = stock
       ? "第三层 · StockTransformer"
       : "短期记忆与贝叶斯模型";
     document.querySelector("#model-backbone-spec").textContent = stock
       ? "守恒 Token Transformer"
-      : "确定性 Transformer";
+      : holo ? "二维局部场编码器 + Transformer" : "确定性 Transformer";
   }
-  const noDataset = (stock || fk) && state.datasets.length === 0;
+  const noDataset = (stock || fk || holo) && state.datasets.length === 0;
   document.querySelector("#run-button").disabled = noDataset;
   document.querySelector("#form-error").textContent = noDataset
-    ? `${fk ? "FKStock" : "StockTransformer"} 需要可用的概念板块数据集`
+    ? `${fk ? "FKStock" : stock ? "StockTransformer" : "HoloBNHMM"} 需要可用的概念板块数据集`
     : "";
 }
 
@@ -231,7 +249,9 @@ function syncDatasetSelection() {
 }
 
 function syncModelConstraints() {
-  const fk = currentStrategy() === "fk-stock";
+  const strategy = currentStrategy();
+  const fk = strategy === "fk-stock";
+  const holo = strategy === "holo-bnhmm";
   const velocityField = document.querySelector("[name=velocity_bins]");
   const latentField = document.querySelector("[name=latent_states]");
   const transitionRankField = document.querySelector("[name=transition_rank]");
@@ -244,7 +264,8 @@ function syncModelConstraints() {
   const auxiliaryFloorField = document.querySelector("[name=auxiliary_gate_floor]");
   const auxiliaryInitialField = document.querySelector("[name=auxiliary_gate_initial]");
   const velocityBins = Number(velocityField.value || 3);
-  const minimum = 4 + velocityBins ** 2;
+  const holographicVolumeBins = Number(document.querySelector("[name=holographic_volume_bins]").value || 5);
+  const minimum = holo ? holographicVolumeBins * 8 : 4 + velocityBins ** 2;
   latentField.min = String(minimum);
   if (Number(latentField.value) < minimum) latentField.value = String(minimum);
 
@@ -256,7 +277,11 @@ function syncModelConstraints() {
 
   const channelCount = document.querySelector("#profile-channel-count");
   if (channelCount) {
-    channelCount.textContent = `4 + ${velocityBins}² = ${minimum} 通道`;
+    channelCount.textContent = `4 + ${velocityBins}² = ${4 + velocityBins ** 2} 通道`;
+  }
+  const holographicChannelCount = document.querySelector("#holographic-channel-count");
+  if (holographicChannelCount) {
+    holographicChannelCount.textContent = `${holographicVolumeBins} × 8 = ${holographicVolumeBins * 8} 通道`;
   }
 
   const memoryLength = Number(sequenceLengthField.value || 5);
@@ -425,7 +450,7 @@ function renderJobList() {
   }
   renderHistoryEditor(activeIds);
   list.replaceChildren(...state.jobs.map(job => {
-    const strategy = ({ bnhmm: "BNHMM", "stock-transformer": "StockTransformer", "fk-stock": "FKStock" })[job.request.strategy] || job.request.strategy;
+    const strategy = ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "stock-transformer": "StockTransformer", "fk-stock": "FKStock" })[job.request.strategy] || job.request.strategy;
     const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
     if (state.historyEditing) {
       const label = document.createElement("label");
@@ -488,6 +513,7 @@ function renderJob(job) {
   badge.textContent = statusText[job.status];
   const stock = job.request.strategy === "stock-transformer";
   const fk = job.request.strategy === "fk-stock";
+  const holo = job.request.strategy === "holo-bnhmm";
   const dataset = state.datasets.find(
     item => item.dataset_id === job.request.dataset_id,
   );
@@ -511,7 +537,9 @@ function renderJob(job) {
   const stateMode = job.request.state_timeframe === "mixed"
     ? "小时 + 日状态"
     : "日状态（1分钟线生成）";
-  const profileMode = job.request.profile_protocol === "phase-space-10m-local-flow-v8"
+  const profileMode = job.request.profile_protocol === "price-volume-holographic-flow-v1"
+    ? `${job.request.bin_width_bps} BP × ${job.request.holographic_volume_bins} 档成交活跃度 · 二维散度/旋度场`
+    : job.request.profile_protocol === "phase-space-10m-local-flow-v8"
     ? `${job.request.bin_width_bps} BP 局部联合速度场 · ${job.request.normalization_lookback_sessions}日归一化`
     : ["phase-space-10m-joint-return-v7", "phase-space-joint-return-v6"].includes(job.request.profile_protocol)
       ? `${job.request.bin_width_bps} BP 联合速度相空间 · ${job.request.normalization_lookback_sessions}日归一化`
@@ -524,23 +552,26 @@ function renderJob(job) {
       : job.request.profile_protocol === "legacy-fixed-bins"
         ? "旧固定柱协议"
         : `${job.request.bin_width_bps} BP 可变日态（旧）`;
+  const modelName = holo ? "HoloBNHMM" : "BNHMM";
   const modelScope = ({
-    "per-symbol": "逐标的独立 BNHMM",
-    "sector-pooled": `${dataset?.name || job.request.dataset_id || "板块"}联合 BNHMM`,
+    "per-symbol": `逐标的独立 ${modelName}`,
+    "sector-pooled": `${dataset?.name || job.request.dataset_id || "板块"}联合 ${modelName}`,
     "shared-legacy": "多标的共享模型（旧）",
   })[job.request.training_scope] || job.request.training_scope;
   const latentStates = job.request.latent_states ?? 10;
-  const featureMode = ({
+  const featureMode = holo ? "二维价格-成交活跃度全息流场" : ({
     "gated-full": "价格主干 + 门控成交量/联合速度",
     "price-only": "仅价格",
     "price-volume": "价格 + 成交量",
     "price-velocity": "价格 + Z2 流态（推荐）",
     "legacy-entangled": "旧混合特征",
   })[job.request.feature_mode] || "旧混合特征";
-  const auxiliaryMode = job.request.feature_mode === "price-only"
+  const auxiliaryMode = holo
+    ? `8 个局部场 · 平滑 ${Number(job.request.holographic_smoothing ?? 0.75).toFixed(2)}`
+    : job.request.feature_mode === "price-only"
     ? "辅助分支关闭"
     : `辅助门 ${Number(job.request.auxiliary_gate_initial ?? 0.05).toFixed(2)} 初始 / ${Number(job.request.auxiliary_gate_floor ?? 0).toFixed(2)} 下限 / ${job.request.auxiliary_warmup_epochs ?? 0} 轮全权重`;
-  const outputMode = ["phase-space-10m-local-flow-v8", "phase-space-10m-joint-return-v7", "phase-space-joint-return-v6"].includes(job.request.profile_protocol)
+  const outputMode = ["price-volume-holographic-flow-v1", "phase-space-10m-local-flow-v8", "phase-space-10m-joint-return-v7", "phase-space-joint-return-v6"].includes(job.request.profile_protocol)
     ? ((job.summary?.class_support?.length ?? 4) === 3
       ? "连续收益后验 → 空/平/多（旧）"
       : "连续收益后验 → 强空/弱空/弱多/强多")
@@ -563,7 +594,7 @@ function renderJob(job) {
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
     ? (fk ? "等待 FKStock 任务" : "等待 GPU 任务")
-    : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : "BNHMM Walk-forward 运行中";
+    : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? "HoloBNHMM 二维流场 Walk-forward 运行中" : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -890,7 +921,7 @@ function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
   document.querySelectorAll("[name=strategy]").forEach(field => field.addEventListener("change", changeStrategy));
-  for (const name of ["velocity_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial"]) {
+  for (const name of ["velocity_bins", "holographic_volume_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
   document.querySelector("#refresh-button").addEventListener("click", refreshAll);

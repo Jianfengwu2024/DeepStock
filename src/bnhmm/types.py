@@ -200,3 +200,88 @@ class ProfileState:
         ):
             raise ValueError("profile prices must be finite, positive, and ordered")
 
+
+@dataclass(frozen=True, slots=True)
+class HolographicState:
+    """A daily field on price x relative-volume coordinates."""
+
+    symbol: str
+    timeframe: str
+    period_start: np.datetime64
+    period_end: np.datetime64
+    first_bar_time: np.datetime64
+    start_price: float
+    end_price: float
+    high_price: float
+    low_price: float
+    anchor_price: float
+    log_bin_width: float
+    bin_coordinates: FloatArray
+    normalized_bin_coordinates: FloatArray
+    volume_coordinates: FloatArray
+    fields: FloatArray
+    normalization_sessions: int
+    average_minute_volume: float
+    location_scale: float
+    price_velocity_mean: float
+    price_velocity_scale: float
+    relative_volume_mean: float
+    relative_volume_scale: float
+    volume_velocity_mean: float
+    volume_velocity_scale: float
+    total_raw_volume: float
+    total_relative_volume: float
+    bar_count: int
+    profile_clipped: bool
+    flow_samples: int
+
+    def __post_init__(self) -> None:
+        if self.timeframe != "1d":
+            raise ValueError("holographic states currently require daily sessions")
+        if self.fields.ndim != 3:
+            raise ValueError("holographic fields must be [price, volume, field]")
+        if self.fields.shape[:2] != (
+            len(self.bin_coordinates),
+            len(self.volume_coordinates),
+        ):
+            raise ValueError("holographic coordinates must align with the field grid")
+        if self.normalized_bin_coordinates.shape != self.bin_coordinates.shape:
+            raise ValueError("normalized price coordinates must align with price bins")
+        if len(self.bin_coordinates) < 3 or len(self.volume_coordinates) < 3:
+            raise ValueError("holographic states require at least a three by three grid")
+        if np.any(~np.isfinite(self.fields)) or np.any(
+            ~np.isfinite(self.volume_coordinates)
+        ):
+            raise ValueError("holographic coordinates and fields must be finite")
+        density_mass = float(self.fields[..., 0].sum())
+        if not np.isclose(density_mass, 1.0, atol=1e-7):
+            raise ValueError("holographic density must sum to one")
+        if self.log_bin_width <= 0 or self.flow_samples < 1:
+            raise ValueError("holographic bin width and flow support must be positive")
+        scales = (
+            self.average_minute_volume,
+            self.location_scale,
+            self.price_velocity_scale,
+            self.relative_volume_scale,
+            self.volume_velocity_scale,
+        )
+        if self.normalization_sessions < 1 or any(
+            not np.isfinite(item) or item <= 0 for item in scales
+        ):
+            raise ValueError("normalization metadata must be positive and finite")
+        if not self.period_start < self.first_bar_time <= self.period_end:
+            raise ValueError("first_bar_time must fall inside the profile period")
+        if self.period_end <= self.period_start:
+            raise ValueError("holographic period must have positive duration")
+        prices = (
+            self.start_price,
+            self.end_price,
+            self.high_price,
+            self.low_price,
+            self.anchor_price,
+        )
+        if any(not np.isfinite(item) or item <= 0 for item in prices):
+            raise ValueError("holographic prices must be positive and finite")
+        if self.high_price < self.low_price:
+            raise ValueError("holographic high price cannot be below its low price")
+

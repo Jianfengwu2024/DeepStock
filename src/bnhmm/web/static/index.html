@@ -22,11 +22,13 @@
       </div>
 
       <form id="experiment-form">
+        <input type="hidden" name="profile_protocol" value="phase-space-10m-local-flow-v8">
         <section class="form-section">
           <h2>实验</h2>
           <label>名称<input name="name" required maxlength="64"></label>
           <div class="strategy-switch" role="radiogroup" aria-label="策略模型">
             <label><input type="radio" name="strategy" value="bnhmm" checked><span>BNHMM</span></label>
+            <label><input type="radio" name="strategy" value="holo-bnhmm"><span>HoloBNHMM</span></label>
             <label><input type="radio" name="strategy" value="stock-transformer"><span>StockTransformer</span></label>
             <label><input type="radio" name="strategy" value="fk-stock"><span>FKStock</span></label>
           </div>
@@ -59,14 +61,14 @@
             <label>随机种子<input name="seed" type="number" min="0"></label>
             <label>学习率<input name="learning_rate" type="number" min="0" step="0.00001"></label>
           </div>
-          <div class="two-columns bnhmm-only">
+          <div class="two-columns bayesian-hmm-only">
             <label>预训练轮数<input name="pretrain_epochs" type="number" min="0"></label>
             <label>KL 权重<input name="kl_weight" type="number" min="0" max="1" step="0.0001"></label>
             <label>有序损失权重<input name="ordinal_weight" type="number" min="0" max="10" step="0.01"></label>
             <label>Z2 镜像约束权重<input name="symmetry_weight" type="number" min="0" max="10" step="0.05"></label>
             <label>遮罩比例<input name="pretrain_mask_probability" type="number" min="0.01" max="0.99" step="0.01"></label>
           </div>
-          <label class="toggle-row bnhmm-only"><span>确定性训练（消融）</span><input name="deterministic_training" type="checkbox" role="switch"></label>
+          <label class="toggle-row bayesian-hmm-only"><span>确定性训练（消融）</span><input name="deterministic_training" type="checkbox" role="switch"></label>
           <label class="stock-only hidden">守恒辅助损失权重<input name="conservation_weight" type="number" min="0" max="10" step="0.05"></label>
         </details>
 
@@ -89,6 +91,8 @@
             <div class="fixed-spec bnhmm-only"><span>日状态元数据</span><strong>9 个归一化特征</strong></div>
             <div class="fixed-spec bnhmm-only"><span>直方图输入</span><strong id="profile-channel-count">4 + 3² = 13 通道</strong></div>
             <div class="fixed-spec bnhmm-only"><span>速度表示</span><strong>Z2 流体矩 + 按价格区间的局部层流场</strong></div>
+            <div class="fixed-spec holo-only hidden"><span>二维状态域</span><strong>相对对数价格 × 相对成交量水平</strong></div>
+            <div class="fixed-spec holo-only hidden"><span>全息场</span><strong>密度、双流、温度、协方差、散度、旋度</strong></div>
             <div class="fixed-spec stock-only hidden"><span>守恒密度</span><strong>价格坐标上的归一化成交量</strong></div>
             <div class="fixed-spec stock-only hidden"><span>使用范围</span><strong>作为价格生成元的条件场</strong></div>
           </div>
@@ -110,11 +114,32 @@
             <label>单日最大柱数<input name="max_profile_bins" type="number" min="8" max="2048"></label>
             <label>归一化回看日<input name="normalization_lookback_sessions" type="number" min="2" max="120"></label>
           </div>
-          <div class="two-columns bnhmm-only">
+          <div class="two-columns flow-only">
             <label>速度聚合（分钟）<input name="velocity_aggregation_minutes" type="number" min="2" max="60" step="1"></label>
+          </div>
+          <div class="two-columns bnhmm-only">
             <label>联合速度每轴档数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
             <label>速度标准差截断<input name="velocity_clip" type="number" min="0.5" max="20" step="0.5"></label>
             <label>速度分布平滑<input name="velocity_smoothing" type="number" min="0" max="10" step="0.05"></label>
+          </div>
+        </details>
+
+        <details class="form-section holo-only hidden" open>
+          <summary>二维全息流场</summary>
+          <div class="pipeline-steps" aria-label="二维全息贝叶斯网络">
+            <div><span>1</span><strong>二维占据密度</strong><small>价格 × 成交活跃度</small></div>
+            <i data-lucide="arrow-down"></i>
+            <div><span>2</span><strong>局部速度场</strong><small>10 分钟价格流与活跃度流</small></div>
+            <i data-lucide="arrow-down"></i>
+            <div><span>3</span><strong>贝叶斯隐状态</strong><small>散度、旋度与短期记忆</small></div>
+          </div>
+          <div class="two-columns">
+            <label>成交量坐标档数<input name="holographic_volume_bins" type="number" min="3" max="15" step="2"></label>
+            <label>二维场平滑<input name="holographic_smoothing" type="number" min="0" max="4" step="0.05"></label>
+          </div>
+          <div class="fixed-spec-grid">
+            <div class="fixed-spec"><span>截面通道</span><strong id="holographic-channel-count">5 × 8 = 40 通道</strong></div>
+            <div class="fixed-spec"><span>相位定义</span><strong>二维局部流向与旋转方向</strong></div>
           </div>
         </details>
 
@@ -181,7 +206,7 @@
             <div class="fixed-spec"><span>窗口更新</span><strong>每个交易日滚动 1 日</strong></div>
             <div class="fixed-spec"><span>收益后验</span><strong>滚动标准化 Student-t（df=4）</strong></div>
             <div class="fixed-spec"><span>特征骨干</span><strong id="model-backbone-spec">确定性 Transformer</strong></div>
-            <div class="fixed-spec bnhmm-only"><span>贝叶斯部分</span><strong>发射、转移、收益与先验证据头</strong></div>
+            <div class="fixed-spec bayesian-hmm-only"><span>贝叶斯部分</span><strong>发射、转移、收益与先验证据头</strong></div>
             <div class="fixed-spec stock-only hidden"><span>后验估计</span><strong>MC Dropout 概率均值与方差</strong></div>
           </div>
           <div class="parameter-group-title">近期记忆</div>
@@ -194,8 +219,8 @@
             <label>注意力头数<input name="heads" type="number" min="1"></label>
             <label>前馈层宽度<input name="feedforward_dim" type="number" min="8"></label>
             <label>Dropout<input name="dropout" type="number" min="0" max="0.99" step="0.01"></label>
-            <label class="bnhmm-only">黑盒隐藏态<input name="latent_states" type="number" min="13" max="512"></label>
-            <label class="bnhmm-only">转移低秩维度<input name="transition_rank" type="number" min="1" max="512"></label>
+            <label class="bayesian-hmm-only">黑盒隐藏态<input name="latent_states" type="number" min="13" max="512"></label>
+            <label class="bayesian-hmm-only">转移低秩维度<input name="transition_rank" type="number" min="1" max="512"></label>
           </div>
         </details>
 

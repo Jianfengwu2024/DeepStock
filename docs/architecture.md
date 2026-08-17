@@ -1,5 +1,11 @@
 # Architecture Baseline
 
+The `HoloBNHMM` variant is documented in
+[`holographic-bnhmm.md`](holographic-bnhmm.md). It shares labels, walk-forward
+splits, Bayesian heads, and evaluation with BNHMM while replacing only the
+daily profile builder and tokenizer with a two-dimensional price/participation
+flow field.
+
 ## Runtime boundaries
 
 1. The data layer reads one symbol and a bounded date range at a time.

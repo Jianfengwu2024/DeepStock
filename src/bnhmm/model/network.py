@@ -10,6 +10,8 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from ..config import (
+    DEFAULT_HOLOGRAPHIC_VOLUME_BINS,
+    HOLOGRAPHIC_FIELD_COUNT,
     PROFILE_CHANNELS,
     REGIME_COUNT,
     REGIME_SCORES,
@@ -351,6 +353,14 @@ class BayesianMotifTokenizer(nn.Module):
     def set_auxiliary_warmup(self, enabled: bool) -> None:
         self.auxiliary_force_full.fill_(enabled)
 
+    def gate_diagnostics(self) -> dict[str, float]:
+        gates = self.effective_auxiliary_gates().detach().cpu()
+        return {
+            "auxiliary_warmup": float(bool(self.auxiliary_force_full)),
+            "relative_volume_gate": float(gates[0]),
+            "joint_velocity_gate": float(gates[1]),
+        }
+
     def hydrodynamic_velocity_features(
         self, joint_flat: Tensor, profile_mask: Tensor
     ) -> tuple[Tensor, Tensor]:
@@ -494,6 +504,111 @@ class BayesianMotifTokenizer(nn.Module):
         )
 
 
+class HolographicTokenizer(nn.Module):
+    """Encode a local two-dimensional price/participation flow field."""
+
+    def __init__(
+        self,
+        max_profile_bins: int,
+        profile_channels: int,
+        state_feature_dim: int,
+        d_model: int,
+        volume_bins: int,
+        field_count: int,
+        include_metadata: bool,
+        *,
+        bayesian: bool,
+    ) -> None:
+        super().__init__()
+        if volume_bins < 3 or profile_channels != volume_bins * field_count:
+            raise ValueError("holographic channels must equal volume bins times fields")
+        self.max_profile_bins = max_profile_bins
+        self.profile_channels = profile_channels
+        self.state_feature_dim = state_feature_dim
+        self.volume_bins = volume_bins
+        self.field_count = field_count
+        self.include_metadata = include_metadata
+        linear = BayesianLinear if bayesian else DeterministicLinear
+        self.cell_projection = linear(field_count + 4, d_model)
+        self.local_field = nn.Sequential(
+            nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
+            nn.GELU(),
+            nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
+        )
+        self.local_norm = nn.LayerNorm(d_model)
+        self.pool_score = linear(d_model, 1)
+        self.metadata = linear(state_feature_dim, d_model)
+        self.combine = linear(d_model * 2, d_model)
+        self.output_norm = nn.LayerNorm(d_model)
+        if not include_metadata:
+            for module in (self.metadata, self.combine):
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
+
+    def forward(
+        self,
+        profiles: Tensor,
+        bin_coordinates: Tensor,
+        profile_mask: Tensor,
+        state_features: Tensor,
+        *,
+        sample: bool,
+        state_mask: Tensor | None = None,
+    ) -> Tensor:
+        if profiles.ndim != 4 or profiles.shape[-1] != self.profile_channels:
+            raise ValueError("holographic profiles have an invalid shape")
+        if profile_mask.shape != profiles.shape[:3]:
+            raise ValueError("holographic profile mask must align with price bins")
+        batch, sequence, price_bins, _ = profiles.shape
+        grid = profiles.reshape(
+            batch, sequence, price_bins, self.volume_bins, self.field_count
+        )
+        dtype = profiles.dtype
+        x = torch.clamp(bin_coordinates / 64.0, -4.0, 4.0) / 4.0
+        x = x.unsqueeze(-1).expand(-1, -1, -1, self.volume_bins)
+        y_centers = torch.linspace(
+            -1.0 + 1.0 / self.volume_bins,
+            1.0 - 1.0 / self.volume_bins,
+            self.volume_bins,
+            dtype=dtype,
+            device=profiles.device,
+        )
+        y = y_centers.view(1, 1, 1, -1).expand_as(x)
+        coordinates = torch.stack((x, y, x * y, x.square() + y.square()), dim=-1)
+        cells = self.cell_projection(
+            torch.cat((grid, coordinates), dim=-1), sample=sample
+        )
+        support = profile_mask.unsqueeze(-1) & (grid[..., 0] > 0)
+        cells = cells * support.unsqueeze(-1)
+        flat = cells.reshape(
+            batch * sequence, price_bins, self.volume_bins, -1
+        ).permute(0, 3, 1, 2)
+        local = self.local_field(flat).permute(0, 2, 3, 1).reshape_as(cells)
+        cells = self.local_norm(cells + local) * support.unsqueeze(-1)
+        scores = self.pool_score(torch.tanh(cells), sample=sample).squeeze(-1)
+        scores = scores.masked_fill(~support, torch.finfo(scores.dtype).min)
+        attention = F.softmax(scores.reshape(batch, sequence, -1), dim=-1)
+        summary = (
+            cells.reshape(batch, sequence, -1, cells.shape[-1])
+            * attention.unsqueeze(-1)
+        ).sum(dim=-2)
+        if self.include_metadata:
+            metadata = F.gelu(self.metadata(state_features, sample=sample))
+            summary = self.combine(
+                torch.cat((summary, metadata), dim=-1), sample=sample
+            )
+        return self.output_norm(summary)
+
+    def effective_auxiliary_gates(self) -> Tensor:
+        return next(self.parameters()).new_ones(2)
+
+    def set_auxiliary_warmup(self, enabled: bool) -> None:
+        del enabled
+
+    def gate_diagnostics(self) -> dict[str, float]:
+        return {"holographic_field_gate": 1.0, "auxiliary_warmup": 0.0}
+
+
 class BNHMMNetwork(nn.Module):
     def __init__(
         self,
@@ -503,6 +618,9 @@ class BNHMMNetwork(nn.Module):
         state_feature_dim: int = 9,
         latent_states: int = 20,
         output_states: int = REGIME_COUNT,
+        tokenizer_kind: str = "profile-motif",
+        holographic_volume_bins: int = DEFAULT_HOLOGRAPHIC_VOLUME_BINS,
+        holographic_field_count: int = HOLOGRAPHIC_FIELD_COUNT,
         feature_mode: str = "price-velocity",
         auxiliary_gate_floor: float = 0.25,
         auxiliary_gate_initial: float = 0.75,
@@ -543,6 +661,9 @@ class BNHMMNetwork(nn.Module):
         self.state_feature_dim = state_feature_dim
         self.latent_states = latent_states
         self.output_states = output_states
+        self.tokenizer_kind = tokenizer_kind
+        self.holographic_volume_bins = holographic_volume_bins
+        self.holographic_field_count = holographic_field_count
         self.feature_mode = feature_mode
         self.auxiliary_gate_floor = float(auxiliary_gate_floor)
         self.auxiliary_gate_initial = float(auxiliary_gate_initial)
@@ -558,18 +679,32 @@ class BNHMMNetwork(nn.Module):
         self.max_sequence_length = max_sequence_length
         self.d_model = d_model
 
-        self.tokenizer = BayesianMotifTokenizer(
-            max_profile_bins,
-            profile_channels,
-            state_feature_dim,
-            d_model,
-            motif_dim,
-            feature_mode,
-            auxiliary_gate_floor,
-            auxiliary_gate_initial,
-            include_metadata,
-            bayesian=bayesian_backbone,
-        )
+        if tokenizer_kind == "profile-motif":
+            self.tokenizer = BayesianMotifTokenizer(
+                max_profile_bins,
+                profile_channels,
+                state_feature_dim,
+                d_model,
+                motif_dim,
+                feature_mode,
+                auxiliary_gate_floor,
+                auxiliary_gate_initial,
+                include_metadata,
+                bayesian=bayesian_backbone,
+            )
+        elif tokenizer_kind == "holographic-2d":
+            self.tokenizer = HolographicTokenizer(
+                max_profile_bins,
+                profile_channels,
+                state_feature_dim,
+                d_model,
+                holographic_volume_bins,
+                holographic_field_count,
+                include_metadata,
+                bayesian=bayesian_backbone,
+            )
+        else:
+            raise ValueError("unsupported tokenizer kind")
         self.timeframe_embedding = nn.Embedding(2, d_model)
         self.position_embedding = nn.Parameter(
             torch.zeros(max_sequence_length, d_model)

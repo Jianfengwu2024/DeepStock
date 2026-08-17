@@ -19,9 +19,22 @@ REGIME_NAMES = tuple(state.name.lower() for state in REGIME_STATES)
 REGIME_SCORES = tuple(float(state.value) for state in REGIME_STATES)
 REGIME_PROTOCOL = "volatility-scaled-prior-evidence-v5"
 PROFILE_PROTOCOL = "phase-space-10m-local-flow-v8"
+HOLOGRAPHIC_PROFILE_PROTOCOL = "price-volume-holographic-flow-v1"
 SEQUENCE_PROTOCOL = "fixed-recent-endpoint-v1"
 DEFAULT_VELOCITY_BINS = 3
 PROFILE_CHANNELS = 4 + DEFAULT_VELOCITY_BINS**2
+DEFAULT_HOLOGRAPHIC_VOLUME_BINS = 5
+HOLOGRAPHIC_FIELD_NAMES = (
+    "density",
+    "price_current",
+    "volume_current",
+    "price_temperature",
+    "volume_temperature",
+    "covariance_flux",
+    "divergence",
+    "vorticity",
+)
+HOLOGRAPHIC_FIELD_COUNT = len(HOLOGRAPHIC_FIELD_NAMES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +51,8 @@ class ProfileConfig:
     velocity_aggregation_minutes: int = 10
     velocity_clip: float = 4.0
     velocity_smoothing: float = 0.25
+    holographic_volume_bins: int = DEFAULT_HOLOGRAPHIC_VOLUME_BINS
+    holographic_smoothing: float = 0.75
     feature_clip: float = 4.0
     minimum_hour_bars: int = 20
     minimum_day_bars: int = 120
@@ -78,11 +93,19 @@ class ProfileConfig:
             raise ValueError("phase-space clipping limits must be positive")
         if self.velocity_smoothing < 0:
             raise ValueError("velocity smoothing cannot be negative")
+        if self.holographic_volume_bins < 3 or self.holographic_volume_bins % 2 == 0:
+            raise ValueError("holographic volume bins must be an odd integer of at least three")
+        if self.holographic_smoothing < 0 or self.holographic_smoothing > 4:
+            raise ValueError("holographic smoothing must be between zero and four")
 
     @property
     def profile_channels(self) -> int:
         # Four scalar fields plus the paired price/volume velocity grid.
         return 4 + self.velocity_bins**2
+
+    @property
+    def holographic_profile_channels(self) -> int:
+        return self.holographic_volume_bins * HOLOGRAPHIC_FIELD_COUNT
 
 
 @dataclass(frozen=True, slots=True)

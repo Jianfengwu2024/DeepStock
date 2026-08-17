@@ -14,7 +14,14 @@ from torch import Tensor
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader, Dataset
 
-from .config import PROFILE_CHANNELS, REGIME_COUNT, REGIME_NAMES, REGIME_PROTOCOL
+from .config import (
+    DEFAULT_HOLOGRAPHIC_VOLUME_BINS,
+    HOLOGRAPHIC_FIELD_COUNT,
+    PROFILE_CHANNELS,
+    REGIME_COUNT,
+    REGIME_NAMES,
+    REGIME_PROTOCOL,
+)
 from .data.dataset import ProfileSequence
 from .model import (
     BNHMMNetwork,
@@ -29,6 +36,9 @@ class ModelConfig:
     state_feature_dim: int = 9
     latent_states: int = 20
     output_states: int = REGIME_COUNT
+    tokenizer_kind: str = "profile-motif"
+    holographic_volume_bins: int = DEFAULT_HOLOGRAPHIC_VOLUME_BINS
+    holographic_field_count: int = HOLOGRAPHIC_FIELD_COUNT
     feature_mode: str = "price-velocity"
     auxiliary_gate_floor: float = 0.25
     auxiliary_gate_initial: float = 0.75
@@ -481,14 +491,7 @@ class BNHMMTrainer:
         return tuple(history)
 
     def _auxiliary_gate_metrics(self) -> dict[str, float]:
-        gates = self.model.tokenizer.effective_auxiliary_gates().detach().cpu()
-        return {
-            "auxiliary_warmup": float(
-                bool(self.model.tokenizer.auxiliary_force_full)
-            ),
-            "relative_volume_gate": float(gates[0]),
-            "joint_velocity_gate": float(gates[1]),
-        }
+        return self.model.tokenizer.gate_diagnostics()
 
     def _reset_training_seed(self) -> None:
         torch.manual_seed(self.config.seed)
@@ -601,12 +604,18 @@ class BNHMMTrainer:
     def _augment_z2_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Append the exact up/down mirror of each state using the same model draw."""
         mirrored = {key: value.clone() for key, value in batch.items()}
-        velocity_channels = batch["profiles"].shape[-1] - 4
-        velocity_bins = isqrt(velocity_channels)
-        if velocity_bins**2 != velocity_channels:
-            raise ValueError("Z2 augmentation requires a square velocity grid")
         mirrored["profiles"].zero_()
         mirrored["bin_coordinates"].zero_()
+        if self.model.tokenizer_kind == "holographic-2d":
+            volume_bins = self.model.holographic_volume_bins
+            field_count = self.model.holographic_field_count
+            if batch["profiles"].shape[-1] != volume_bins * field_count:
+                raise ValueError("holographic Z2 channels do not match the model")
+        else:
+            velocity_channels = batch["profiles"].shape[-1] - 4
+            velocity_bins = isqrt(velocity_channels)
+            if velocity_bins**2 != velocity_channels:
+                raise ValueError("Z2 augmentation requires a square velocity grid")
         for batch_index in range(len(batch["profiles"])):
             for state_index in range(batch["profiles"].shape[1]):
                 valid_bins = int(
@@ -617,17 +626,25 @@ class BNHMMTrainer:
                 profile = batch["profiles"][
                     batch_index, state_index, :valid_bins
                 ]
-                scalar = profile[:, :4].flip(dims=(0,))
-                scalar[:, 3] = -scalar[:, 3]
-                velocity = profile[:, 4:].reshape(
-                    valid_bins, velocity_bins, velocity_bins
+                if self.model.tokenizer_kind == "holographic-2d":
+                    field = profile.reshape(
+                        valid_bins, volume_bins, field_count
+                    ).flip(dims=(0,))
+                    field[..., (1, 5, 7)] *= -1.0
+                    mirrored_profile = field.reshape(valid_bins, -1)
+                else:
+                    scalar = profile[:, :4].flip(dims=(0,))
+                    scalar[:, 3] = -scalar[:, 3]
+                    velocity = profile[:, 4:].reshape(
+                        valid_bins, velocity_bins, velocity_bins
+                    )
+                    velocity = velocity.flip(dims=(0, 1)).reshape(
+                        valid_bins, velocity_channels
+                    )
+                    mirrored_profile = torch.cat((scalar, velocity), dim=-1)
+                mirrored["profiles"][batch_index, state_index, :valid_bins] = (
+                    mirrored_profile
                 )
-                velocity = velocity.flip(dims=(0, 1)).reshape(
-                    valid_bins, velocity_channels
-                )
-                mirrored["profiles"][
-                    batch_index, state_index, :valid_bins
-                ] = torch.cat((scalar, velocity), dim=-1)
                 mirrored["bin_coordinates"][
                     batch_index, state_index, :valid_bins
                 ] = -batch["bin_coordinates"][

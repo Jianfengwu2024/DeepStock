@@ -98,6 +98,16 @@ def config(request: Request) -> dict[str, Any]:
         "feedforward_dim": 128,
         "pretrain_epochs": 0,
     }
+    holographic_defaults = {
+        **defaults,
+        "strategy": "holo-bnhmm",
+        "training_scope": "sector-pooled",
+        "profile_protocol": "price-volume-holographic-flow-v1",
+        "holographic_volume_bins": 5,
+        "holographic_smoothing": 0.75,
+        "latent_states": 50,
+        "pretrain_epochs": 2,
+    }
     fk_defaults = {
         **defaults,
         "strategy": "fk-stock",
@@ -111,6 +121,7 @@ def config(request: Request) -> dict[str, Any]:
         "defaults": defaults,
         "strategy_defaults": {
             "bnhmm": defaults,
+            "holo-bnhmm": holographic_defaults,
             "stock-transformer": stock_defaults,
             "fk-stock": fk_defaults,
         },

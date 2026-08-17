@@ -7,6 +7,7 @@ from .dataset import (
     SequenceWindowBuilder,
 )
 from .profile import PriceVolumeProfileBuilder
+from .holographic import HolographicProfileBuilder
 from .normalization import PhaseSpaceNormalization, RollingPhaseSpaceNormalizer
 from .relative_volume import RelativeVolumeBaseline
 from .source import BrokerBarSource, DuckDBBarSource
@@ -21,6 +22,7 @@ __all__ = [
     "ProfileObservations",
     "ProfileSequence",
     "PhaseSpaceNormalization",
+    "HolographicProfileBuilder",
     "PriceVolumeProfileBuilder",
     "RelativeVolumeBaseline",
     "RollingPhaseSpaceNormalizer",

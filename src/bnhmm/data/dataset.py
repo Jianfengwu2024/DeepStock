@@ -9,7 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..config import LabelConfig, SequenceConfig
-from ..types import ProfileState
+from ..types import HolographicState, ProfileState
 
 
 STATE_FEATURE_DIM = 9
@@ -92,7 +92,9 @@ class ProfileLabelBuilder:
     def __init__(self, config: LabelConfig | None = None) -> None:
         self.config = config or LabelConfig()
 
-    def build(self, states: Sequence[ProfileState]) -> ProfileObservations:
+    def build(
+        self, states: Sequence[ProfileState | HolographicState]
+    ) -> ProfileObservations:
         if not states:
             raise ValueError("at least one profile state is required")
         symbol = states[0].symbol
@@ -113,7 +115,16 @@ class ProfileLabelBuilder:
             dtype=np.float64,
         )
         rows: list[
-            tuple[ProfileState, ProfileState, ProfileState, float, float, float, float, int]
+            tuple[
+                ProfileState | HolographicState,
+                ProfileState | HolographicState,
+                ProfileState | HolographicState,
+                float,
+                float,
+                float,
+                float,
+                int,
+            ]
         ] = []
         for position, state in enumerate(ordered):
             index = session_index.get(state.period_start.astype("datetime64[D]"))
@@ -199,7 +210,13 @@ class ProfileLabelBuilder:
         )
 
     @staticmethod
-    def _profile_channels(state: ProfileState) -> NDArray[np.float32]:
+    def _profile_channels(
+        state: ProfileState | HolographicState,
+    ) -> NDArray[np.float32]:
+        if isinstance(state, HolographicState):
+            return state.fields.reshape(len(state.bin_coordinates), -1).astype(
+                np.float32
+            )
         return np.concatenate(
             (
                 state.price_distribution[:, None],
@@ -214,7 +231,9 @@ class ProfileLabelBuilder:
         ).astype(np.float32)
 
     @staticmethod
-    def _state_features(state: ProfileState) -> NDArray[np.float32]:
+    def _state_features(
+        state: ProfileState | HolographicState,
+    ) -> NDArray[np.float32]:
         relative_volume_mean = state.total_relative_volume / max(state.bar_count, 1)
 
         def scaled_log(numerator: float, denominator: float) -> float:

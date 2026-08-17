@@ -11,6 +11,8 @@ from typing import Sequence
 import numpy as np
 
 from .config import (
+    HOLOGRAPHIC_FIELD_NAMES,
+    HOLOGRAPHIC_PROFILE_PROTOCOL,
     REGIME_COUNT,
     REGIME_NAMES,
     REGIME_PROTOCOL,
@@ -21,6 +23,7 @@ from .config import (
     SequenceConfig,
 )
 from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
+from .data.holographic import HolographicProfileBuilder
 from .data.profile import PriceVolumeProfileBuilder
 from .data.source import BrokerBarSource, DuckDBBarSource
 from .storage import apply_migrations
@@ -281,6 +284,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         symbols = source.list_symbols(args.symbol_limit)
     observations = []
     data_summary: dict[str, dict[str, int]] = {}
+    holographic = args.profile_kind == "holographic"
     profile_config = ProfileConfig(
         bin_width_bps=args.bin_width_bps,
         max_profile_bins=args.max_profile_bins,
@@ -291,6 +295,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
         velocity_aggregation_minutes=args.velocity_aggregation_minutes,
         velocity_clip=args.velocity_clip,
         velocity_smoothing=args.velocity_smoothing,
+        holographic_volume_bins=args.holographic_volume_bins,
+        holographic_smoothing=args.holographic_smoothing,
     )
     label_config = LabelConfig(
         forward_sessions=args.forward_sessions,
@@ -301,7 +307,12 @@ def _walk_forward(args: argparse.Namespace) -> int:
     )
     for symbol in symbols:
         bars = source.fetch(symbol, "1m", args.start, args.end)
-        states = PriceVolumeProfileBuilder(profile_config).build(bars)
+        builder = (
+            HolographicProfileBuilder(profile_config)
+            if holographic
+            else PriceVolumeProfileBuilder(profile_config)
+        )
+        states = builder.build(bars)
         if not states:
             continue
         labeled = ProfileLabelBuilder(label_config).build(states)
@@ -310,9 +321,13 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "bars": len(bars),
             "profile_states": len(states),
             "observations": len(labeled),
-            "minimum_profile_bins": min(len(state.distribution) for state in states),
-            "maximum_profile_bins": max(len(state.distribution) for state in states),
+            "minimum_profile_bins": min(len(state.bin_coordinates) for state in states),
+            "maximum_profile_bins": max(len(state.bin_coordinates) for state in states),
         }
+        if holographic:
+            data_summary[symbol]["flow_samples"] = sum(
+                state.flow_samples for state in states
+            )
     if not observations:
         raise ValueError("none of the requested symbols produced observations")
 
@@ -323,8 +338,14 @@ def _walk_forward(args: argparse.Namespace) -> int:
     )
     model_config = ModelConfig(
         max_profile_bins=args.max_profile_bins,
-        profile_channels=profile_config.profile_channels,
+        profile_channels=(
+            profile_config.holographic_profile_channels
+            if holographic
+            else profile_config.profile_channels
+        ),
         latent_states=args.latent_states,
+        tokenizer_kind="holographic-2d" if holographic else "profile-motif",
+        holographic_volume_bins=profile_config.holographic_volume_bins,
         transition_rank=args.transition_rank,
         strong_bear_threshold=label_config.strong_bear_threshold,
         direction_threshold=label_config.direction_threshold,
@@ -429,10 +450,16 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "dataset_id": args.dataset_id,
         "state_timeframe": args.state_timeframe,
         "profile_protocol": {
-            "version": PROFILE_PROTOCOL,
+            "version": (
+                HOLOGRAPHIC_PROFILE_PROTOCOL if holographic else PROFILE_PROTOCOL
+            ),
             "bin_width_bps": args.bin_width_bps,
             "max_profile_bins": args.max_profile_bins,
-            "channels": profile_config.profile_channels,
+            "channels": (
+                profile_config.holographic_profile_channels
+                if holographic
+                else profile_config.profile_channels
+            ),
             "normalization_lookback_sessions": args.normalization_lookback_sessions,
             "relative_volume_baseline": "prior-mean-daily-volume/240",
             "velocity_bins": args.velocity_bins,
@@ -453,6 +480,18 @@ def _walk_forward(args: argparse.Namespace) -> int:
                 "current_divergence",
             ],
             "price_coordinate": "log-price-relative-to-previous-close",
+            **(
+                {
+                    "domain": ["relative_log_price", "relative_volume_level"],
+                    "volume_bins": profile_config.holographic_volume_bins,
+                    "field_smoothing": profile_config.holographic_smoothing,
+                    "fields": list(HOLOGRAPHIC_FIELD_NAMES),
+                    "flow": ["price_velocity", "volume_level_velocity"],
+                    "geometry": ["divergence", "vorticity"],
+                }
+                if holographic
+                else {}
+            ),
         },
         "return_standardization": {
             "lookback_sessions": label_config.standardization_lookback_sessions,
@@ -1231,6 +1270,13 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--velocity-aggregation-minutes", type=int, default=10)
     walk.add_argument("--velocity-clip", type=float, default=4.0)
     walk.add_argument("--velocity-smoothing", type=float, default=0.25)
+    walk.add_argument(
+        "--profile-kind",
+        choices=("phase-space", "holographic"),
+        default="phase-space",
+    )
+    walk.add_argument("--holographic-volume-bins", type=int, default=5)
+    walk.add_argument("--holographic-smoothing", type=float, default=0.75)
     walk.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
