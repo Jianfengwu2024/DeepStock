@@ -549,6 +549,13 @@ def _state_diagnostics(
     latent_rows: list[np.ndarray] = []
     flow_orders: list[float] = []
     signed_currents: list[float] = []
+    holographic_price_currents: list[float] = []
+    holographic_volume_currents: list[float] = []
+    holographic_divergence: list[float] = []
+    holographic_vorticity: list[float] = []
+    holographic = not hasattr(
+        model.tokenizer, "hydrodynamic_velocity_features"
+    )
     model.eval()
     for offset in range(0, len(sequences), 64):
         items = sequences[offset : offset + 64]
@@ -562,10 +569,12 @@ def _state_diagnostics(
             valid_mask=batch["valid_mask"].to(device),
             sample=False,
         )
-        hydro, flow_order = model.tokenizer.hydrodynamic_velocity_features(
-            batch["profiles"].to(device)[..., 4:],
-            batch["profile_mask"].to(device),
-        )
+        profiles = batch["profiles"].to(device)
+        profile_mask = batch["profile_mask"].to(device)
+        if not holographic:
+            hydro, flow_order = model.tokenizer.hydrodynamic_velocity_features(
+                profiles[..., 4:], profile_mask
+            )
         latent_rows.extend(
             output.latent_probabilities[index, len(sequence) - 1]
             .detach()
@@ -575,8 +584,30 @@ def _state_diagnostics(
         )
         for index, sequence in enumerate(items):
             endpoint = len(sequence) - 1
+            if holographic:
+                grid = profiles[index, endpoint].reshape(
+                    profiles.shape[2],
+                    model.tokenizer.volume_bins,
+                    model.tokenizer.field_count,
+                )
+                local_mask = profile_mask[index, endpoint].unsqueeze(-1) & (
+                    grid[..., 0] > 0
+                )
+                holographic_price_currents.extend(
+                    grid[..., 1][local_mask].detach().cpu().tolist()
+                )
+                holographic_volume_currents.extend(
+                    grid[..., 2][local_mask].detach().cpu().tolist()
+                )
+                holographic_divergence.extend(
+                    grid[..., 6][local_mask].detach().cpu().tolist()
+                )
+                holographic_vorticity.extend(
+                    grid[..., 7][local_mask].detach().cpu().tolist()
+                )
+                continue
             local_mask = (
-                batch["profile_mask"][index, endpoint].to(device)
+                profile_mask[index, endpoint]
                 & (hydro[index, endpoint, :, 0] > 0)
             )
             flow_orders.extend(
@@ -594,10 +625,7 @@ def _state_diagnostics(
     prior = np.asarray(
         [item.prior_probability for item in predictions], dtype=np.float64
     )
-    observed_local_flow_bins = len(flow_orders)
-    flow_order_values = np.asarray(flow_orders or [0.0], dtype=np.float64)
-    signed_current_values = np.asarray(signed_currents or [0.0], dtype=np.float64)
-    return {
+    diagnostics: dict[str, float | int] = {
         "mean_effective_latent_states": float(np.exp(entropy).mean()),
         "mean_max_latent_probability": float(latent.max(axis=1).mean()),
         "used_dominant_latent_states": int(len(np.unique(latent.argmax(axis=1)))),
@@ -606,14 +634,52 @@ def _state_diagnostics(
         "mean_regime_evidence_l1": float(np.abs(probability - prior).sum(axis=1).mean()),
         "minimum_mean_latent_usage": float(mean_usage.min()),
         "maximum_mean_latent_usage": float(mean_usage.max()),
-        "observed_local_flow_bins": observed_local_flow_bins,
-        "mean_z2_flow_order": float(flow_order_values.mean()),
-        "p90_z2_flow_order": float(np.quantile(flow_order_values, 0.9)),
-        "active_laminar_ratio": float((flow_order_values >= 0.25).mean()),
-        "mean_absolute_price_current": float(
-            np.abs(signed_current_values).mean()
-        ),
     }
+    if holographic:
+        price_current = np.asarray(
+            holographic_price_currents or [0.0], dtype=np.float64
+        )
+        volume_current = np.asarray(
+            holographic_volume_currents or [0.0], dtype=np.float64
+        )
+        divergence = np.asarray(
+            holographic_divergence or [0.0], dtype=np.float64
+        )
+        vorticity = np.asarray(
+            holographic_vorticity or [0.0], dtype=np.float64
+        )
+        diagnostics.update(
+            {
+                "observed_holographic_cells": len(holographic_price_currents),
+                "mean_absolute_price_current": float(np.abs(price_current).mean()),
+                "mean_absolute_volume_current": float(np.abs(volume_current).mean()),
+                "mean_flow_magnitude": float(
+                    np.hypot(price_current, volume_current).mean()
+                ),
+                "mean_absolute_divergence": float(np.abs(divergence).mean()),
+                "mean_absolute_vorticity": float(np.abs(vorticity).mean()),
+                "rotational_to_divergent_ratio": float(
+                    np.abs(vorticity).mean()
+                    / max(float(np.abs(divergence).mean()), 1e-12)
+                ),
+            }
+        )
+        return diagnostics
+
+    flow_order_values = np.asarray(flow_orders or [0.0], dtype=np.float64)
+    signed_current_values = np.asarray(signed_currents or [0.0], dtype=np.float64)
+    diagnostics.update(
+        {
+            "observed_local_flow_bins": len(flow_orders),
+            "mean_z2_flow_order": float(flow_order_values.mean()),
+            "p90_z2_flow_order": float(np.quantile(flow_order_values, 0.9)),
+            "active_laminar_ratio": float((flow_order_values >= 0.25).mean()),
+            "mean_absolute_price_current": float(
+                np.abs(signed_current_values).mean()
+            ),
+        }
+    )
+    return diagnostics
 
 
 def _select(

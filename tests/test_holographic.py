@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -16,6 +17,7 @@ from bnhmm import (
 from bnhmm.config import HOLOGRAPHIC_FIELD_COUNT
 from bnhmm.data import ProfileLabelBuilder
 from bnhmm.training import BNHMMTrainer, ModelConfig, collate_profile_sequences
+from bnhmm.walk_forward import _state_diagnostics
 
 
 def synthetic_sessions(session_count: int = 25) -> BarBatch:
@@ -234,6 +236,37 @@ class HolographicProfileTests(unittest.TestCase):
             mirrored_batch["bin_coordinates"][1, 0, :valid],
             -batch["bin_coordinates"][0, 0, :valid].flip(0),
         )
+
+    def test_holographic_state_diagnostics_use_two_dimensional_fields(self) -> None:
+        profile_config = ProfileConfig(
+            relative_volume_min_observations=3,
+            relative_volume_lookback_sessions=3,
+            holographic_volume_bins=5,
+        )
+        states = HolographicProfileBuilder(profile_config).build(synthetic_sessions())
+        observations = ProfileLabelBuilder().build(states)
+        sequence = SequenceWindowBuilder(SequenceConfig(length=5)).build(observations)[0]
+        model = ModelConfig(
+            max_profile_bins=512,
+            profile_channels=5 * HOLOGRAPHIC_FIELD_COUNT,
+            latent_states=50,
+            tokenizer_kind="holographic-2d",
+            holographic_volume_bins=5,
+            max_sequence_length=5,
+        ).build(seed=7)
+        prediction = SimpleNamespace(
+            probability_mean=(0.25, 0.25, 0.25, 0.25),
+            prior_probability=(0.25, 0.25, 0.25, 0.25),
+        )
+
+        diagnostics = _state_diagnostics(
+            model, [sequence], [prediction], device="cpu"
+        )
+
+        self.assertGreater(diagnostics["observed_holographic_cells"], 0)
+        self.assertGreaterEqual(diagnostics["mean_flow_magnitude"], 0.0)
+        self.assertGreaterEqual(diagnostics["mean_absolute_vorticity"], 0.0)
+        self.assertNotIn("mean_z2_flow_order", diagnostics)
 
 
 if __name__ == "__main__":
