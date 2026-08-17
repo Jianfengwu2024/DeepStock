@@ -90,8 +90,11 @@ class HolographicProfileBuilder:
         )
         price_edges = price_edge_indices * log_bin_width
         price_coordinates = price_edge_indices[:-1] + 0.5
+        derivative_price_coordinates = (
+            price_coordinates * log_bin_width / normalization.location_scale
+        )
         normalized_price_coordinates = np.clip(
-            price_coordinates * log_bin_width / normalization.location_scale,
+            derivative_price_coordinates,
             -self.config.feature_clip,
             self.config.feature_clip,
         ) / self.config.feature_clip
@@ -177,10 +180,10 @@ class HolographicProfileBuilder:
             np.maximum(second_price * second_volume, 1e-8)
         )
         divergence = self._gradient(
-            price_current, normalized_price_coordinates, axis=0
+            price_current, derivative_price_coordinates, axis=0
         ) + self._gradient(volume_current, volume_coordinates, axis=1)
         vorticity = self._gradient(
-            volume_current, normalized_price_coordinates, axis=0
+            volume_current, derivative_price_coordinates, axis=0
         ) - self._gradient(price_current, volume_coordinates, axis=1)
         divergence = np.clip(
             divergence, -self.config.feature_clip, self.config.feature_clip
@@ -292,6 +295,14 @@ class HolographicProfileBuilder:
     ) -> NDArray[np.float64]:
         if values.shape[axis] < 2:
             return np.zeros_like(values)
+        coordinates = np.asarray(coordinates, dtype=np.float64)
+        if (
+            coordinates.ndim != 1
+            or len(coordinates) != values.shape[axis]
+            or not np.isfinite(coordinates).all()
+            or np.any(np.diff(coordinates) <= 0.0)
+        ):
+            coordinates = np.arange(values.shape[axis], dtype=np.float64)
         return np.gradient(values, coordinates, axis=axis, edge_order=1)
 
     @staticmethod

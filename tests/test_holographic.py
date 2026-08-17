@@ -43,6 +43,25 @@ def synthetic_sessions(session_count: int = 25) -> BarBatch:
     )
 
 
+def wide_range_sessions(session_count: int = 8) -> BarBatch:
+    bars = synthetic_sessions(session_count)
+    sessions = bars.timestamp.astype("datetime64[D]")
+    last_session = np.unique(sessions)[-1]
+    last_mask = sessions == last_session
+    phase = np.linspace(-1.0, 1.0, int(last_mask.sum()))
+    close = bars.close.copy()
+    close[last_mask] = 10.0 * np.exp(0.12 * phase)
+    return BarBatch(
+        symbol=bars.symbol,
+        timestamp=bars.timestamp,
+        open=close * 0.999,
+        high=close * 1.001,
+        low=close * 0.999,
+        close=close,
+        volume=bars.volume,
+    )
+
+
 class HolographicProfileTests(unittest.TestCase):
     def test_builds_finite_two_dimensional_fields(self) -> None:
         config = ProfileConfig(
@@ -66,6 +85,30 @@ class HolographicProfileTests(unittest.TestCase):
             self.assertGreater(state.flow_samples, 0)
             self.assertTrue(np.isfinite(state.fields).all())
             self.assertGreater(float(np.abs(state.fields[..., 7]).sum()), 0.0)
+
+    def test_wide_price_range_keeps_derivatives_finite_after_position_clipping(self) -> None:
+        config = ProfileConfig(
+            relative_volume_min_observations=3,
+            relative_volume_lookback_sessions=3,
+            holographic_volume_bins=5,
+            feature_clip=4.0,
+        )
+
+        state = HolographicProfileBuilder(config).build(wide_range_sessions())[-1]
+
+        self.assertGreater(np.count_nonzero(state.normalized_bin_coordinates == -1.0), 1)
+        self.assertGreater(np.count_nonzero(state.normalized_bin_coordinates == 1.0), 1)
+        self.assertTrue(np.isfinite(state.fields).all())
+
+    def test_gradient_falls_back_for_repeated_coordinates(self) -> None:
+        values = np.arange(6, dtype=np.float64).reshape(3, 2)
+
+        gradient = HolographicProfileBuilder._gradient(
+            values, np.asarray((-1.0, -1.0, 1.0)), axis=0
+        )
+
+        self.assertTrue(np.isfinite(gradient).all())
+        np.testing.assert_allclose(gradient, 2.0)
 
     def test_label_builder_flattens_volume_cells_without_losing_price_axis(self) -> None:
         config = ProfileConfig(
