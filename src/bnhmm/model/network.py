@@ -546,6 +546,39 @@ class MaskedAnisotropicResidualEncoder(nn.Module):
         return result
 
 
+class CausalResidualTemporalEncoder(nn.Module):
+    """Short dilated temporal memory without global attention."""
+
+    def __init__(self, channels: int, layers: int = 3) -> None:
+        super().__init__()
+        self.layers = nn.ModuleList()
+        for index in range(layers):
+            dilation = 2**index
+            self.layers.append(
+                nn.ModuleDict(
+                    {
+                        "conv": nn.Conv1d(
+                            channels, channels, 3, dilation=dilation, bias=False
+                        ),
+                        "mix": nn.Conv1d(channels, channels, 1, bias=False),
+                        "norm": nn.LayerNorm(channels),
+                    }
+                )
+            )
+
+    def forward(self, values: Tensor, valid_mask: Tensor) -> Tensor:
+        result = values * valid_mask.unsqueeze(-1)
+        for index, layer in enumerate(self.layers):
+            dilation = 2**index
+            channels_first = result.transpose(1, 2)
+            update = F.pad(channels_first, (2 * dilation, 0))
+            update = F.gelu(layer["conv"](update))
+            update = layer["mix"](update).transpose(1, 2)
+            result = F.gelu(layer["norm"](result + update))
+            result = result * valid_mask.unsqueeze(-1)
+        return result
+
+
 class HolographicTokenizer(nn.Module):
     """Encode a local two-dimensional price/participation flow field."""
 
@@ -687,6 +720,7 @@ class BNHMMNetwork(nn.Module):
         holographic_field_names: tuple[str, ...] = HOLOGRAPHIC_FIELD_NAMES,
         holographic_conv_layers: int = 2,
         daily_encoder: str = "shallow-cnn",
+        temporal_encoder: str = "transformer",
         feature_mode: str = "price-velocity",
         auxiliary_gate_floor: float = 0.25,
         auxiliary_gate_initial: float = 0.75,
@@ -743,6 +777,7 @@ class BNHMMNetwork(nn.Module):
         self.holographic_field_names = tuple(holographic_field_names)
         self.holographic_conv_layers = holographic_conv_layers
         self.daily_encoder = daily_encoder
+        self.temporal_encoder = temporal_encoder
         if (
             len(self.holographic_field_names) != self.holographic_field_count
             or len(set(self.holographic_field_names))
@@ -801,16 +836,23 @@ class BNHMMNetwork(nn.Module):
             torch.zeros(max_sequence_length, d_model)
         )
         nn.init.normal_(self.position_embedding, std=0.02)
-        self.blocks = nn.ModuleList(
-            BayesianTransformerBlock(
-                d_model,
-                heads,
-                feedforward_dim,
-                dropout,
-                bayesian=bayesian_backbone,
+        if temporal_encoder == "transformer":
+            self.blocks = nn.ModuleList(
+                BayesianTransformerBlock(
+                    d_model,
+                    heads,
+                    feedforward_dim,
+                    dropout,
+                    bayesian=bayesian_backbone,
+                )
+                for _ in range(layers)
             )
-            for _ in range(layers)
-        )
+            self.temporal_model = None
+        elif temporal_encoder == "tcn":
+            self.blocks = nn.ModuleList()
+            self.temporal_model = CausalResidualTemporalEncoder(d_model)
+        else:
+            raise ValueError("unsupported temporal encoder")
         self.output_norm = nn.LayerNorm(d_model)
         self.latent_emission = BayesianLinear(d_model, latent_states)
         self.transition_source_context = BayesianLinear(
@@ -965,8 +1007,11 @@ class BNHMMNetwork(nn.Module):
         tokens = tokens + self.timeframe_embedding(timeframe_ids)
         tokens = tokens + self.position_embedding[:sequence]
         tokens = tokens * valid_mask.unsqueeze(-1)
-        for block in self.blocks:
-            tokens = block(tokens, valid_mask=valid_mask, sample=sample)
+        if self.temporal_model is not None:
+            tokens = self.temporal_model(tokens, valid_mask)
+        else:
+            for block in self.blocks:
+                tokens = block(tokens, valid_mask=valid_mask, sample=sample)
         context = self.output_norm(tokens) * valid_mask.unsqueeze(-1)
 
         emissions = F.softmax(self.latent_emission(context, sample=sample), dim=-1)

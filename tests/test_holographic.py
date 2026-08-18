@@ -290,6 +290,43 @@ class HolographicProfileTests(unittest.TestCase):
         self.assertTrue(torch.allclose(first.return_mean, second.return_mean))
         self.assertTrue(torch.allclose(first.regime_logits, second.regime_logits))
 
+    def test_temporal_tcn_is_causal(self) -> None:
+        model = ModelConfig(
+            max_profile_bins=32,
+            profile_channels=5 * HOLOGRAPHIC_FIELD_COUNT,
+            latent_states=50,
+            tokenizer_kind="holographic-2d",
+            holographic_volume_bins=5,
+            daily_encoder="masked-resnet",
+            temporal_encoder="tcn",
+            include_metadata=False,
+            direct_autoregression=False,
+            d_model=16,
+            heads=4,
+            layers=1,
+            feedforward_dim=32,
+            dropout=0.0,
+            max_sequence_length=5,
+        ).build(seed=7)
+        values = torch.randn(1, 5, 8, 5 * HOLOGRAPHIC_FIELD_COUNT)
+        grid = values.reshape(1, 5, 8, 5, HOLOGRAPHIC_FIELD_COUNT)
+        grid[..., 0] = torch.rand(1, 5, 8, 5) + 0.01
+        values = grid.reshape_as(values)
+        changed = values.clone()
+        changed[:, -1] = changed[:, -1] + 100.0
+        arguments = (
+            torch.ones(1, 5, dtype=torch.long),
+            torch.zeros(1, 5, 9),
+            torch.arange(8, dtype=torch.float32).view(1, 1, 8).expand(1, 5, 8),
+            torch.ones(1, 5, 8, dtype=torch.bool),
+        )
+
+        first = model(values, *arguments, sample=False)
+        second = model(changed, *arguments, sample=False)
+
+        self.assertEqual(model.temporal_encoder, "tcn")
+        self.assertTrue(torch.allclose(first.context[:, :-1], second.context[:, :-1]))
+
     def test_lite_profile_keeps_only_five_core_fields(self) -> None:
         profile_config = ProfileConfig(
             relative_volume_min_observations=3,

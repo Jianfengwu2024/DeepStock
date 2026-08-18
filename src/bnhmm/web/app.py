@@ -153,7 +153,7 @@ def config(request: Request) -> dict[str, Any]:
                 "name": item.name,
                 "stage": item.stage,
                 "description": item.description,
-                "implemented": item.stage <= 5,
+                "implemented": item.stage <= 6,
             }
             for item in RepairVariantCatalog.all()
         ],
