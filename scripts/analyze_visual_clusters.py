@@ -346,6 +346,7 @@ def evaluate_image_variant(
     name: str,
     images: np.ndarray,
     fit_mask: np.ndarray,
+    mapping_mask: np.ndarray,
     test_mask: np.ndarray,
     outcomes: np.ndarray,
     returns: np.ndarray,
@@ -364,6 +365,15 @@ def evaluate_image_variant(
         device=args.device,
     )
     labels = assign(scores, centers)
+    mapping = np.asarray(
+        [
+            int(np.mean(outcomes[mapping_mask][labels[mapping_mask] == cluster]) >= 0.5)
+            if np.any(labels[mapping_mask] == cluster)
+            else int(np.mean(outcomes[mapping_mask]) >= 0.5)
+            for cluster in range(6)
+        ]
+    )
+    predicted = mapping[labels[test_mask]]
     _, direction_p = stratified_permutation_p(
         labels[test_mask], outcomes[test_mask], symbols[test_mask], 6, chi_square,
         permutations=args.permutations, seed=args.seed + 3100,
@@ -387,12 +397,18 @@ def evaluate_image_variant(
         "test_direction_stratified_permutation_p": direction_p,
         "test_return_stratified_permutation_p": return_p,
         "test_up_rate_spread": max(rates) - min(rates),
+        "test_cluster_accuracy": float(np.mean(outcomes[test_mask] == predicted)),
+        "test_cluster_balanced_accuracy": balanced_accuracy(
+            outcomes[test_mask], predicted
+        ),
+        "test_up_rates": rates,
     }
 
 
 def evaluate_scalar_return_bins(
     current_returns: np.ndarray,
     fit_mask: np.ndarray,
+    mapping_mask: np.ndarray,
     test_mask: np.ndarray,
     outcomes: np.ndarray,
     returns: np.ndarray,
@@ -404,6 +420,15 @@ def evaluate_scalar_return_bins(
     )
     labels = np.digitize(current_returns, thresholds).astype(np.int64)
     clusters = len(thresholds) + 1
+    mapping = np.asarray(
+        [
+            int(np.mean(outcomes[mapping_mask][labels[mapping_mask] == cluster]) >= 0.5)
+            if np.any(labels[mapping_mask] == cluster)
+            else int(np.mean(outcomes[mapping_mask]) >= 0.5)
+            for cluster in range(clusters)
+        ]
+    )
+    predicted = mapping[labels[test_mask]]
     _, direction_p = stratified_permutation_p(
         labels[test_mask], outcomes[test_mask], symbols[test_mask], clusters, chi_square,
         permutations=args.permutations, seed=args.seed + 3300,
@@ -424,6 +449,11 @@ def evaluate_scalar_return_bins(
         "test_direction_stratified_permutation_p": direction_p,
         "test_return_stratified_permutation_p": return_p,
         "test_up_rate_spread": max(rates) - min(rates),
+        "test_cluster_accuracy": float(np.mean(outcomes[test_mask] == predicted)),
+        "test_cluster_balanced_accuracy": balanced_accuracy(
+            outcomes[test_mask], predicted
+        ),
+        "test_up_rates": rates,
     }
 
 
@@ -607,17 +637,40 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
 
     ablations = [
         evaluate_image_variant(
-            "density-only", images[:, :1], fit_mask, test_mask, outcomes,
+            "density-only", images[:, :1], fit_mask, mapping_mask, test_mask, outcomes,
             returns, symbol_values, args
         ),
         evaluate_image_variant(
-            "vectors-only", images[:, 1:], fit_mask, test_mask, outcomes,
+            "vectors-only", images[:, 1:], fit_mask, mapping_mask, test_mask, outcomes,
             returns, symbol_values, args
         ),
         evaluate_image_variant(
             "position-centered-density-and-vectors",
             center_images_on_density(images),
             fit_mask,
+            mapping_mask,
+            test_mask,
+            outcomes,
+            returns,
+            symbol_values,
+            args,
+        ),
+        evaluate_image_variant(
+            "position-centered-density-only",
+            center_images_on_density(images[:, :1]),
+            fit_mask,
+            mapping_mask,
+            test_mask,
+            outcomes,
+            returns,
+            symbol_values,
+            args,
+        ),
+        evaluate_image_variant(
+            "position-centered-vectors-only",
+            center_images_on_density(images)[:, 1:],
+            fit_mask,
+            mapping_mask,
             test_mask,
             outcomes,
             returns,
@@ -625,7 +678,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             args,
         ),
         evaluate_scalar_return_bins(
-            current_returns, fit_mask, test_mask, outcomes, returns, symbol_values, args
+            current_returns, fit_mask, mapping_mask, test_mask, outcomes,
+            returns, symbol_values, args
         ),
     ]
 
@@ -764,13 +818,14 @@ def markdown_report(result: dict[str, Any]) -> str:
             "",
             "## Information ablation",
             "",
-            "| Variant | Direction p | Return p | Up-rate spread |",
-            "|---|---:|---:|---:|",
+            "| Variant | Balanced accuracy | Direction p | Return p | Up-rate spread |",
+            "|---|---:|---:|---:|---:|",
         ]
     )
     for row in result["ablations"]:
         lines.append(
-            f"| {row['variant']} | {row['test_direction_stratified_permutation_p']:.4f} | "
+            f"| {row['variant']} | {row['test_cluster_balanced_accuracy']:.2%} | "
+            f"{row['test_direction_stratified_permutation_p']:.4f} | "
             f"{row['test_return_stratified_permutation_p']:.4f} | "
             f"{row['test_up_rate_spread']:.2%} |"
         )
