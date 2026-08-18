@@ -39,6 +39,7 @@ class Observation:
     symbol: str
     session: str
     next_session: str
+    current_return: float
     next_return: float
     image: np.ndarray
 
@@ -103,6 +104,7 @@ def load_observations(
                     symbol=symbol,
                     session=session,
                     next_session=next_session,
+                    current_return=float(state.end_price / state.anchor_price - 1.0),
                     next_return=float(following.end_price / state.end_price - 1.0),
                     image=image_features(raster, config),
                 )
@@ -321,6 +323,110 @@ def relabel(values: np.ndarray, order: np.ndarray) -> np.ndarray:
     return mapping[values]
 
 
+def center_images_on_density(images: np.ndarray) -> np.ndarray:
+    """Remove absolute daily price position while preserving local shape and vectors."""
+
+    result = np.zeros_like(images)
+    target = (images.shape[-1] - 1) / 2.0
+    coordinates = np.arange(images.shape[-1], dtype=np.float64)
+    for index, image in enumerate(images):
+        mass = image[0].sum(axis=0)
+        center = float(np.sum(mass * coordinates) / max(float(mass.sum()), 1e-12))
+        shift = int(round(target - center))
+        if shift == 0:
+            result[index] = image
+        elif shift > 0:
+            result[index, :, :, shift:] = image[:, :, :-shift]
+        else:
+            result[index, :, :, :shift] = image[:, :, -shift:]
+    return result
+
+
+def evaluate_image_variant(
+    name: str,
+    images: np.ndarray,
+    fit_mask: np.ndarray,
+    test_mask: np.ndarray,
+    outcomes: np.ndarray,
+    returns: np.ndarray,
+    symbols: np.ndarray,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    flat, _ = standardize_channels(images[fit_mask], images)
+    train_scores, scores, explained = fit_pca(
+        flat[fit_mask], flat, args.pca_components, args.device, args.seed + 300
+    )
+    centers, train_labels, _ = kmeans(
+        train_scores,
+        6,
+        restarts=args.restarts,
+        seed=args.seed + 306,
+        device=args.device,
+    )
+    labels = assign(scores, centers)
+    _, direction_p = stratified_permutation_p(
+        labels[test_mask], outcomes[test_mask], symbols[test_mask], 6, chi_square,
+        permutations=args.permutations, seed=args.seed + 3100,
+    )
+    _, return_p = stratified_permutation_p(
+        labels[test_mask], returns[test_mask], symbols[test_mask], 6, return_separation,
+        permutations=args.permutations, seed=args.seed + 3200,
+    )
+    rates = [
+        float(outcomes[test_mask][labels[test_mask] == cluster].mean())
+        for cluster in range(6)
+        if np.any(labels[test_mask] == cluster)
+    ]
+    return {
+        "variant": name,
+        "channels": int(images.shape[1]),
+        "pca_explained_variance": explained,
+        "train_silhouette": approximate_silhouette(
+            train_scores, train_labels, args.seed + 306
+        ),
+        "test_direction_stratified_permutation_p": direction_p,
+        "test_return_stratified_permutation_p": return_p,
+        "test_up_rate_spread": max(rates) - min(rates),
+    }
+
+
+def evaluate_scalar_return_bins(
+    current_returns: np.ndarray,
+    fit_mask: np.ndarray,
+    test_mask: np.ndarray,
+    outcomes: np.ndarray,
+    returns: np.ndarray,
+    symbols: np.ndarray,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    thresholds = np.unique(
+        np.quantile(current_returns[fit_mask], np.linspace(0, 1, 7)[1:-1])
+    )
+    labels = np.digitize(current_returns, thresholds).astype(np.int64)
+    clusters = len(thresholds) + 1
+    _, direction_p = stratified_permutation_p(
+        labels[test_mask], outcomes[test_mask], symbols[test_mask], clusters, chi_square,
+        permutations=args.permutations, seed=args.seed + 3300,
+    )
+    _, return_p = stratified_permutation_p(
+        labels[test_mask], returns[test_mask], symbols[test_mask], clusters, return_separation,
+        permutations=args.permutations, seed=args.seed + 3400,
+    )
+    rates = [
+        float(outcomes[test_mask][labels[test_mask] == cluster].mean())
+        for cluster in range(clusters)
+        if np.any(labels[test_mask] == cluster)
+    ]
+    return {
+        "variant": "current-close-return-only",
+        "clusters": clusters,
+        "thresholds": thresholds.tolist(),
+        "test_direction_stratified_permutation_p": direction_p,
+        "test_return_stratified_permutation_p": return_p,
+        "test_up_rate_spread": max(rates) - min(rates),
+    }
+
+
 def render_prototypes(
     destination: Path,
     images: np.ndarray,
@@ -373,6 +479,9 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     next_sessions = np.asarray([item.next_session for item in observations])
     symbol_values = np.asarray([item.symbol for item in observations])
     returns = np.asarray([item.next_return for item in observations], dtype=np.float64)
+    current_returns = np.asarray(
+        [item.current_return for item in observations], dtype=np.float64
+    )
     outcomes = (returns > 0).astype(np.int64)
     fit_mask = np.char.startswith(sessions, "2024-")
     mapping_mask = fit_mask & np.char.startswith(next_sessions, "2024-")
@@ -496,6 +605,30 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
 
+    ablations = [
+        evaluate_image_variant(
+            "density-only", images[:, :1], fit_mask, test_mask, outcomes,
+            returns, symbol_values, args
+        ),
+        evaluate_image_variant(
+            "vectors-only", images[:, 1:], fit_mask, test_mask, outcomes,
+            returns, symbol_values, args
+        ),
+        evaluate_image_variant(
+            "position-centered-density-and-vectors",
+            center_images_on_density(images),
+            fit_mask,
+            test_mask,
+            outcomes,
+            returns,
+            symbol_values,
+            args,
+        ),
+        evaluate_scalar_return_bins(
+            current_returns, fit_mask, test_mask, outcomes, returns, symbol_values, args
+        ),
+    ]
+
     result = {
         "symbols": list(symbols),
         "method": {
@@ -531,6 +664,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         },
         "clusters": cluster_rows,
         "sensitivity": sensitivity,
+        "ablations": ablations,
         "per_symbol": per_symbol,
     }
     (output_dir / "analysis.json").write_text(
@@ -624,6 +758,21 @@ def markdown_report(result: dict[str, Any]) -> str:
             f"| {row['clusters']} | {row['train_silhouette']:.4f} | "
             f"{row['test_direction_stratified_permutation_p']:.4f} | "
             f"{row['test_return_stratified_permutation_p']:.4f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Information ablation",
+            "",
+            "| Variant | Direction p | Return p | Up-rate spread |",
+            "|---|---:|---:|---:|",
+        ]
+    )
+    for row in result["ablations"]:
+        lines.append(
+            f"| {row['variant']} | {row['test_direction_stratified_permutation_p']:.4f} | "
+            f"{row['test_return_stratified_permutation_p']:.4f} | "
+            f"{row['test_up_rate_spread']:.2%} |"
         )
     return "\n".join(lines) + "\n"
 
