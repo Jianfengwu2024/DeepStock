@@ -37,7 +37,7 @@ async function loadSummary() {
   document.querySelector("#visual-summary").innerHTML = [
     ["图像", Number(summary.image_count || 0).toLocaleString("zh-CN")],
     ["股票", Number(summary.symbol_count || 0).toLocaleString("zh-CN")],
-    ["状态", summary.status === "complete" ? "完整" : summary.status || "不可用"],
+    ["状态", summary.status === "complete" ? "完整" : summary.available ? "生成中" : "不可用"],
   ].map(([label, value]) => `<span><strong>${escapeVisual(value)}</strong>${label}</span>`).join("");
   const tensor = summary.tensor || {};
   document.querySelector("#tensor-size").textContent = `${tensor.width || 840} × ${tensor.height || 21}`;
