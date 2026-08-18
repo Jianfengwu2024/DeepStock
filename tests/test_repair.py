@@ -166,7 +166,7 @@ class RepairReportingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stages = []
-            for index, name in enumerate(RepairVariantCatalog.names()[:2]):
+            for index, name in enumerate(RepairVariantCatalog.names()[:4]):
                 stage = root / name
                 stage.mkdir()
                 (stage / "run-summary.json").write_text(
@@ -187,6 +187,9 @@ class RepairReportingTests(unittest.TestCase):
                 comparison.index("HoloProbe-Metadata"),
             )
             self.assertIn("Interpretation Rule", comparison)
+            self.assertIn("HoloProbe Verdict", comparison)
+            self.assertIn("Incremental image gate: FAIL", comparison)
+            self.assertIn("one-fold screening verdict", comparison)
 
     def test_web_config_exposes_only_completed_stage_as_implemented(self) -> None:
         jobs = SimpleNamespace(list=lambda: [], root=Path("/tmp/jobs"))

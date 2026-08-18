@@ -120,6 +120,45 @@ class RepairExperimentPipeline:
                     **{metric: float(row.get(metric, 0.0)) for metric in _METRICS},
                 )
             )
+        by_name = {row.get("repair_variant"): row for row in rows}
+        probe_names = RepairVariantCatalog.names()[:4]
+        if all(name in by_name for name in probe_names):
+            prior, metadata, image, shuffled = (by_name[name] for name in probe_names)
+            controls = (prior, metadata, shuffled)
+            incremental = (
+                _number(image, "balanced_accuracy")
+                > max(_number(row, "balanced_accuracy") for row in controls)
+                and _number(image, "brier_score")
+                < min(_number(row, "brier_score") for row in controls)
+                and _number(image, "log_loss")
+                < min(_number(row, "log_loss") for row in controls)
+            )
+            fold_counts = {len(row.get("folds") or []) for row in by_name.values()}
+            screening = fold_counts == {1}
+            lines.extend(
+                (
+                    "",
+                    "## HoloProbe Verdict",
+                    "",
+                    f"- Image vs prior balanced-accuracy delta: {_number(image, 'balanced_accuracy') - _number(prior, 'balanced_accuracy'):+.4f}",
+                    f"- Image vs metadata balanced-accuracy delta: {_number(image, 'balanced_accuracy') - _number(metadata, 'balanced_accuracy'):+.4f}",
+                    f"- Image vs shuffled balanced-accuracy delta: {_number(image, 'balanced_accuracy') - _number(shuffled, 'balanced_accuracy'):+.4f}",
+                    f"- Image vs prior Brier delta: {_number(image, 'brier_score') - _number(prior, 'brier_score'):+.4f}",
+                    f"- Image vs prior Log Loss delta: {_number(image, 'log_loss') - _number(prior, 'log_loss'):+.4f}",
+                    f"- Incremental image gate: {'PASS' if incremental else 'FAIL'}",
+                    "",
+                    (
+                        "The legacy two-dimensional field has not demonstrated reliable incremental classification signal. HoloPhase therefore replaces the state representation; this result does not justify increasing encoder size."
+                        if not incremental
+                        else "The legacy image passed the screening gate and may be carried into the next representation experiment."
+                    ),
+                    (
+                        "This is a one-fold screening verdict. Any promotion claim still requires the complete walk-forward folds and multiple seeds."
+                        if screening
+                        else "The verdict uses more than one completed fold per model. Seed replication is still required for promotion."
+                    ),
+                )
+            )
         lines.extend(
             (
                 "",
