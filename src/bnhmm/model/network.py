@@ -505,6 +505,47 @@ class BayesianMotifTokenizer(nn.Module):
         )
 
 
+class MaskedAnisotropicResidualEncoder(nn.Module):
+    """Preserve sparse phase geometry with compact price/velocity residual blocks."""
+
+    def __init__(self, channels: int, blocks: int = 3) -> None:
+        super().__init__()
+        self.blocks = nn.ModuleList(
+            nn.ModuleDict(
+                {
+                    "price": nn.Conv2d(
+                        channels,
+                        channels,
+                        kernel_size=(3, 1),
+                        padding=(1, 0),
+                        groups=channels,
+                        bias=False,
+                    ),
+                    "velocity": nn.Conv2d(
+                        channels,
+                        channels,
+                        kernel_size=(1, 3),
+                        padding=(0, 1),
+                        groups=channels,
+                        bias=False,
+                    ),
+                    "mix": nn.Conv2d(channels, channels, kernel_size=1, bias=False),
+                    "norm": nn.GroupNorm(1, channels),
+                }
+            )
+            for _ in range(blocks)
+        )
+
+    def forward(self, values: Tensor, support: Tensor) -> Tensor:
+        result = values * support
+        for block in self.blocks:
+            update = F.gelu(block["price"](result))
+            update = F.gelu(block["velocity"](update))
+            update = block["mix"](update)
+            result = F.gelu(block["norm"](result + update)) * support
+        return result
+
+
 class HolographicTokenizer(nn.Module):
     """Encode a local two-dimensional price/participation flow field."""
 
@@ -517,6 +558,7 @@ class HolographicTokenizer(nn.Module):
         volume_bins: int,
         field_count: int,
         convolution_layers: int,
+        daily_encoder: str,
         include_metadata: bool,
         *,
         bayesian: bool,
@@ -530,22 +572,25 @@ class HolographicTokenizer(nn.Module):
         self.volume_bins = volume_bins
         self.field_count = field_count
         self.convolution_layers = convolution_layers
+        self.daily_encoder = daily_encoder
         self.include_metadata = include_metadata
         linear = BayesianLinear if bayesian else DeterministicLinear
         self.cell_projection = linear(field_count + 4, d_model)
-        if convolution_layers == 1:
+        if daily_encoder == "masked-resnet":
+            self.local_field = MaskedAnisotropicResidualEncoder(d_model)
+        elif daily_encoder == "shallow-cnn" and convolution_layers == 1:
             self.local_field = nn.Sequential(
                 nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
                 nn.GELU(),
             )
-        elif convolution_layers == 2:
+        elif daily_encoder == "shallow-cnn" and convolution_layers == 2:
             self.local_field = nn.Sequential(
                 nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
                 nn.GELU(),
                 nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
             )
         else:
-            raise ValueError("holographic convolution layers must be one or two")
+            raise ValueError("unsupported holographic daily encoder")
         self.local_norm = nn.LayerNorm(d_model)
         self.pool_score = linear(d_model, 1)
         self.metadata = linear(state_feature_dim, d_model)
@@ -594,7 +639,14 @@ class HolographicTokenizer(nn.Module):
         flat = cells.reshape(
             batch * sequence, price_bins, self.volume_bins, -1
         ).permute(0, 3, 1, 2)
-        local = self.local_field(flat).permute(0, 2, 3, 1).reshape_as(cells)
+        if self.daily_encoder == "masked-resnet":
+            flat_support = support.reshape(
+                batch * sequence, 1, price_bins, self.volume_bins
+            )
+            local = self.local_field(flat, flat_support)
+        else:
+            local = self.local_field(flat)
+        local = local.permute(0, 2, 3, 1).reshape_as(cells)
         cells = self.local_norm(cells + local) * support.unsqueeze(-1)
         scores = self.pool_score(torch.tanh(cells), sample=sample).squeeze(-1)
         scores = scores.masked_fill(~support, torch.finfo(scores.dtype).min)
@@ -634,6 +686,7 @@ class BNHMMNetwork(nn.Module):
         holographic_field_count: int = HOLOGRAPHIC_FIELD_COUNT,
         holographic_field_names: tuple[str, ...] = HOLOGRAPHIC_FIELD_NAMES,
         holographic_conv_layers: int = 2,
+        daily_encoder: str = "shallow-cnn",
         feature_mode: str = "price-velocity",
         auxiliary_gate_floor: float = 0.25,
         auxiliary_gate_initial: float = 0.75,
@@ -689,6 +742,7 @@ class BNHMMNetwork(nn.Module):
         self.holographic_field_count = holographic_field_count
         self.holographic_field_names = tuple(holographic_field_names)
         self.holographic_conv_layers = holographic_conv_layers
+        self.daily_encoder = daily_encoder
         if (
             len(self.holographic_field_names) != self.holographic_field_count
             or len(set(self.holographic_field_names))
@@ -736,6 +790,7 @@ class BNHMMNetwork(nn.Module):
                 holographic_volume_bins,
                 holographic_field_count,
                 holographic_conv_layers,
+                daily_encoder,
                 include_metadata,
                 bayesian=bayesian_backbone,
             )

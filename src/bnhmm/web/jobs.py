@@ -172,7 +172,7 @@ class WalkForwardJobRequest(BaseModel):
         if value is None:
             return None
         variant = RepairVariantCatalog.resolve(value)
-        if variant.stage > 4:
+        if variant.stage > 5:
             raise ValueError(f"{variant.name} is waiting for predecessor validation")
         return variant.name
 

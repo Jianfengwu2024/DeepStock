@@ -296,7 +296,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         if args.repair_variant
         else None
     )
-    if repair_variant is not None and repair_variant.stage > 4:
+    if repair_variant is not None and repair_variant.stage > 5:
         raise ValueError(
             f"{repair_variant.name} is not implemented in the current repair stage"
         )
@@ -381,6 +381,9 @@ def _walk_forward(args: argparse.Namespace) -> int:
         holographic_field_count=len(profile_config.holographic_fields),
         holographic_field_names=profile_config.holographic_fields,
         holographic_conv_layers=args.holographic_conv_layers,
+        daily_encoder=(
+            repair_variant.daily_encoder if repair_variant else "shallow-cnn"
+        ),
         transition_rank=args.transition_rank,
         strong_bear_threshold=label_config.strong_bear_threshold,
         direction_threshold=label_config.direction_threshold,

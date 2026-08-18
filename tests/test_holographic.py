@@ -249,6 +249,47 @@ class HolographicProfileTests(unittest.TestCase):
         output.return_mean.sum().backward()
         self.assertTrue(any(item.grad is not None for item in model.parameters()))
 
+    def test_masked_resnet_ignores_unsupported_phase_cells(self) -> None:
+        config = ModelConfig(
+            max_profile_bins=32,
+            profile_channels=5 * HOLOGRAPHIC_FIELD_COUNT,
+            latent_states=50,
+            tokenizer_kind="holographic-2d",
+            holographic_volume_bins=5,
+            daily_encoder="masked-resnet",
+            include_metadata=False,
+            direct_autoregression=False,
+            d_model=16,
+            heads=4,
+            layers=1,
+            feedforward_dim=32,
+            dropout=0.0,
+            max_sequence_length=5,
+        )
+        model = config.build(seed=7)
+        values = torch.randn(1, 5, 8, 5 * HOLOGRAPHIC_FIELD_COUNT)
+        grid = values.reshape(1, 5, 8, 5, HOLOGRAPHIC_FIELD_COUNT)
+        grid[..., 0] = torch.rand(1, 5, 8, 5) + 0.01
+        values = grid.reshape_as(values)
+        changed = values.clone()
+        changed[:, :, 3] = changed[:, :, 3] + 1_000.0
+        coordinates = torch.arange(8, dtype=torch.float32).view(1, 1, 8).expand(1, 5, 8)
+        mask = torch.ones(1, 5, 8, dtype=torch.bool)
+        mask[:, :, 3] = False
+        arguments = (
+            torch.ones(1, 5, dtype=torch.long),
+            torch.randn(1, 5, 9),
+            coordinates,
+            mask,
+        )
+
+        first = model(values, *arguments, sample=False)
+        second = model(changed, *arguments, sample=False)
+
+        self.assertEqual(model.tokenizer.daily_encoder, "masked-resnet")
+        self.assertTrue(torch.allclose(first.return_mean, second.return_mean))
+        self.assertTrue(torch.allclose(first.regime_logits, second.regime_logits))
+
     def test_lite_profile_keeps_only_five_core_fields(self) -> None:
         profile_config = ProfileConfig(
             relative_volume_min_observations=3,

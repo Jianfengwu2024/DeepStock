@@ -42,6 +42,7 @@ class ModelConfig:
     holographic_field_count: int = HOLOGRAPHIC_FIELD_COUNT
     holographic_field_names: tuple[str, ...] = HOLOGRAPHIC_FIELD_NAMES
     holographic_conv_layers: int = 2
+    daily_encoder: str = "shallow-cnn"
     feature_mode: str = "price-velocity"
     auxiliary_gate_floor: float = 0.25
     auxiliary_gate_initial: float = 0.75

@@ -233,10 +233,18 @@ class WebJobTests(unittest.TestCase):
             latent_states=50,
         )
         self.assertIn("HoloPhase", build_command(phase, Path("/tmp/holo-phase")))
+        resnet = phase.model_copy(
+            update={"name": "HoloResNet-001", "repair_variant": "HoloResNet"}
+        ).model_validate(
+            phase.model_copy(
+                update={"name": "HoloResNet-001", "repair_variant": "HoloResNet"}
+            ).model_dump()
+        )
+        self.assertIn("HoloResNet", build_command(resnet, Path("/tmp/holo-resnet")))
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(
                 strategy="holo-repair",
-                repair_variant="HoloResNet",
+                repair_variant="HoloResTCN",
                 training_scope="sector-pooled",
                 dataset_id="semiconductor",
                 profile_protocol="price-volume-holographic-flow-v1",
