@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bnhmm-engine"
-version = "0.17.0"
+version = "0.18.0"
 description = "Offline Bayesian neural hidden-state market model engine"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,12 +18,14 @@ storage = ["psycopg[binary]>=3.2"]
 model = ["torch>=2.5"]
 training = ["duckdb>=1.4", "torch>=2.5"]
 evaluation = ["matplotlib>=3.8"]
+visualization = ["duckdb>=1.4", "pillow>=10.0"]
 web = ["fastapi>=0.109", "uvicorn>=0.27"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
 bnhmm = "bnhmm.cli:main"
 bnhmm-web = "bnhmm.web.app:run"
+bnhmm-visual-dataset = "bnhmm.visual_dataset:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bnhmm"]

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>二维状态图库 · DeepStock Lab</title>
+  <link rel="stylesheet" href="/static/styles.css?v=0.18.0">
+  <link rel="stylesheet" href="/static/visual.css?v=0.18.0">
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script src="/static/visual.js?v=0.18.0" defer></script>
+</head>
+<body class="visual-page">
+  <header class="visual-header">
+    <div class="visual-title-row">
+      <a class="icon-button" href="/" title="返回样本外测试"><i data-lucide="arrow-left"></i></a>
+      <div><h1>半导体二维状态图库</h1><p id="dataset-subtitle">正在读取图像索引</p></div>
+    </div>
+    <div class="visual-summary" id="visual-summary"></div>
+  </header>
+
+  <form class="visual-filter" id="visual-filter">
+    <label>股票<select name="symbol" id="visual-symbol"><option value="">全部股票</option></select></label>
+    <label>开始日期<input type="date" name="start" value="2024-01-01"></label>
+    <label>结束日期<input type="date" name="end" value="2025-12-31"></label>
+    <label>每页<select name="page_size"><option>24</option><option>36</option><option>48</option><option>60</option></select></label>
+    <button class="primary-button" type="submit"><i data-lucide="search"></i>筛选</button>
+  </form>
+
+  <section class="encoding-strip" aria-label="图像编码">
+    <span><b class="density-key"></b>灰度：价格-相对成交量密度</span>
+    <span><i data-lucide="move-up-right"></i>矢量：价格速度 × 成交量速度</span>
+    <span><b class="anchor-key"></b>红线：昨日收盘价零点</span>
+    <span>固定状态网格 <strong id="tensor-size">840 × 21</strong></span>
+  </section>
+
+  <main class="visual-content">
+    <div class="visual-grid" id="visual-grid"></div>
+    <div class="visual-empty hidden" id="visual-empty"><i data-lucide="image-off"></i><strong>当前条件下没有图像</strong></div>
+    <nav class="visual-pagination" aria-label="分页">
+      <button class="secondary-button" id="previous-page" type="button"><i data-lucide="chevron-left"></i>上一页</button>
+      <span id="page-status">第 1 页</span>
+      <button class="secondary-button" id="next-page" type="button">下一页<i data-lucide="chevron-right"></i></button>
+    </nav>
+  </main>
+
+  <dialog class="visual-dialog" id="visual-dialog">
+    <div class="visual-dialog-head">
+      <div><strong id="dialog-title"></strong><span id="dialog-meta"></span></div>
+      <button class="icon-button" id="close-visual-dialog" type="button" title="关闭"><i data-lucide="x"></i></button>
+    </div>
+    <img id="dialog-image" alt="二维状态大图">
+  </dialog>
+</body>
+</html>

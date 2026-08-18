@@ -84,6 +84,7 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .danger-button { min-height: 32px; padding: 0 11px; color: var(--red); background: white; border: 1px solid #e4aaa6; }
 .mini-button { min-height: 26px; padding: 0 8px; background: white; color: var(--muted); border: 1px solid var(--line); font-size: 11px; }
 .mini-button svg { width: 13px; height: 13px; }
+.header-link { text-decoration: none; }
 .icon-button { width: 32px; height: 32px; padding: 0; color: var(--muted); background: white; border: 1px solid var(--line); }
 .icon-button:hover, .mini-button:hover, .secondary-button:hover { color: var(--text); border-color: var(--line-strong); background: var(--panel-muted); }
 

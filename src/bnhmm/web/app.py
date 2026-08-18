@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from ..config import HOLOGRAPHIC_LITE_FIELD_NAMES
 from ..data.sector_dataset import SectorDatasetCatalog
 from ..data.source import DuckDBBarSource
 from ..repair import RepairVariantCatalog
+from ..visual_dataset import VisualDatasetIndex
 from .jobs import (
     ActiveJobDeletionError,
     DuplicateJobNameError,
@@ -31,6 +33,9 @@ PROJECT_ROOT = PACKAGE_ROOT.parents[2]
 STATIC_ROOT = PACKAGE_ROOT / "static"
 DEFAULT_JOB_ROOT = "/home/wujianfeng/private/bnhmm-storage/ui-runs"
 DEFAULT_SECTOR_DATASET_ROOT = "/home/share/data/sectors"
+DEFAULT_VISUAL_DATASET_ROOT = (
+    "/home/wujianfeng/private/bnhmm-storage/visual-datasets/semiconductor-2024-2025"
+)
 
 
 @asynccontextmanager
@@ -42,6 +47,9 @@ async def lifespan(app: FastAPI):
     app.state.jobs = manager
     app.state.sector_datasets = SectorDatasetCatalog(
         os.getenv("BNHMM_SECTOR_DATASET_ROOT", DEFAULT_SECTOR_DATASET_ROOT)
+    )
+    app.state.visual_dataset = VisualDatasetIndex(
+        os.getenv("BNHMM_VISUAL_DATASET_ROOT", DEFAULT_VISUAL_DATASET_ROOT)
     )
     yield
     manager.close()
@@ -66,6 +74,11 @@ def manager(request: Request) -> JobManager:
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
     return FileResponse(STATIC_ROOT / "index.html")
+
+
+@app.get("/visual-dataset", include_in_schema=False)
+def visual_dataset_page() -> FileResponse:
+    return FileResponse(STATIC_ROOT / "visual.html")
 
 
 @app.get("/health")
@@ -184,6 +197,43 @@ def datasets(request: Request) -> dict[str, list[dict[str, object]]]:
             item.as_json() for item in request.app.state.sector_datasets.list()
         ]
     }
+
+
+@app.get("/api/visual-dataset/summary")
+def visual_dataset_summary(request: Request) -> dict[str, Any]:
+    return request.app.state.visual_dataset.summary()
+
+
+@app.get("/api/visual-dataset/images")
+def visual_dataset_images(
+    request: Request,
+    symbol: str | None = Query(None, min_length=1, max_length=24),
+    start: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=12, le=60),
+) -> dict[str, Any]:
+    result = request.app.state.visual_dataset.query(
+        symbol=symbol, start=start, end=end, page=page, page_size=page_size
+    )
+    for item in result["items"]:
+        item["image_url"] = f"/api/visual-dataset/image/{item['symbol']}/{item['session']}"
+        item.pop("image_path", None)
+    return result
+
+
+@app.get("/api/visual-dataset/image/{symbol}/{session}")
+def visual_dataset_image(symbol: str, session: str, request: Request) -> FileResponse:
+    if not symbol.replace(".", "").replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(status_code=404, detail="image not found")
+    try:
+        date.fromisoformat(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="image not found") from exc
+    path = request.app.state.visual_dataset.image_path(symbol, session)
+    if path is None:
+        raise HTTPException(status_code=404, detail="image not found")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/jobs")
