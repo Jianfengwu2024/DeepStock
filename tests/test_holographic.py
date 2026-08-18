@@ -17,6 +17,7 @@ from bnhmm import (
 )
 from bnhmm.config import HOLOGRAPHIC_FIELD_COUNT
 from bnhmm.data import ProfileLabelBuilder
+from bnhmm.data.holographic import HolographicPhaseProfileBuilder
 from bnhmm.training import BNHMMTrainer, ModelConfig, collate_profile_sequences
 from bnhmm.walk_forward import _state_diagnostics
 
@@ -66,6 +67,52 @@ def wide_range_sessions(session_count: int = 8) -> BarBatch:
 
 
 class HolographicProfileTests(unittest.TestCase):
+    def test_phase_builder_uses_price_velocity_axis_and_volume_mass(self) -> None:
+        config = ProfileConfig(
+            relative_volume_min_observations=3,
+            relative_volume_lookback_sessions=3,
+            holographic_volume_bins=5,
+        )
+
+        state = HolographicPhaseProfileBuilder(config).build(synthetic_sessions(8))[-1]
+
+        self.assertEqual(state.fields.shape[-2:], (5, HOLOGRAPHIC_FIELD_COUNT))
+        self.assertAlmostEqual(float(state.fields[..., 0].sum()), 1.0)
+        self.assertTrue(np.all(np.diff(state.volume_coordinates) > 0.0))
+        self.assertAlmostEqual(float(state.volume_coordinates.mean()), 0.0)
+        self.assertGreater(float(np.abs(state.fields[..., 1]).sum()), 0.0)
+        self.assertGreater(state.flow_samples, 0)
+
+    def test_phase_builder_current_volume_changes_mass_not_training_baseline(self) -> None:
+        bars = synthetic_sessions(8)
+        sessions = bars.timestamp.astype("datetime64[D]")
+        last = np.unique(sessions)[-1]
+        minute = bars.timestamp.astype("datetime64[m]").astype(np.int64) % (24 * 60)
+        changed_volume = bars.volume.copy()
+        changed_volume[(sessions == last) & (minute > 14 * 60)] *= 10.0
+        changed = BarBatch(
+            symbol=bars.symbol,
+            timestamp=bars.timestamp,
+            open=bars.open,
+            high=bars.high,
+            low=bars.low,
+            close=bars.close,
+            volume=changed_volume,
+        )
+        config = ProfileConfig(
+            relative_volume_min_observations=3,
+            relative_volume_lookback_sessions=3,
+            holographic_volume_bins=5,
+        )
+
+        original = HolographicPhaseProfileBuilder(config).build(bars)[-1]
+        modified = HolographicPhaseProfileBuilder(config).build(changed)[-1]
+
+        self.assertAlmostEqual(
+            original.average_minute_volume, modified.average_minute_volume
+        )
+        self.assertFalse(np.allclose(original.fields, modified.fields))
+
     def test_builds_finite_two_dimensional_fields(self) -> None:
         config = ProfileConfig(
             relative_volume_min_observations=3,

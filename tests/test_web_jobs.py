@@ -224,10 +224,19 @@ class WebJobTests(unittest.TestCase):
                 profile_protocol="price-volume-holographic-flow-v1",
                 latent_states=50,
             )
+        phase = WalkForwardJobRequest(
+            strategy="holo-repair",
+            repair_variant="HoloPhase",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            profile_protocol="price-volume-holographic-flow-v1",
+            latent_states=50,
+        )
+        self.assertIn("HoloPhase", build_command(phase, Path("/tmp/holo-phase")))
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(
                 strategy="holo-repair",
-                repair_variant="HoloPhase",
+                repair_variant="HoloResNet",
                 training_scope="sector-pooled",
                 dataset_id="semiconductor",
                 profile_protocol="price-volume-holographic-flow-v1",

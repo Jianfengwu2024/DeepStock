@@ -25,7 +25,10 @@ from .config import (
     SequenceConfig,
 )
 from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
-from .data.holographic import HolographicProfileBuilder
+from .data.holographic import (
+    HolographicPhaseProfileBuilder,
+    HolographicProfileBuilder,
+)
 from .data.profile import PriceVolumeProfileBuilder
 from .data.source import BrokerBarSource, DuckDBBarSource
 from .repair import RepairVariantCatalog
@@ -293,7 +296,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         if args.repair_variant
         else None
     )
-    if repair_variant is not None and repair_variant.stage > 3:
+    if repair_variant is not None and repair_variant.stage > 4:
         raise ValueError(
             f"{repair_variant.name} is not implemented in the current repair stage"
         )
@@ -328,11 +331,12 @@ def _walk_forward(args: argparse.Namespace) -> int:
     )
     for symbol in symbols:
         bars = source.fetch(symbol, "1m", args.start, args.end)
-        builder = (
-            HolographicProfileBuilder(profile_config)
-            if holographic
-            else PriceVolumeProfileBuilder(profile_config)
-        )
+        if holographic and repair_variant is not None and repair_variant.stage >= 4:
+            builder = HolographicPhaseProfileBuilder(profile_config)
+        elif holographic:
+            builder = HolographicProfileBuilder(profile_config)
+        else:
+            builder = PriceVolumeProfileBuilder(profile_config)
         states = builder.build(bars)
         if not states:
             skipped_symbols[symbol] = "no valid profile states"
@@ -531,12 +535,24 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "price_coordinate": "log-price-relative-to-previous-close",
             **(
                 {
-                    "domain": ["relative_log_price", "relative_volume_level"],
+                    "domain": (
+                        ["relative_log_price", "standardized_10m_price_velocity"]
+                        if repair_variant is not None and repair_variant.stage >= 4
+                        else ["relative_log_price", "relative_volume_level"]
+                    ),
                     "volume_bins": profile_config.holographic_volume_bins,
                     "field_smoothing": profile_config.holographic_smoothing,
                     "fields": list(profile_config.holographic_fields),
-                    "flow": ["price_velocity", "volume_level_velocity"],
-                    "geometry": ["divergence", "vorticity"],
+                    "flow": (
+                        ["volume_weighted_phase_mass"]
+                        if repair_variant is not None and repair_variant.stage >= 4
+                        else ["price_velocity", "volume_level_velocity"]
+                    ),
+                    "geometry": (
+                        ["price_density_gradient", "velocity_density_gradient"]
+                        if repair_variant is not None and repair_variant.stage >= 4
+                        else ["divergence", "vorticity"]
+                    ),
                 }
                 if holographic
                 else {}

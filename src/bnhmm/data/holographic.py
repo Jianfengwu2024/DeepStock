@@ -315,3 +315,171 @@ class HolographicProfileBuilder:
         return int(
             np.clip(np.searchsorted(edges, value, side="right") - 1, 0, len(edges) - 2)
         )
+
+
+class HolographicPhaseProfileBuilder(HolographicProfileBuilder):
+    """Build price-position by 10-minute price-velocity fields weighted by volume mass."""
+
+    def _build_state(
+        self,
+        bars: BarBatch,
+        normalized: NormalizedSession,
+        normalization: PhaseSpaceNormalization,
+        anchor_price: float,
+    ) -> HolographicState | None:
+        log_bin_width = float(np.log1p(self.config.bin_width_bps / 10_000.0))
+        low = np.log(bars.low / anchor_price)
+        high = np.log(bars.high / anchor_price)
+        minimum_edge = int(np.floor(float(low.min()) / log_bin_width))
+        maximum_edge = int(np.ceil(float(high.max()) / log_bin_width))
+        minimum_edge -= self.config.profile_margin_bins
+        maximum_edge += self.config.profile_margin_bins
+        if maximum_edge - minimum_edge < 3:
+            maximum_edge = minimum_edge + 3
+        clipped = maximum_edge - minimum_edge > self.config.max_profile_bins
+        if clipped:
+            center = (minimum_edge + maximum_edge) // 2
+            minimum_edge = center - self.config.max_profile_bins // 2
+            maximum_edge = minimum_edge + self.config.max_profile_bins
+
+        price_edge_indices = np.arange(
+            minimum_edge, maximum_edge + 1, dtype=np.float64
+        )
+        price_edges = price_edge_indices * log_bin_width
+        price_coordinates = price_edge_indices[:-1] + 0.5
+        derivative_price_coordinates = (
+            price_coordinates * log_bin_width / normalization.location_scale
+        )
+        normalized_price_coordinates = np.clip(
+            derivative_price_coordinates,
+            -self.config.feature_clip,
+            self.config.feature_clip,
+        ) / self.config.feature_clip
+        velocity_edges = np.linspace(
+            -self.config.feature_clip,
+            self.config.feature_clip,
+            self.config.holographic_volume_bins + 1,
+        )
+        velocity_coordinates = (
+            (velocity_edges[:-1] + velocity_edges[1:])
+            / 2.0
+            / self.config.feature_clip
+        )
+        shape = (len(price_coordinates), len(velocity_coordinates))
+        mass = np.zeros(shape, dtype=np.float64)
+        count = np.zeros(shape, dtype=np.float64)
+        activity_sum = np.zeros(shape, dtype=np.float64)
+        valid_indices, sample_mass = self._phase_mass_samples(bars, normalized)
+        if not len(valid_indices):
+            return None
+        log_anchor = np.log(anchor_price)
+        for index, relative_mass in zip(valid_indices, sample_mass, strict=True):
+            price_index = self._bin_index(
+                price_edges,
+                float(normalized.velocity_anchor_log_price[index] - log_anchor),
+            )
+            velocity_index = self._bin_index(
+                velocity_edges, float(normalized.price_velocity[index])
+            )
+            cell = (price_index, velocity_index)
+            count[cell] += 1.0
+            mass[cell] += relative_mass
+            activity_sum[cell] += np.log(max(relative_mass, 1e-8))
+
+        smooth = self.config.holographic_smoothing
+        smooth_mass = self._smooth(mass, smooth)
+        density = smooth_mass / max(float(smooth_mass.sum()), 1e-12)
+        smooth_count = self._smooth(count, smooth)
+        occupancy = smooth_count / max(float(smooth_count.sum()), 1e-12)
+        denominator = np.maximum(smooth_count, 1e-8)
+        log_activity = self._smooth(activity_sum, smooth) / denominator
+        support = smooth_count > 1e-8
+        log_activity = np.tanh(log_activity) * support
+        confidence = smooth_count / max(float(smooth_count.max()), 1e-12)
+        velocity_grid = np.broadcast_to(velocity_coordinates, shape)
+        signed_flux = density * velocity_grid
+        kinetic_energy = density * np.square(velocity_grid)
+        activity = occupancy * log_activity
+        price_gradient = self._gradient(
+            density, derivative_price_coordinates, axis=0
+        )
+        velocity_gradient = self._gradient(
+            density, velocity_coordinates, axis=1
+        )
+        price_gradient = np.clip(
+            price_gradient, -self.config.feature_clip, self.config.feature_clip
+        ) / self.config.feature_clip
+        velocity_gradient = np.clip(
+            velocity_gradient, -self.config.feature_clip, self.config.feature_clip
+        ) / self.config.feature_clip
+        fields = np.stack(
+            (
+                density,
+                signed_flux,
+                activity,
+                kinetic_energy,
+                occupancy,
+                density * confidence,
+                price_gradient,
+                velocity_gradient,
+            ),
+            axis=-1,
+        )
+        fields = fields[..., self._field_indices]
+        session = bars.timestamp[0].astype("datetime64[D]")
+        return HolographicState(
+            symbol=bars.symbol,
+            timeframe="1d",
+            period_start=(session + np.timedelta64(9 * 60 + 30, "m")).astype(
+                "datetime64[ns]"
+            ),
+            period_end=(session + np.timedelta64(15 * 60, "m")).astype(
+                "datetime64[ns]"
+            ),
+            first_bar_time=bars.timestamp[0].astype("datetime64[ns]"),
+            start_price=float(bars.open[0]),
+            end_price=float(bars.close[-1]),
+            high_price=float(bars.high.max()),
+            low_price=float(bars.low.min()),
+            anchor_price=anchor_price,
+            log_bin_width=log_bin_width,
+            bin_coordinates=price_coordinates,
+            normalized_bin_coordinates=normalized_price_coordinates,
+            volume_coordinates=velocity_coordinates,
+            fields=fields,
+            normalization_sessions=normalization.sessions,
+            average_minute_volume=normalization.average_minute_volume,
+            location_scale=normalization.location_scale,
+            price_velocity_mean=normalization.price_velocity_mean,
+            price_velocity_scale=normalization.price_velocity_scale,
+            relative_volume_mean=normalization.relative_volume_mean,
+            relative_volume_scale=normalization.relative_volume_scale,
+            volume_velocity_mean=normalization.volume_velocity_mean,
+            volume_velocity_scale=normalization.volume_velocity_scale,
+            total_raw_volume=float(bars.volume.sum()),
+            total_relative_volume=float(normalized.relative_volume.sum()),
+            bar_count=len(bars),
+            profile_clipped=clipped,
+            flow_samples=len(valid_indices),
+        )
+
+    def _phase_mass_samples(
+        self, bars: BarBatch, normalized: NormalizedSession
+    ) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
+        minute = bars.timestamp.astype("datetime64[m]").astype(np.int64)
+        width = self.config.velocity_aggregation_minutes
+        indices: list[int] = []
+        masses: list[float] = []
+        for endpoint in np.flatnonzero(normalized.velocity_edge_valid):
+            start = int(endpoint) - 2 * width + 1
+            stop = int(endpoint) + 1
+            if start < 0 or stop - start != 2 * width:
+                continue
+            if np.any(np.diff(minute[start:stop]) != 1):
+                continue
+            relative_mass = float(normalized.relative_volume[start:stop].mean())
+            if not np.isfinite(relative_mass) or relative_mass <= 0.0:
+                continue
+            indices.append(int(endpoint))
+            masses.append(relative_mass)
+        return np.asarray(indices, dtype=np.int64), np.asarray(masses, dtype=np.float64)

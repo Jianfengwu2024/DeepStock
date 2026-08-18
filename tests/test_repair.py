@@ -202,8 +202,8 @@ class RepairReportingTests(unittest.TestCase):
             payload = web_config(request)
 
         self.assertEqual(payload["repair_variants"][0]["name"], "HoloProbe-Prior")
-        self.assertTrue(all(item["implemented"] for item in payload["repair_variants"][:4]))
-        self.assertTrue(all(not item["implemented"] for item in payload["repair_variants"][4:]))
+        self.assertTrue(all(item["implemented"] for item in payload["repair_variants"][:5]))
+        self.assertTrue(all(not item["implemented"] for item in payload["repair_variants"][5:]))
 
 
 if __name__ == "__main__":
