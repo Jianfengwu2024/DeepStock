@@ -202,6 +202,38 @@ class WebJobTests(unittest.TestCase):
             request.model_copy(update={"latent_states": 39}).model_dump()
             )
 
+    def test_holo_repair_requires_an_implemented_named_variant(self) -> None:
+        request = WalkForwardJobRequest(
+            strategy="holo-repair",
+            repair_variant="HoloProbe-Image",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            profile_protocol="price-volume-holographic-flow-v1",
+            latent_states=50,
+        )
+
+        command = build_command(request, Path("/tmp/holo-repair-result"))
+
+        index = command.index("--repair-variant")
+        self.assertEqual(command[index + 1], "HoloProbe-Image")
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(
+                strategy="holo-repair",
+                training_scope="sector-pooled",
+                dataset_id="semiconductor",
+                profile_protocol="price-volume-holographic-flow-v1",
+                latent_states=50,
+            )
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(
+                strategy="holo-repair",
+                repair_variant="HoloPhase",
+                training_scope="sector-pooled",
+                dataset_id="semiconductor",
+                profile_protocol="price-volume-holographic-flow-v1",
+                latent_states=50,
+            )
+
     def test_holographic_lite_command_uses_fixed_fifteen_channel_contract(self) -> None:
         fields = (
             "density",

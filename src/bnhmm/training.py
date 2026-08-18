@@ -61,6 +61,8 @@ class ModelConfig:
     feedforward_dim: int = 96
     dropout: float = 0.1
     max_sequence_length: int = 5
+    repair_variant: str | None = None
+    control_mode: str = "full"
 
     def build(self, *, seed: int | None = None) -> BNHMMNetwork:
         if seed is None:

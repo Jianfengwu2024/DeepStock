@@ -28,6 +28,7 @@ from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
 from .data.holographic import HolographicProfileBuilder
 from .data.profile import PriceVolumeProfileBuilder
 from .data.source import BrokerBarSource, DuckDBBarSource
+from .repair import RepairVariantCatalog
 from .storage import apply_migrations
 
 
@@ -287,6 +288,15 @@ def _walk_forward(args: argparse.Namespace) -> int:
     from .training import ModelConfig, TrainerConfig
     from .walk_forward import WalkForwardConfig, run_walk_forward
 
+    repair_variant = (
+        RepairVariantCatalog.resolve(args.repair_variant)
+        if args.repair_variant
+        else None
+    )
+    if repair_variant is not None and repair_variant.stage > 3:
+        raise ValueError(
+            f"{repair_variant.name} is not implemented in the current repair stage"
+        )
     source = DuckDBBarSource(args.duckdb_path)
     symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
     if not symbols:
@@ -381,6 +391,16 @@ def _walk_forward(args: argparse.Namespace) -> int:
         feedforward_dim=args.feedforward_dim,
         dropout=args.dropout,
         max_sequence_length=args.sequence_length,
+        repair_variant=repair_variant.name if repair_variant else None,
+        control_mode=repair_variant.control_mode if repair_variant else "full",
+        include_metadata=(
+            repair_variant is None
+            or repair_variant.control_mode not in {"image-only", "prior-only"}
+        ),
+        direct_autoregression=(
+            repair_variant is None
+            or repair_variant.control_mode not in {"image-only", "prior-only"}
+        ),
     )
     trainer_config = TrainerConfig(
         epochs=args.epochs,
@@ -469,6 +489,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "symbols": list(data_summary),
         "model_scope": args.training_scope,
         "dataset_id": args.dataset_id,
+        "repair_variant": repair_variant.name if repair_variant else None,
         "state_timeframe": args.state_timeframe,
         "profile_protocol": {
             "version": (
@@ -570,6 +591,10 @@ def _walk_forward(args: argparse.Namespace) -> int:
     Path(args.output_dir, "run-summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    if repair_variant is not None:
+        from .repair import RepairExperimentPipeline
+
+        RepairExperimentPipeline.write_stage_report(args.output_dir)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
@@ -1313,6 +1338,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FIELD[,FIELD...]",
     )
     walk.add_argument("--holographic-conv-layers", type=int, choices=(1, 2), default=2)
+    walk.add_argument("--repair-variant", choices=RepairVariantCatalog.names())
     walk.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),

@@ -16,6 +16,7 @@ from .. import __version__
 from ..config import HOLOGRAPHIC_LITE_FIELD_NAMES
 from ..data.sector_dataset import SectorDatasetCatalog
 from ..data.source import DuckDBBarSource
+from ..repair import RepairVariantCatalog
 from .jobs import (
     ActiveJobDeletionError,
     DuplicateJobNameError,
@@ -121,6 +122,12 @@ def config(request: Request) -> dict[str, Any]:
         "feedforward_dim": 32,
         "latent_states": 16,
     }
+    repair_defaults = {
+        **holographic_defaults,
+        "strategy": "holo-repair",
+        "repair_variant": RepairVariantCatalog.names()[0],
+        "pretrain_epochs": 0,
+    }
     fk_defaults = {
         **defaults,
         "strategy": "fk-stock",
@@ -136,10 +143,20 @@ def config(request: Request) -> dict[str, Any]:
             "bnhmm": defaults,
             "holo-bnhmm": holographic_defaults,
             "holo-bnhmm-lite": holographic_lite_defaults,
+            "holo-repair": repair_defaults,
             "stock-transformer": stock_defaults,
             "fk-stock": fk_defaults,
         },
         "datasets": [item.as_json() for item in datasets],
+        "repair_variants": [
+            {
+                "name": item.name,
+                "stage": item.stage,
+                "description": item.description,
+                "implemented": item.stage <= 3,
+            }
+            for item in RepairVariantCatalog.all()
+        ],
     }
 
 
@@ -255,6 +272,7 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "predictions.json",
             "fk-diagnostics.json",
             "run-summary.json",
+            "repair-stage-report.md",
         )
         if store.artifact_path(record.id, name) is not None
     }

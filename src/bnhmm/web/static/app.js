@@ -51,6 +51,13 @@ const strategyParameterFields = {
     "sequence_length", "d_model", "heads", "layers", "feedforward_dim", "dropout",
     "latent_states", "transition_rank", "mc_samples", "device",
   ],
+  "holo-repair": [
+    "repair_variant", "pretrain_epochs", "pretrain_mask_probability", "kl_weight",
+    "ordinal_weight", "symmetry_weight", "deterministic_training",
+    "velocity_aggregation_minutes", "velocity_clip", "holographic_volume_bins",
+    "holographic_smoothing", "sequence_length", "d_model", "heads", "layers",
+    "feedforward_dim", "dropout", "latent_states", "transition_rank", "mc_samples", "device",
+  ],
   "stock-transformer": [
     "conservation_weight", "conservation_grid_points", "conservation_ridge",
     "minimum_token_bins", "maximum_tokens", "boundary_threshold", "sequence_length",
@@ -63,6 +70,7 @@ const strategyNamePrefixes = {
   bnhmm: "BNHMM",
   "holo-bnhmm": "HoloBNHMM",
   "holo-bnhmm-lite": "HoloLite",
+  "holo-repair": "HoloRepair",
   "stock-transformer": "StockTransformer",
   "fk-stock": "FKStock",
 };
@@ -114,11 +122,19 @@ function currentStrategy() {
   return document.querySelector("[name=strategy]:checked")?.value || "bnhmm";
 }
 
+function strategyPrefix(strategy = currentStrategy()) {
+  if (strategy === "holo-repair") {
+    return document.querySelector("#repair-variant")?.value || "HoloRepair";
+  }
+  return strategyNamePrefixes[strategy] || strategy;
+}
+
 function nextExperimentName(strategy = currentStrategy()) {
-  const prefix = strategyNamePrefixes[strategy] || strategy;
+  const prefix = strategyPrefix(strategy);
   const pattern = new RegExp(`^${prefix}-(\\d+)$`, "i");
   const maximum = state.jobs.reduce((value, job) => {
     if (job.request.strategy !== strategy) return value;
+    if (strategy === "holo-repair" && job.request.repair_variant !== prefix) return value;
     const match = String(job.request.name || "").match(pattern);
     return match ? Math.max(value, Number(match[1])) : value;
   }, 0);
@@ -172,11 +188,14 @@ function syncStrategySelection() {
   const stock = strategy === "stock-transformer";
   const fk = strategy === "fk-stock";
   const holoLite = strategy === "holo-bnhmm-lite";
-  const holo = strategy === "holo-bnhmm" || holoLite;
+  const repair = strategy === "holo-repair";
+  const repairName = document.querySelector("#repair-variant")?.value || "HoloRepair";
+  const holo = strategy === "holo-bnhmm" || holoLite || repair;
   const bayesianHmm = strategy === "bnhmm" || holo;
   const neural = !fk;
   document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", strategy !== "bnhmm"));
   document.querySelectorAll(".holo-only").forEach(element => element.classList.toggle("hidden", !holo));
+  document.querySelectorAll(".repair-only").forEach(element => element.classList.toggle("hidden", !repair));
   document.querySelectorAll(".bayesian-hmm-only").forEach(element => element.classList.toggle("hidden", !bayesianHmm));
   document.querySelectorAll(".flow-only").forEach(element => element.classList.toggle("hidden", !bayesianHmm));
   document.querySelectorAll(".stock-only").forEach(element => element.classList.toggle("hidden", !stock));
@@ -194,7 +213,7 @@ function syncStrategySelection() {
   document.querySelector("#brand-subtitle").textContent = fk
     ? "FKStock · Bayesian Feynman-Kac model"
     : stock ? "StockTransformer · conservation language model"
-      : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} · 2D Bayesian flow field`
+      : holo ? `${repair ? repairName : holoLite ? "HoloLite" : "HoloBNHMM"} · 2D Bayesian flow field`
         : "BNHMM · Bayesian hidden-state model";
   document.querySelector("#state-section-title").textContent = stock || fk
     ? "每日价格-成交量密度态"
@@ -221,6 +240,20 @@ function setupDatasets(datasets) {
     const option = document.createElement("option");
     option.value = dataset.dataset_id;
     option.textContent = dataset.name;
+    return option;
+  }));
+}
+
+function setupRepairVariants(variants) {
+  const select = document.querySelector("#repair-variant");
+  select.replaceChildren(...(variants || []).map(variant => {
+    const option = document.createElement("option");
+    option.value = variant.name;
+    option.textContent = variant.implemented
+      ? `${variant.name} · 阶段 ${variant.stage}`
+      : `${variant.name} · 待前序验证`;
+    option.title = variant.description || "";
+    option.disabled = !variant.implemented;
     return option;
   }));
 }
@@ -263,7 +296,7 @@ function syncModelConstraints() {
   const strategy = currentStrategy();
   const fk = strategy === "fk-stock";
   const holoLite = strategy === "holo-bnhmm-lite";
-  const holo = strategy === "holo-bnhmm" || holoLite;
+  const holo = strategy === "holo-bnhmm" || holoLite || strategy === "holo-repair";
   const velocityField = document.querySelector("[name=velocity_bins]");
   const latentField = document.querySelector("[name=latent_states]");
   const transitionRankField = document.querySelector("[name=transition_rank]");
@@ -475,7 +508,9 @@ function renderJobList() {
   }
   renderHistoryEditor(activeIds);
   list.replaceChildren(...state.jobs.map(job => {
-    const strategy = ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock" })[job.request.strategy] || job.request.strategy;
+    const strategy = job.request.strategy === "holo-repair"
+      ? job.request.repair_variant
+      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock" })[job.request.strategy] || job.request.strategy;
     const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
     if (state.historyEditing) {
       const label = document.createElement("label");
@@ -539,7 +574,8 @@ function renderJob(job) {
   const stock = job.request.strategy === "stock-transformer";
   const fk = job.request.strategy === "fk-stock";
   const holoLite = job.request.strategy === "holo-bnhmm-lite";
-  const holo = job.request.strategy === "holo-bnhmm" || holoLite;
+  const repair = job.request.strategy === "holo-repair";
+  const holo = job.request.strategy === "holo-bnhmm" || holoLite || repair;
   const dataset = state.datasets.find(
     item => item.dataset_id === job.request.dataset_id,
   );
@@ -578,7 +614,9 @@ function renderJob(job) {
       : job.request.profile_protocol === "legacy-fixed-bins"
         ? "旧固定柱协议"
         : `${job.request.bin_width_bps} BP 可变日态（旧）`;
-  const modelName = holo ? (holoLite ? "HoloLite" : "HoloBNHMM") : "BNHMM";
+  const modelName = repair
+    ? job.request.repair_variant
+    : holo ? (holoLite ? "HoloLite" : "HoloBNHMM") : "BNHMM";
   const modelScope = ({
     "per-symbol": `逐标的独立 ${modelName}`,
     "sector-pooled": `${dataset?.name || job.request.dataset_id || "板块"}联合 ${modelName}`,
@@ -882,7 +920,7 @@ function renderArtifacts(job, artifacts) {
   setImage("residual-image", artifacts["residuals.png"], cache);
   setImage("calibration-image", artifacts["calibration_acf.png"], cache);
   const row = document.querySelector("#download-row");
-  const names = { "evaluation.json": "评估数据", "predictions.json": "OOS 预测", "fk-diagnostics.json": "FK 场诊断", "run-summary.json": "运行摘要" };
+  const names = { "evaluation.json": "评估数据", "predictions.json": "OOS 预测", "fk-diagnostics.json": "FK 场诊断", "run-summary.json": "运行摘要", "repair-stage-report.md": "阶段报告" };
   row.innerHTML = Object.entries(names).filter(([name]) => artifacts[name]).map(([name, label]) => `<a href="${artifacts[name]}" download>${label}</a>`).join("");
 }
 
@@ -947,6 +985,10 @@ function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
   document.querySelectorAll("[name=strategy]").forEach(field => field.addEventListener("change", changeStrategy));
+  document.querySelector("#repair-variant").addEventListener("change", () => {
+    setNextExperimentName("holo-repair");
+    syncStrategySelection();
+  });
   for (const name of ["velocity_bins", "holographic_volume_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial"]) {
     document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
   }
@@ -1050,6 +1092,7 @@ async function initialize() {
   setupEvents();
   state.config = await api("/api/config");
   setupDatasets(state.config.datasets);
+  setupRepairVariants(state.config.repair_variants);
   fillForm(state.config.defaults);
   setupDevices(state.config.devices);
   await refreshAll();

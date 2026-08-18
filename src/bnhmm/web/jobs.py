@@ -19,6 +19,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from ..config import HOLOGRAPHIC_FIELD_NAMES, HOLOGRAPHIC_LITE_FIELD_NAMES
+from ..repair import RepairVariantCatalog
 
 
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled", "interrupted"]
@@ -38,9 +39,11 @@ class WalkForwardJobRequest(BaseModel):
         "bnhmm",
         "holo-bnhmm",
         "holo-bnhmm-lite",
+        "holo-repair",
         "stock-transformer",
         "fk-stock",
     ] = "bnhmm"
+    repair_variant: str | None = None
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
@@ -163,6 +166,16 @@ class WalkForwardJobRequest(BaseModel):
             )
         return value
 
+    @field_validator("repair_variant")
+    @classmethod
+    def validate_repair_variant(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        variant = RepairVariantCatalog.resolve(value)
+        if variant.stage > 3:
+            raise ValueError(f"{variant.name} is waiting for predecessor validation")
+        return variant.name
+
     @model_validator(mode="after")
     def validate_relationships(self, info: ValidationInfo) -> "WalkForwardJobRequest":
         legacy = bool((info.context or {}).get("legacy_job"))
@@ -181,9 +194,24 @@ class WalkForwardJobRequest(BaseModel):
                 raise ValueError("unsupported current training scope")
             if self.training_scope == "sector-pooled" and not self.dataset_id:
                 raise ValueError("sector-pooled jobs require a sector dataset")
-            holographic = self.strategy in {"holo-bnhmm", "holo-bnhmm-lite"}
-            if self.strategy in {"holo-bnhmm", "holo-bnhmm-lite", "stock-transformer", "fk-stock"} and self.training_scope != "sector-pooled":
+            holographic = self.strategy in {
+                "holo-bnhmm",
+                "holo-bnhmm-lite",
+                "holo-repair",
+            }
+            sector_only = {
+                "holo-bnhmm",
+                "holo-bnhmm-lite",
+                "holo-repair",
+                "stock-transformer",
+                "fk-stock",
+            }
+            if self.strategy in sector_only and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
+            if self.strategy == "holo-repair" and self.repair_variant is None:
+                raise ValueError("holo-repair requires a named repair variant")
+            if self.strategy != "holo-repair" and self.repair_variant is not None:
+                raise ValueError("repair_variant is reserved for holo-repair")
             expected_profile = (
                 (
                     "price-volume-holographic-lite-v1"
@@ -226,20 +254,22 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("velocity_aggregation_minutes must divide 60")
         profile_channels = (
             self.holographic_volume_bins * len(self.holographic_fields)
-            if self.strategy in {"holo-bnhmm", "holo-bnhmm-lite"}
+            if self.strategy in {"holo-bnhmm", "holo-bnhmm-lite", "holo-repair"}
             else 4 + self.velocity_bins**2
         )
         if self.feature_mode == "legacy-entangled" and not legacy:
             raise ValueError("legacy-entangled is reserved for historical jobs")
         if (
             not legacy
-            and self.strategy in {"bnhmm", "holo-bnhmm", "holo-bnhmm-lite"}
+            and self.strategy
+            in {"bnhmm", "holo-bnhmm", "holo-bnhmm-lite", "holo-repair"}
             and self.latent_states < profile_channels
         ):
             raise ValueError("latent_states cannot be fewer than profile channels")
         if (
             not legacy
-            and self.strategy in {"bnhmm", "holo-bnhmm", "holo-bnhmm-lite"}
+            and self.strategy
+            in {"bnhmm", "holo-bnhmm", "holo-bnhmm-lite", "holo-repair"}
             and self.transition_rank > self.latent_states
         ):
             raise ValueError("transition_rank cannot exceed latent_states")
@@ -409,7 +439,7 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         "--seed",
         str(request.seed),
     ]
-    if request.strategy in {"holo-bnhmm", "holo-bnhmm-lite"}:
+    if request.strategy in {"holo-bnhmm", "holo-bnhmm-lite", "holo-repair"}:
         command.extend(
             (
                 "--profile-kind",
@@ -424,6 +454,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
                 str(request.holographic_conv_layers),
             )
         )
+    if request.repair_variant:
+        command.extend(("--repair-variant", request.repair_variant))
     if request.dataset_id:
         command.extend(("--dataset-id", request.dataset_id))
     if request.max_folds is not None:

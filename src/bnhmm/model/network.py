@@ -653,6 +653,8 @@ class BNHMMNetwork(nn.Module):
         feedforward_dim: int = 96,
         dropout: float = 0.1,
         max_sequence_length: int = 512,
+        repair_variant: str | None = None,
+        control_mode: str = "full",
     ) -> None:
         super().__init__()
         if latent_states < profile_channels:
@@ -667,6 +669,14 @@ class BNHMMNetwork(nn.Module):
             raise ValueError("transition rank must be between one and latent states")
         if not strong_bear_threshold < direction_threshold < strong_bull_threshold:
             raise ValueError("return regime thresholds must be ordered")
+        if control_mode not in {
+            "full",
+            "prior-only",
+            "metadata-only",
+            "image-only",
+            "shuffled-image",
+        }:
+            raise ValueError("unsupported Holo repair control mode")
         if not 0.0 <= auxiliary_gate_floor <= auxiliary_gate_initial < 1.0:
             raise ValueError("auxiliary gate values must satisfy 0 <= floor <= initial < 1")
         self.max_profile_bins = max_profile_bins
@@ -701,6 +711,8 @@ class BNHMMNetwork(nn.Module):
         self.strong_bull_threshold = float(strong_bull_threshold)
         self.max_sequence_length = max_sequence_length
         self.d_model = d_model
+        self.repair_variant = repair_variant
+        self.control_mode = control_mode
 
         if tokenizer_kind == "profile-motif":
             self.tokenizer = BayesianMotifTokenizer(
@@ -863,6 +875,29 @@ class BNHMMNetwork(nn.Module):
             profile_mask = torch.ones(
                 batch, sequence, bins, dtype=torch.bool, device=profiles.device
             )
+
+        if self.control_mode == "prior-only":
+            anchor = self.position_embedding.sum() * 0.0
+            context = profiles.new_zeros(batch, sequence, self.d_model) + anchor
+            latent = profiles.new_full(
+                (batch, sequence, self.latent_states), 1.0 / self.latent_states
+            ) * valid_mask.unsqueeze(-1)
+            return SinglePassOutput(
+                profiles.new_zeros(batch, sequence) + anchor,
+                profiles.new_zeros(batch, sequence) + anchor,
+                self.class_prior.clamp_min(1e-6).log().view(1, 1, -1).expand(
+                    batch, sequence, -1
+                ) + anchor,
+                latent,
+                context,
+                profiles.new_zeros(()) + anchor,
+            )
+        if self.control_mode == "metadata-only":
+            profiles = torch.zeros_like(profiles)
+        elif self.control_mode == "shuffled-image" and batch > 1:
+            profiles = profiles.roll(1, dims=0)
+            bin_coordinates = bin_coordinates.roll(1, dims=0)
+            profile_mask = profile_mask.roll(1, dims=0)
 
         tokens = self.tokenizer(
             profiles,
