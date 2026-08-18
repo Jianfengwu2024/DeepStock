@@ -7,7 +7,7 @@ import csv
 import json
 import math
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -18,7 +18,7 @@ from numpy.typing import NDArray
 from .config import HOLOGRAPHIC_FIELD_NAMES, ProfileConfig
 from .data.holographic import HolographicProfileBuilder
 from .data.source import DuckDBBarSource
-from .types import HolographicState
+from .types import BarBatch, HolographicState
 
 
 VISUAL_DATASET_PROTOCOL = "fixed-holographic-human-view-v1"
@@ -509,7 +509,42 @@ class VisualDatasetExporter:
             holographic_fields=HOLOGRAPHIC_FIELD_NAMES,
             feature_clip=self.config.feature_clip,
         )
-        return HolographicProfileBuilder(profile).build(bars)
+        states = HolographicProfileBuilder(profile).build(bars)
+        return self._attach_full_session_ohlc(states, bars)
+
+    @staticmethod
+    def _attach_full_session_ohlc(
+        states: Sequence[HolographicState], bars: BarBatch
+    ) -> list[HolographicState]:
+        """Keep flow on continuous trading bars but annotate full-session OHLC."""
+
+        sessions = bars.timestamp.astype("datetime64[D]")
+        by_session: dict[np.datetime64, tuple[float, float, float, float]] = {}
+        for session in np.unique(sessions):
+            indices = np.flatnonzero(sessions == session)
+            day = bars.take(indices)
+            by_session[session] = (
+                float(day.open[0]),
+                float(day.high.max()),
+                float(day.low.min()),
+                float(day.close[-1]),
+            )
+        result: list[HolographicState] = []
+        for state in states:
+            session = state.period_start.astype("datetime64[D]")
+            ohlc = by_session.get(session)
+            result.append(
+                state
+                if ohlc is None
+                else replace(
+                    state,
+                    start_price=ohlc[0],
+                    high_price=ohlc[1],
+                    low_price=ohlc[2],
+                    end_price=ohlc[3],
+                )
+            )
+        return result
 
     @staticmethod
     def _initialize_database(connection: sqlite3.Connection) -> None:

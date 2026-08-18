@@ -8,9 +8,10 @@ import numpy as np
 from PIL import Image
 
 from bnhmm.config import HOLOGRAPHIC_FIELD_COUNT
-from bnhmm.types import HolographicState
+from bnhmm.types import BarBatch, HolographicState
 from bnhmm.visual_dataset import (
     VisualDatasetConfig,
+    VisualDatasetExporter,
     rasterize_state,
     render_state_png,
     vector_length,
@@ -106,6 +107,29 @@ class VisualDatasetTest(unittest.TestCase):
                 self.assertEqual(image.size, (640, 360))
             with Image.open(second) as image:
                 self.assertEqual(image.size, (640, 360))
+
+    def test_full_session_ohlc_does_not_inherit_continuous_flow_filter(self) -> None:
+        state = sample_state()
+        bars = BarBatch(
+            symbol=state.symbol,
+            timestamp=np.asarray(
+                ["2025-06-03T09:30", "2025-06-03T09:31", "2025-06-03T15:00"],
+                dtype="datetime64[ns]",
+            ),
+            open=np.asarray([9.8, 10.1, 10.2]),
+            high=np.asarray([10.4, 10.2, 10.3]),
+            low=np.asarray([9.8, 10.0, 10.1]),
+            close=np.asarray([9.8, 10.2, 10.25]),
+            volume=np.asarray([100.0, 200.0, 300.0]),
+        )
+
+        attached = VisualDatasetExporter._attach_full_session_ohlc([state], bars)[0]
+
+        self.assertEqual(attached.start_price, 9.8)
+        self.assertEqual(attached.high_price, 10.4)
+        self.assertEqual(attached.low_price, 9.8)
+        self.assertEqual(attached.end_price, 10.25)
+        self.assertEqual(attached.anchor_price, state.anchor_price)
 
 
 if __name__ == "__main__":
