@@ -83,6 +83,7 @@ class SectorFlowRunResult:
     baselines: dict[str, dict[str, float]]
     latest_ranking: tuple[SourceProximityPosterior, ...]
     latest_water_state: dict[str, float]
+    excluded_symbols: tuple[str, ...]
 
 
 class SectorFlowPipeline:
@@ -94,13 +95,23 @@ class SectorFlowPipeline:
     ) -> SectorFlowRunResult:
         destination = Path(output_dir)
         destination.mkdir(parents=True, exist_ok=True)
-        batches = {
+        requested_batches = {
             symbol: source.fetch(symbol, "1m", self.config.start, self.config.end)
             for symbol in self.config.symbols
         }
-        if any(not len(batch) for batch in batches.values()):
-            missing = [symbol for symbol, batch in batches.items() if not len(batch)]
-            raise ValueError(f"sector symbols contain no one-minute bars: {missing}")
+        excluded_symbols = tuple(
+            symbol for symbol, batch in requested_batches.items() if not len(batch)
+        )
+        batches = {
+            symbol: batch
+            for symbol, batch in requested_batches.items()
+            if len(batch)
+        }
+        if len(batches) < 3:
+            raise ValueError(
+                "sector flow requires at least three symbols with one-minute bars "
+                f"in the requested period; excluded: {list(excluded_symbols)}"
+            )
         panel = SectorMinutePanelBuilder().build(batches)
         normalized = CausalSectorNormalizer(
             SectorNormalizationConfig(
@@ -178,6 +189,7 @@ class SectorFlowPipeline:
             tuple(fold_summaries),
             latest_ranking,
             latest_water_state,
+            excluded_symbols,
             np.asarray(all_factor_times, dtype="datetime64[ns]"),
             np.asarray(all_factor_means, dtype=np.float64),
         )
@@ -188,6 +200,7 @@ class SectorFlowPipeline:
             baselines=baselines,
             latest_ranking=latest_ranking,
             latest_water_state=latest_water_state,
+            excluded_symbols=excluded_symbols,
         )
 
     def _run_fold(self, panel, normalized, fold: SectorFlowFold):
@@ -374,6 +387,7 @@ class SectorFlowPipeline:
         folds: tuple[dict[str, object], ...],
         ranking: tuple[SourceProximityPosterior, ...],
         latest_water_state: dict[str, float],
+        excluded_symbols: tuple[str, ...],
         factor_times: np.ndarray,
         factor_mean: np.ndarray,
     ) -> None:
@@ -395,6 +409,7 @@ class SectorFlowPipeline:
             "baselines": baselines,
             "latest_water_state": latest_water_state,
             "latest_ranking": [asdict(item) for item in ranking],
+            "excluded_symbols": list(excluded_symbols),
         }
         (destination / "evaluation.json").write_text(
             json.dumps(evaluation, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -408,6 +423,7 @@ class SectorFlowPipeline:
             "folds": list(folds),
             "latest_water_state": latest_water_state,
             "latest_ranking": [asdict(item) for item in ranking],
+            "excluded_symbols": list(excluded_symbols),
         }
         (destination / "run-summary.json").write_text(
             json.dumps(run_summary, ensure_ascii=False, indent=2),
@@ -439,6 +455,7 @@ class SectorFlowPipeline:
             f"- Model version: `{MODEL_VERSION}`",
             f"- Predictions: {len(predictions)}",
             f"- Folds: {len(folds)}",
+            f"- Symbols excluded for missing period data: {len(excluded_symbols)}",
             f"- Brier score: {metrics['brier_score']:.6f}",
             f"- Log loss: {metrics['log_loss']:.6f}",
             f"- Rank IC: {metrics['rank_ic']:.6f}",

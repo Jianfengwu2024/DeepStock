@@ -66,6 +66,62 @@ def synthetic_sector() -> dict[str, BarBatch]:
 
 
 class SectorFlowPipelineTests(unittest.TestCase):
+    def test_symbols_without_bars_are_excluded_from_requested_period(self) -> None:
+        batches = synthetic_sector()
+        missing_symbol = tuple(batches)[-1]
+        batches[missing_symbol] = BarBatch.empty(missing_symbol)
+        source = MemoryBarSource(batches)
+        config = SectorFlowConfig(
+            symbols=tuple(source.batches),
+            start="2025-01-01",
+            end="2025-03-01",
+            normalization_lookback_sessions=5,
+            normalization_minimum_observations=2,
+            minimum_train_sessions=5,
+            maximum_lag_minutes=3,
+            minimum_attribution_rows=20,
+            path_windows=(5,),
+            ranking_window=5,
+            evaluation_horizon_minutes=3,
+            top_k=1,
+            monte_carlo_samples=200,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = SectorFlowPipeline(config).run(source, directory)
+            evaluation = Path(directory, "evaluation.json").read_text(
+                encoding="utf-8"
+            )
+
+        self.assertEqual(result.excluded_symbols, (missing_symbol,))
+        self.assertNotIn(missing_symbol, {item.symbol for item in result.predictions})
+        self.assertIn(missing_symbol, evaluation)
+
+    def test_fewer_than_three_symbols_with_bars_is_rejected(self) -> None:
+        batches = synthetic_sector()
+        for symbol in tuple(batches)[2:]:
+            batches[symbol] = BarBatch.empty(symbol)
+        source = MemoryBarSource(batches)
+        config = SectorFlowConfig(
+            symbols=tuple(source.batches),
+            start="2025-01-01",
+            end="2025-03-01",
+            normalization_lookback_sessions=5,
+            normalization_minimum_observations=2,
+            minimum_train_sessions=5,
+            maximum_lag_minutes=3,
+            minimum_attribution_rows=20,
+            path_windows=(5,),
+            ranking_window=5,
+            evaluation_horizon_minutes=3,
+            top_k=1,
+            monte_carlo_samples=200,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "at least three"):
+                SectorFlowPipeline(config).run(source, directory)
+
     def test_detailed_ranking_runs_only_once_per_fold(self) -> None:
         source = MemoryBarSource(synthetic_sector())
         config = SectorFlowConfig(
