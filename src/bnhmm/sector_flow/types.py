@@ -76,3 +76,53 @@ class NormalizedSectorPanel:
         if np.any(self.activity_valid & ~np.isfinite(self.activity)):
             raise ValueError("valid normalized activities must be finite")
 
+
+@dataclass(frozen=True, slots=True)
+class SectorFactorParameters:
+    loadings: NDArray[np.float64]
+    residual_variance: NDArray[np.float64]
+    persistence: float
+    process_variance: float
+
+    def __post_init__(self) -> None:
+        if self.loadings.ndim != 1 or self.residual_variance.shape != self.loadings.shape:
+            raise ValueError("factor parameters must contain one value per symbol")
+        if np.any(self.residual_variance <= 0.0) or self.process_variance <= 0.0:
+            raise ValueError("factor variances must be positive")
+        if not -0.999 <= self.persistence <= 0.999:
+            raise ValueError("factor persistence is outside the stable range")
+
+
+@dataclass(frozen=True, slots=True)
+class SectorFlowPosterior:
+    symbols: tuple[str, ...]
+    timestamps: NDArray[np.datetime64]
+    factor_mean: NDArray[np.float64]
+    factor_variance: NDArray[np.float64]
+    leave_one_out_mean: NDArray[np.float64]
+    leave_one_out_variance: NDArray[np.float64]
+    activity: NDArray[np.float64]
+    breadth: NDArray[np.float64]
+    coherence: NDArray[np.float64]
+    dispersion: NDArray[np.float64]
+    flow_strength: NDArray[np.float64]
+    valid: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        rows = len(self.timestamps)
+        if self.leave_one_out_mean.shape != (rows, len(self.symbols)):
+            raise ValueError("leave-one-out means do not match the sector panel")
+        if self.leave_one_out_variance.shape != self.leave_one_out_mean.shape:
+            raise ValueError("leave-one-out variances do not match their means")
+        vectors = (
+            self.factor_mean,
+            self.factor_variance,
+            self.activity,
+            self.breadth,
+            self.coherence,
+            self.dispersion,
+            self.flow_strength,
+            self.valid,
+        )
+        if any(item.shape != (rows,) for item in vectors):
+            raise ValueError("sector-flow posterior vectors must match timestamps")
