@@ -86,6 +86,53 @@ def _migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sector_flow_walk_forward(args: argparse.Namespace) -> int:
+    from .sector_flow.pipeline import SectorFlowConfig, SectorFlowPipeline
+
+    source = DuckDBBarSource(args.duckdb_path)
+    symbols = tuple(
+        item.strip() for item in args.symbols.split(",") if item.strip()
+    )
+    if not symbols:
+        symbols = tuple(source.list_symbols(args.symbol_limit))
+    path_windows = tuple(
+        int(item.strip())
+        for item in args.path_windows.split(",")
+        if item.strip()
+    )
+    config = SectorFlowConfig(
+        symbols=symbols,
+        start=args.start,
+        end=args.end,
+        normalization_lookback_sessions=args.normalization_lookback_sessions,
+        normalization_minimum_observations=args.normalization_minimum_observations,
+        minimum_train_sessions=args.minimum_train_sessions,
+        maximum_lag_minutes=args.maximum_lag_minutes,
+        minimum_attribution_rows=args.minimum_attribution_rows,
+        factor_process_variance=args.factor_process_variance,
+        path_windows=path_windows,
+        ranking_window=args.ranking_window,
+        evaluation_horizon_minutes=args.evaluation_horizon_minutes,
+        top_k=args.top_k,
+        transaction_cost_bps=args.transaction_cost_bps,
+        monte_carlo_samples=args.monte_carlo_samples,
+        random_seed=args.seed,
+        max_folds=args.max_folds,
+    )
+    result = SectorFlowPipeline(config).run(source, args.output_dir)
+    summary = {
+        "model_version": "sector-flow-bayes-v1",
+        "dataset_id": args.dataset_id,
+        "symbols": len(symbols),
+        "folds": len(result.folds),
+        "predictions": len(result.predictions),
+        "metrics": result.metrics,
+        "output_dir": args.output_dir,
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _train(args: argparse.Namespace) -> int:
     import torch
 
@@ -1247,6 +1294,36 @@ def build_parser() -> argparse.ArgumentParser:
     migrate = subparsers.add_parser("migrate")
     migrate.add_argument("--dsn", required=True)
     migrate.set_defaults(handler=_migrate)
+
+    sector_flow = subparsers.add_parser("sector-flow-walk-forward")
+    sector_flow.add_argument("--duckdb-path", required=True)
+    sector_flow.add_argument("--symbols", default="")
+    sector_flow.add_argument("--symbol-limit", type=int, default=100)
+    sector_flow.add_argument("--dataset-id")
+    sector_flow.add_argument("--start", required=True)
+    sector_flow.add_argument("--end", required=True)
+    sector_flow.add_argument("--output-dir", required=True)
+    sector_flow.add_argument(
+        "--normalization-lookback-sessions", type=int, default=20
+    )
+    sector_flow.add_argument(
+        "--normalization-minimum-observations", type=int, default=10
+    )
+    sector_flow.add_argument("--minimum-train-sessions", type=int, default=60)
+    sector_flow.add_argument("--maximum-lag-minutes", type=int, default=30)
+    sector_flow.add_argument("--minimum-attribution-rows", type=int, default=120)
+    sector_flow.add_argument("--factor-process-variance", type=float)
+    sector_flow.add_argument("--path-windows", default="5,15,30,60")
+    sector_flow.add_argument("--ranking-window", type=int, default=60)
+    sector_flow.add_argument(
+        "--evaluation-horizon-minutes", type=int, default=30
+    )
+    sector_flow.add_argument("--top-k", type=int, default=10)
+    sector_flow.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    sector_flow.add_argument("--monte-carlo-samples", type=int, default=1000)
+    sector_flow.add_argument("--max-folds", type=int)
+    sector_flow.add_argument("--seed", type=int, default=20260820)
+    sector_flow.set_defaults(handler=_sector_flow_walk_forward)
 
     train = subparsers.add_parser("train")
     train.add_argument("--duckdb-path", required=True)

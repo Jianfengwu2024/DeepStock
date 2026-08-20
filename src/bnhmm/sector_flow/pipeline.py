@@ -1,0 +1,441 @@
+"""End-to-end monthly walk-forward orchestration for SectorFlowBayes."""
+
+from __future__ import annotations
+
+import csv
+import json
+from dataclasses import asdict, dataclass
+from math import erf, sqrt
+from pathlib import Path
+from typing import Protocol
+
+import numpy as np
+
+from ..types import BarBatch
+from .attribution import AttributionConfig, FlowAttributionModel
+from .evaluation import (
+    RankingObservation,
+    SectorFlowFold,
+    SectorFlowPrediction,
+    build_monthly_folds,
+    evaluate_predictions,
+    evaluate_ranking_observations,
+    predictions_as_json,
+)
+from .factor import BayesianSectorFactor, SectorFactorConfig
+from .normalization import CausalSectorNormalizer, SectorNormalizationConfig
+from .panel import SectorMinutePanelBuilder
+from .ranking import PathEfficiencyAnalyzer, RankingConfig, SourceProximityRanker
+from .types import SourceProximityPosterior
+
+
+MODEL_VERSION = "sector-flow-bayes-v1"
+
+
+class MinuteBarSource(Protocol):
+    def fetch(
+        self, symbol: str, timeframe: str, start: str, end: str
+    ) -> BarBatch: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SectorFlowConfig:
+    symbols: tuple[str, ...]
+    start: str
+    end: str
+    normalization_lookback_sessions: int = 20
+    normalization_minimum_observations: int = 10
+    minimum_train_sessions: int = 60
+    maximum_lag_minutes: int = 30
+    minimum_attribution_rows: int = 120
+    factor_process_variance: float | None = None
+    path_windows: tuple[int, ...] = (5, 15, 30, 60)
+    ranking_window: int = 60
+    evaluation_horizon_minutes: int = 30
+    top_k: int = 10
+    transaction_cost_bps: float = 10.0
+    monte_carlo_samples: int = 1_000
+    random_seed: int = 20260820
+    max_folds: int | None = None
+
+    def __post_init__(self) -> None:
+        if len(self.symbols) < 3 or len(set(self.symbols)) != len(self.symbols):
+            raise ValueError("sector flow requires at least three unique symbols")
+        if not self.start or not self.end or self.start >= self.end:
+            raise ValueError("sector flow date range is invalid")
+        if self.minimum_train_sessions < self.normalization_minimum_observations:
+            raise ValueError("training history cannot be shorter than normalization history")
+        if self.maximum_lag_minutes < 0 or self.minimum_attribution_rows < 2:
+            raise ValueError("attribution settings are invalid")
+        if self.evaluation_horizon_minutes < 1 or self.top_k < 1:
+            raise ValueError("evaluation settings are invalid")
+        if self.transaction_cost_bps < 0.0:
+            raise ValueError("transaction cost cannot be negative")
+        if self.monte_carlo_samples < 100:
+            raise ValueError("at least 100 posterior draws are required")
+
+
+@dataclass(frozen=True, slots=True)
+class SectorFlowRunResult:
+    folds: tuple[dict[str, object], ...]
+    predictions: tuple[SectorFlowPrediction, ...]
+    metrics: dict[str, float | int]
+    baselines: dict[str, dict[str, float]]
+    latest_ranking: tuple[SourceProximityPosterior, ...]
+
+
+class SectorFlowPipeline:
+    def __init__(self, config: SectorFlowConfig) -> None:
+        self.config = config
+
+    def run(
+        self, source: MinuteBarSource, output_dir: str | Path
+    ) -> SectorFlowRunResult:
+        destination = Path(output_dir)
+        destination.mkdir(parents=True, exist_ok=True)
+        batches = {
+            symbol: source.fetch(symbol, "1m", self.config.start, self.config.end)
+            for symbol in self.config.symbols
+        }
+        if any(not len(batch) for batch in batches.values()):
+            missing = [symbol for symbol, batch in batches.items() if not len(batch)]
+            raise ValueError(f"sector symbols contain no one-minute bars: {missing}")
+        panel = SectorMinutePanelBuilder().build(batches)
+        normalized = CausalSectorNormalizer(
+            SectorNormalizationConfig(
+                lookback_sessions=self.config.normalization_lookback_sessions,
+                minimum_observations=self.config.normalization_minimum_observations,
+            )
+        ).transform(panel)
+        folds = build_monthly_folds(
+            panel.timestamps,
+            minimum_train_sessions=self.config.minimum_train_sessions,
+            max_folds=self.config.max_folds,
+        )
+        if not folds:
+            raise ValueError("date range does not produce a monthly sample-out fold")
+        predictions: list[SectorFlowPrediction] = []
+        fold_summaries: list[dict[str, object]] = []
+        latest_ranking: tuple[SourceProximityPosterior, ...] = ()
+        all_factor_means: list[float] = []
+        all_factor_times: list[np.datetime64] = []
+        baseline_observations: dict[str, list[RankingObservation]] = {
+            name: []
+            for name in (
+                "random",
+                "momentum",
+                "relative_volume",
+                "path_efficiency",
+                "static_beta",
+            )
+        }
+
+        for fold in folds:
+            (
+                fold_predictions,
+                fold_ranking,
+                fold_baselines,
+                factor_mean,
+                factor_times,
+                summary,
+            ) = (
+                self._run_fold(panel, normalized, fold)
+            )
+            predictions.extend(fold_predictions)
+            latest_ranking = fold_ranking or latest_ranking
+            all_factor_means.extend(factor_mean)
+            all_factor_times.extend(factor_times)
+            fold_summaries.append(summary)
+            for name, observations in fold_baselines.items():
+                baseline_observations[name].extend(observations)
+        if not predictions:
+            raise ValueError("walk-forward folds produced no evaluable predictions")
+        ordered = tuple(
+            sorted(predictions, key=lambda item: (item.signal_time, item.symbol))
+        )
+        metrics = evaluate_predictions(
+            ordered,
+            top_k=self.config.top_k,
+            transaction_cost_bps=self.config.transaction_cost_bps,
+        )
+        baselines = {
+            name: evaluate_ranking_observations(
+                observations,
+                top_k=self.config.top_k,
+                transaction_cost_bps=self.config.transaction_cost_bps,
+            )
+            for name, observations in baseline_observations.items()
+        }
+        self._write_artifacts(
+            destination,
+            ordered,
+            metrics,
+            baselines,
+            tuple(fold_summaries),
+            latest_ranking,
+            np.asarray(all_factor_times, dtype="datetime64[ns]"),
+            np.asarray(all_factor_means, dtype=np.float64),
+        )
+        return SectorFlowRunResult(
+            folds=tuple(fold_summaries),
+            predictions=ordered,
+            metrics=metrics,
+            baselines=baselines,
+            latest_ranking=latest_ranking,
+        )
+
+    def _run_fold(self, panel, normalized, fold: SectorFlowFold):
+        usable_training_rows = fold.training_rows[
+            np.sum(normalized.valid[fold.training_rows], axis=1) >= 3
+        ]
+        factor_model = BayesianSectorFactor(
+            SectorFactorConfig(
+                process_variance=self.config.factor_process_variance,
+                minimum_symbols=min(5, len(panel.symbols)),
+            )
+        )
+        factor_parameters = factor_model.fit(normalized, usable_training_rows)
+        flow = factor_model.filter(normalized, factor_parameters)
+        attribution_model = FlowAttributionModel(
+            AttributionConfig(
+                max_lag_minutes=self.config.maximum_lag_minutes,
+                minimum_rows=self.config.minimum_attribution_rows,
+            )
+        )
+        attribution_parameters = attribution_model.fit(
+            normalized, flow, fold.training_rows
+        )
+        attribution_summary = attribution_model.summarize(attribution_parameters)
+        attribution = attribution_model.score(
+            normalized, flow, attribution_parameters
+        )
+        analyzer = PathEfficiencyAnalyzer(self.config.path_windows)
+        ranker = SourceProximityRanker(
+            RankingConfig(
+                windows=self.config.path_windows,
+                ranking_window=self.config.ranking_window,
+                monte_carlo_samples=self.config.monte_carlo_samples,
+                random_seed=self.config.random_seed + fold.index * 10_000,
+            )
+        )
+        predictions: list[SectorFlowPrediction] = []
+        baseline_observations: dict[str, list[RankingObservation]] = {
+            name: []
+            for name in (
+                "random",
+                "momentum",
+                "relative_volume",
+                "path_efficiency",
+                "static_beta",
+            )
+        }
+        random = np.random.default_rng(self.config.random_seed + fold.index)
+        latest_ranking: tuple[SourceProximityPosterior, ...] = ()
+        horizon = self.config.evaluation_horizon_minutes
+        for row in fold.test_rows:
+            target_row = int(row) + horizon
+            if target_row >= len(panel.timestamps) or int(row) + 1 >= len(panel.timestamps):
+                continue
+            expected_target = panel.timestamps[row] + np.timedelta64(horizon, "m")
+            if panel.timestamps[target_row] != expected_target:
+                continue
+            if not flow.valid[row]:
+                continue
+            paths = analyzer.compute(
+                normalized,
+                flow,
+                attribution,
+                endpoint=int(row),
+            )
+            ranking = ranker.rank(paths, attribution_summary)
+            latest_ranking = ranking
+            ranking_by_symbol = {item.symbol: item for item in ranking}
+            path_by_symbol = {item.symbol: item for item in paths}
+            summary_by_symbol = {item.symbol: item for item in attribution_summary}
+            for column, symbol in enumerate(panel.symbols):
+                if not (
+                    panel.valid[row, column]
+                    and panel.valid[target_row, column]
+                    and attribution.valid[row, column]
+                ):
+                    continue
+                predicted_scale = normalized.velocity_scale[row, column]
+                if not np.isfinite(predicted_scale):
+                    continue
+                predicted_mean = attribution.response_mean[row, column] * predicted_scale
+                predicted_variance = max(
+                    attribution.response_variance[row, column]
+                    * predicted_scale**2,
+                    1e-12,
+                )
+                predicted_std = sqrt(predicted_variance)
+                direction_probability = self._normal_cdf(
+                    predicted_mean / predicted_std
+                )
+                realized_return = float(
+                    np.log(
+                        panel.close[target_row, column]
+                        / panel.close[row, column]
+                    )
+                )
+                detail = summary_by_symbol[symbol]
+                predictions.append(
+                    SectorFlowPrediction(
+                        symbol=symbol,
+                        signal_time=panel.timestamps[row],
+                        available_at=panel.timestamps[int(row) + 1],
+                        training_cutoff=fold.test_start,
+                        model_version=MODEL_VERSION,
+                        fold=fold.index,
+                        source_probability=ranking_by_symbol[
+                            symbol
+                        ].source_proximity_probability,
+                        direction_probability=direction_probability,
+                        realized_return=realized_return,
+                        interval_lower=predicted_mean - 1.96 * predicted_std,
+                        interval_upper=predicted_mean + 1.96 * predicted_std,
+                        leader_horizon_minutes=detail.leader_horizon_minutes,
+                        response_delay_minutes=detail.response_delay_minutes,
+                    )
+                )
+                baseline_scores = {
+                    "random": float(random.random()),
+                    "momentum": float(normalized.velocity[row, column]),
+                    "relative_volume": float(normalized.activity[row, column]),
+                    "path_efficiency": path_by_symbol[symbol]
+                    .window(self.config.ranking_window)
+                    .efficiency,
+                    "static_beta": float(
+                        factor_parameters.loadings[column] * flow.factor_mean[row]
+                    ),
+                }
+                for name, score in baseline_scores.items():
+                    baseline_observations[name].append(
+                        RankingObservation(
+                            symbol=symbol,
+                            signal_time=panel.timestamps[row],
+                            score=score,
+                            realized_return=realized_return,
+                        )
+                    )
+        test_valid = fold.test_rows[flow.valid[fold.test_rows]]
+        summary = {
+            "fold": fold.index,
+            "training_cutoff": str(fold.test_start),
+            "test_end": str(fold.test_end),
+            "training_rows": int(len(fold.training_rows)),
+            "usable_training_rows": int(len(usable_training_rows)),
+            "test_rows": int(len(fold.test_rows)),
+            "prediction_count": len(predictions),
+            "factor_persistence": factor_parameters.persistence,
+            "factor_process_variance": factor_parameters.process_variance,
+        }
+        return (
+            predictions,
+            latest_ranking,
+            baseline_observations,
+            flow.factor_mean[test_valid].tolist(),
+            panel.timestamps[test_valid].tolist(),
+            summary,
+        )
+
+    def _write_artifacts(
+        self,
+        destination: Path,
+        predictions: tuple[SectorFlowPrediction, ...],
+        metrics: dict[str, float | int],
+        baselines: dict[str, dict[str, float]],
+        folds: tuple[dict[str, object], ...],
+        ranking: tuple[SourceProximityPosterior, ...],
+        factor_times: np.ndarray,
+        factor_mean: np.ndarray,
+    ) -> None:
+        payload = predictions_as_json(predictions)
+        (destination / "predictions.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        with (destination / "predictions.csv").open(
+            "w", encoding="utf-8", newline=""
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(payload[0]))
+            writer.writeheader()
+            writer.writerows(payload)
+        evaluation = {
+            "model_version": MODEL_VERSION,
+            "config": asdict(self.config),
+            "folds": list(folds),
+            "metrics": metrics,
+            "baselines": baselines,
+        }
+        (destination / "evaluation.json").write_text(
+            json.dumps(evaluation, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        with (destination / "ranking.csv").open(
+            "w", encoding="utf-8", newline=""
+        ) as handle:
+            fields = (
+                "symbol",
+                "source_proximity_probability",
+                "lead_or_response_probability",
+                "coupling_probability",
+                "efficiency_probability",
+                "low_residual_probability",
+                "activity_confirmation_probability",
+                "leader_probability",
+                "response_probability",
+            )
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for item in ranking:
+                row = asdict(item)
+                row.pop("path_metrics", None)
+                writer.writerow({field: row[field] for field in fields})
+        report = [
+            "# SectorFlowBayes Walk-Forward Report",
+            "",
+            f"- Model version: `{MODEL_VERSION}`",
+            f"- Predictions: {len(predictions)}",
+            f"- Folds: {len(folds)}",
+            f"- Brier score: {metrics['brier_score']:.6f}",
+            f"- Log loss: {metrics['log_loss']:.6f}",
+            f"- Rank IC: {metrics['rank_ic']:.6f}",
+            f"- Net Top-K minus Bottom-K return: {metrics['net_top_bottom_return']:.6f}",
+            f"- Posterior coverage: {metrics['posterior_coverage']:.6f}",
+            "",
+            "## Baseline comparison",
+            "",
+            "| Baseline | Rank IC | Net Top-Bottom |",
+            "| --- | ---: | ---: |",
+            *[
+                f"| {name} | {value['rank_ic']:.6f} | {value['net_top_bottom_return']:.6f} |"
+                for name, value in baselines.items()
+            ],
+            "",
+            "All folds use expanding history, frozen monthly parameters, causal minute filtering, and next-minute availability.",
+        ]
+        (destination / "sector-flow-report.md").write_text(
+            "\n".join(report) + "\n", encoding="utf-8"
+        )
+        self._plot(destination / "sector-flow.png", factor_times, factor_mean)
+
+    @staticmethod
+    def _plot(path: Path, timestamps: np.ndarray, factor: np.ndarray) -> None:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        from matplotlib import pyplot as plt
+
+        figure, axis = plt.subplots(figsize=(12, 4))
+        axis.plot(timestamps, factor, color="#176B87", linewidth=0.8)
+        axis.axhline(0.0, color="#888888", linewidth=0.7)
+        axis.set_title("Causal sector flow posterior mean")
+        axis.set_ylabel("normalized flow")
+        axis.grid(alpha=0.2)
+        figure.autofmt_xdate()
+        figure.tight_layout()
+        figure.savefig(path, dpi=140)
+        plt.close(figure)
+
+    @staticmethod
+    def _normal_cdf(value: float) -> float:
+        return 0.5 * (1.0 + erf(value / sqrt(2.0)))

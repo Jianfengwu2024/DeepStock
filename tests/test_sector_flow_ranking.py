@@ -99,6 +99,23 @@ class PathEfficiencyAnalyzerTests(unittest.TestCase):
         self.assertEqual(result.window(15).valid_minutes, 10)
         self.assertAlmostEqual(result.window(15).efficiency, 1.0)
 
+    def test_endpoint_metrics_ignore_future_rows(self) -> None:
+        values = np.full((80, 1), 0.01)
+        panel, flow, attribution = ranking_fixture(values)
+        original = PathEfficiencyAnalyzer().compute(
+            panel, flow, attribution, endpoint=59
+        )[0]
+        changed_values = values.copy()
+        changed_values[60:] = -10.0
+        changed_panel, changed_flow, changed_attribution = ranking_fixture(
+            changed_values
+        )
+        changed = PathEfficiencyAnalyzer().compute(
+            changed_panel, changed_flow, changed_attribution, endpoint=59
+        )[0]
+
+        self.assertEqual(original, changed)
+
 
 class SourceProximityRankerTests(unittest.TestCase):
     def test_joint_posterior_is_reproducible_and_exposes_components(self) -> None:

@@ -2,6 +2,7 @@
 
 from .attribution import AttributionConfig, FlowAttributionModel
 from .panel import SectorMinutePanelBuilder
+from .pipeline import SectorFlowConfig, SectorFlowPipeline, SectorFlowRunResult
 from .factor import BayesianSectorFactor, SectorFactorConfig
 from .normalization import CausalSectorNormalizer, SectorNormalizationConfig
 from .ranking import (
@@ -35,7 +36,10 @@ __all__ = [
     "RankingConfig",
     "SectorFactorConfig",
     "SectorFactorParameters",
+    "SectorFlowConfig",
+    "SectorFlowPipeline",
     "SectorFlowPosterior",
+    "SectorFlowRunResult",
     "SectorMinutePanel",
     "SectorMinutePanelBuilder",
     "SectorNormalizationConfig",

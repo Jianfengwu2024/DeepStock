@@ -54,6 +54,8 @@ class PathEfficiencyAnalyzer:
         panel: NormalizedSectorPanel,
         flow: SectorFlowPosterior,
         attribution: FlowAttributionPosterior,
+        *,
+        endpoint: int | None = None,
     ) -> tuple[StockPathMetrics, ...]:
         if panel.symbols != flow.symbols or panel.symbols != attribution.symbols:
             raise ValueError("path inputs do not share the same symbols")
@@ -61,10 +63,20 @@ class PathEfficiencyAnalyzer:
             raise ValueError("path panel and flow timestamps do not align")
         if not np.array_equal(panel.timestamps, attribution.timestamps):
             raise ValueError("path panel and attribution timestamps do not align")
+        resolved_endpoint = len(panel.timestamps) - 1 if endpoint is None else endpoint
+        if not 0 <= resolved_endpoint < len(panel.timestamps):
+            raise ValueError("path endpoint is outside the panel")
         output: list[StockPathMetrics] = []
         for symbol, name in enumerate(panel.symbols):
             metrics = tuple(
-                self._window_metrics(panel, flow, attribution, symbol, minutes)
+                self._window_metrics(
+                    panel,
+                    flow,
+                    attribution,
+                    symbol,
+                    minutes,
+                    resolved_endpoint,
+                )
                 for minutes in self.windows
             )
             output.append(StockPathMetrics(symbol=name, windows=metrics))
@@ -77,13 +89,15 @@ class PathEfficiencyAnalyzer:
         attribution: FlowAttributionPosterior,
         symbol: int,
         minutes: int,
+        endpoint: int,
     ) -> PathWindowMetrics:
-        start = max(0, len(panel.timestamps) - minutes)
-        raw = panel.raw_velocity[start:, symbol]
-        observed = panel.velocity[start:, symbol]
-        sector = flow.leave_one_out_mean[start:, symbol]
-        response = attribution.response_mean[start:, symbol]
-        valid = panel.valid[start:, symbol] & flow.valid[start:]
+        end = endpoint + 1
+        start = max(0, end - minutes)
+        raw = panel.raw_velocity[start:end, symbol]
+        observed = panel.velocity[start:end, symbol]
+        sector = flow.leave_one_out_mean[start:end, symbol]
+        response = attribution.response_mean[start:end, symbol]
+        valid = panel.valid[start:end, symbol] & flow.valid[start:end]
         values = raw[valid]
         path_length = float(np.sum(np.abs(values)))
         efficiency = (
@@ -112,11 +126,11 @@ class PathEfficiencyAnalyzer:
                     & (prior_sign != current_sign)
                 )
             )
-        activity_valid = valid & panel.activity_valid[start:, symbol]
+        activity_valid = valid & panel.activity_valid[start:end, symbol]
         activity_confirmation = (
             float(
                 np.mean(
-                    (panel.activity[start:, symbol][activity_valid] >= 1.0)
+                    (panel.activity[start:end, symbol][activity_valid] >= 1.0)
                     & (
                         direction[activity_valid]
                         == sector_direction[activity_valid]
@@ -126,7 +140,7 @@ class PathEfficiencyAnalyzer:
             if np.any(activity_valid)
             else 0.0
         )
-        residual_valid = valid & attribution.valid[start:, symbol]
+        residual_valid = valid & attribution.valid[start:end, symbol]
         if np.any(residual_valid):
             residual = observed[residual_valid] - response[residual_valid]
             total_energy = float(np.sum(np.square(observed[residual_valid])))
