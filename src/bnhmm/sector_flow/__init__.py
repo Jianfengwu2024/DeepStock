@@ -1,7 +1,13 @@
 """Bayesian sector-flow inference from synchronized one-minute bars."""
 
 from .panel import SectorMinutePanelBuilder
-from .types import SectorMinutePanel
+from .normalization import CausalSectorNormalizer, SectorNormalizationConfig
+from .types import NormalizedSectorPanel, SectorMinutePanel
 
-__all__ = ["SectorMinutePanel", "SectorMinutePanelBuilder"]
-
+__all__ = [
+    "CausalSectorNormalizer",
+    "NormalizedSectorPanel",
+    "SectorMinutePanel",
+    "SectorMinutePanelBuilder",
+    "SectorNormalizationConfig",
+]

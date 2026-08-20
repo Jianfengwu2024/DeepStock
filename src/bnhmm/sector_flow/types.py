@@ -46,3 +46,33 @@ class SectorMinutePanel:
         return returns, valid
 
 
+@dataclass(frozen=True, slots=True)
+class NormalizedSectorPanel:
+    symbols: tuple[str, ...]
+    timestamps: NDArray[np.datetime64]
+    raw_velocity: NDArray[np.float64]
+    velocity: NDArray[np.float64]
+    activity: NDArray[np.float64]
+    velocity_scale: NDArray[np.float64]
+    volume_baseline: NDArray[np.float64]
+    valid: NDArray[np.bool_]
+    activity_valid: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        shape = (len(self.timestamps), len(self.symbols))
+        arrays = (
+            self.raw_velocity,
+            self.velocity,
+            self.activity,
+            self.velocity_scale,
+            self.volume_baseline,
+            self.valid,
+            self.activity_valid,
+        )
+        if any(item.shape != shape for item in arrays):
+            raise ValueError("normalized sector arrays must share panel shape")
+        if np.any(self.valid & ~np.isfinite(self.velocity)):
+            raise ValueError("valid normalized velocities must be finite")
+        if np.any(self.activity_valid & ~np.isfinite(self.activity)):
+            raise ValueError("valid normalized activities must be finite")
+
