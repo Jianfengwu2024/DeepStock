@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -10,6 +11,7 @@ from bnhmm.sector_flow.pipeline import (
     SectorFlowConfig,
     SectorFlowPipeline,
 )
+from bnhmm.sector_flow.ranking import PathEfficiencyAnalyzer, SourceProximityRanker
 from bnhmm.types import BarBatch
 
 
@@ -64,6 +66,46 @@ def synthetic_sector() -> dict[str, BarBatch]:
 
 
 class SectorFlowPipelineTests(unittest.TestCase):
+    def test_detailed_ranking_runs_only_once_per_fold(self) -> None:
+        source = MemoryBarSource(synthetic_sector())
+        config = SectorFlowConfig(
+            symbols=tuple(source.batches),
+            start="2025-01-01",
+            end="2025-03-01",
+            normalization_lookback_sessions=5,
+            normalization_minimum_observations=2,
+            minimum_train_sessions=5,
+            maximum_lag_minutes=3,
+            minimum_attribution_rows=20,
+            path_windows=(5,),
+            ranking_window=5,
+            evaluation_horizon_minutes=3,
+            top_k=1,
+            monte_carlo_samples=200,
+        )
+        rank_calls: list[int] = []
+        compute_calls: list[int | None] = []
+        original_rank = SourceProximityRanker.rank
+        original_compute = PathEfficiencyAnalyzer.compute
+
+        def counted_rank(instance, paths, attributions):
+            rank_calls.append(len(paths))
+            return original_rank(instance, paths, attributions)
+
+        def counted_compute(instance, panel, flow, attribution, *, endpoint=None):
+            compute_calls.append(endpoint)
+            return original_compute(
+                instance, panel, flow, attribution, endpoint=endpoint
+            )
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            SourceProximityRanker, "rank", new=counted_rank
+        ), patch.object(PathEfficiencyAnalyzer, "compute", new=counted_compute):
+            result = SectorFlowPipeline(config).run(source, directory)
+
+        self.assertEqual(len(rank_calls), len(result.folds))
+        self.assertEqual(len(compute_calls), len(result.folds))
+
     def test_small_walk_forward_writes_causal_report_artifacts(self) -> None:
         source = MemoryBarSource(synthetic_sector())
         config = SectorFlowConfig(

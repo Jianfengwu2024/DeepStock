@@ -137,6 +137,32 @@ class FlowAttributionModelTests(unittest.TestCase):
             equal_nan=True,
         )
 
+    def test_batch_scores_match_reference_cellwise_scores(self) -> None:
+        panel, flow = attribution_fixture()
+        panel.valid[111:114, 2] = False
+        parameters = self.model.fit(panel, flow, np.arange(500))
+
+        reference = self.model.score(panel, flow, parameters)
+        batch = self.model.score_batch(panel, flow, parameters)
+
+        np.testing.assert_allclose(
+            batch.leader_mean, reference.leader_mean, equal_nan=True
+        )
+        np.testing.assert_allclose(
+            batch.leader_variance,
+            reference.leader_variance,
+            equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            batch.response_mean, reference.response_mean, equal_nan=True
+        )
+        np.testing.assert_allclose(
+            batch.response_variance,
+            reference.response_variance,
+            equal_nan=True,
+        )
+        np.testing.assert_array_equal(batch.valid, reference.valid)
+
 
 if __name__ == "__main__":
     unittest.main()

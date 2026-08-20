@@ -213,6 +213,93 @@ class FlowAttributionModel:
             valid=valid,
         )
 
+    def score_batch(
+        self,
+        panel: NormalizedSectorPanel,
+        flow: SectorFlowPosterior,
+        parameters: FlowAttributionParameters,
+    ) -> FlowAttributionPosterior:
+        self._validate_alignment(panel, flow)
+        if parameters.symbols != panel.symbols:
+            raise ValueError("attribution parameters do not match panel symbols")
+        shape = panel.velocity.shape
+        leader_mean = np.full(shape, np.nan, dtype=np.float64)
+        leader_variance = np.full(shape, np.nan, dtype=np.float64)
+        response_mean = np.full(shape, np.nan, dtype=np.float64)
+        response_variance = np.full(shape, np.nan, dtype=np.float64)
+        valid = np.zeros(shape, dtype=np.bool_)
+        lag_count = len(parameters.lags)
+        if shape[0] < lag_count:
+            return FlowAttributionPosterior(
+                symbols=panel.symbols,
+                timestamps=panel.timestamps,
+                leader_mean=leader_mean,
+                leader_variance=leader_variance,
+                response_mean=response_mean,
+                response_variance=response_variance,
+                valid=valid,
+            )
+
+        destination = slice(lag_count - 1, None)
+        response_valid = np.all(
+            np.lib.stride_tricks.sliding_window_view(flow.valid, lag_count),
+            axis=1,
+        )
+        for symbol in range(shape[1]):
+            leader_design = np.lib.stride_tricks.sliding_window_view(
+                panel.velocity[:, symbol], lag_count
+            )[:, ::-1]
+            leader_valid = np.all(
+                np.lib.stride_tricks.sliding_window_view(
+                    panel.valid[:, symbol], lag_count
+                ),
+                axis=1,
+            )
+            response_design = np.lib.stride_tricks.sliding_window_view(
+                flow.leave_one_out_mean[:, symbol], lag_count
+            )[:, ::-1]
+
+            leader_rows = np.flatnonzero(leader_valid)
+            if len(leader_rows):
+                design = leader_design[leader_rows]
+                leader_mean[lag_count - 1 + leader_rows, symbol] = (
+                    design @ parameters.leader_coefficient_mean[symbol]
+                )
+                leader_variance[lag_count - 1 + leader_rows, symbol] = np.einsum(
+                    "ri,ij,rj->r",
+                    design,
+                    parameters.leader_coefficient_covariance[symbol],
+                    design,
+                    optimize=True,
+                )
+
+            response_rows = np.flatnonzero(response_valid)
+            if len(response_rows):
+                design = response_design[response_rows]
+                response_mean[lag_count - 1 + response_rows, symbol] = (
+                    design @ parameters.response_coefficient_mean[symbol]
+                )
+                response_variance[
+                    lag_count - 1 + response_rows, symbol
+                ] = np.einsum(
+                    "ri,ij,rj->r",
+                    design,
+                    parameters.response_coefficient_covariance[symbol],
+                    design,
+                    optimize=True,
+                )
+            valid[destination, symbol] = leader_valid & response_valid
+
+        return FlowAttributionPosterior(
+            symbols=panel.symbols,
+            timestamps=panel.timestamps,
+            leader_mean=leader_mean,
+            leader_variance=leader_variance,
+            response_mean=response_mean,
+            response_variance=response_variance,
+            valid=valid,
+        )
+
     def _regression_inputs(
         self,
         *,
@@ -225,25 +312,37 @@ class FlowAttributionModel:
         weights_valid: NDArray[np.bool_],
     ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
         lag_count = self.config.max_lag_minutes + 1
-        designs: list[NDArray[np.float64]] = []
-        targets: list[float] = []
-        row_weights: list[float] = []
-        for row in range(lag_count - 1, len(target)):
-            source_rows = row - np.arange(lag_count)
-            if not selected[row] or not np.all(selected[source_rows]):
-                continue
-            if not target_valid[row] or not np.all(predictor_valid[source_rows]):
-                continue
-            designs.append(predictor[source_rows])
-            targets.append(float(target[row]))
-            confidence = float(weights[row]) if weights_valid[row] else 1.0
-            row_weights.append(float(np.clip(confidence, 0.1, 10.0)))
-        if len(designs) < self.config.minimum_rows:
+        if len(target) < lag_count:
             raise ValueError("too few valid rows for flow attribution")
+        design = np.lib.stride_tricks.sliding_window_view(
+            predictor, lag_count
+        )[:, ::-1]
+        selected_windows = np.all(
+            np.lib.stride_tricks.sliding_window_view(selected, lag_count),
+            axis=1,
+        )
+        predictor_windows = np.all(
+            np.lib.stride_tricks.sliding_window_view(
+                predictor_valid, lag_count
+            ),
+            axis=1,
+        )
+        target_rows = np.arange(lag_count - 1, len(target), dtype=np.int64)
+        usable = (
+            selected_windows
+            & predictor_windows
+            & target_valid[target_rows]
+        )
+        usable_rows = target_rows[usable]
+        if len(usable_rows) < self.config.minimum_rows:
+            raise ValueError("too few valid rows for flow attribution")
+        confidence = np.where(
+            weights_valid[usable_rows], weights[usable_rows], 1.0
+        )
         return (
-            np.stack(designs).astype(np.float64),
-            np.asarray(targets, dtype=np.float64),
-            np.asarray(row_weights, dtype=np.float64),
+            design[usable].astype(np.float64, copy=False),
+            target[usable_rows].astype(np.float64, copy=False),
+            np.clip(confidence, 0.1, 10.0).astype(np.float64, copy=False),
         )
 
     def _fit_ridge(

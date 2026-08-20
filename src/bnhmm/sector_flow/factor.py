@@ -50,11 +50,15 @@ class BayesianSectorFactor:
         symbol_scale = np.sqrt(np.sum(np.square(matrix), axis=0) / coverage)
         symbol_scale = np.maximum(symbol_scale, np.sqrt(self.config.observation_variance_floor))
         standardized = matrix / symbol_scale
-        left, singular, right = np.linalg.svd(standardized, full_matrices=False)
-        factor = left[:, 0] * singular[0]
+        covariance = standardized.T @ standardized
+        _, eigenvectors = np.linalg.eigh(covariance)
+        leading_direction = eigenvectors[:, -1]
+        factor = standardized @ leading_direction
         factor_scale = max(float(factor.std()), 1e-8)
         factor /= factor_scale
-        loadings = (right[0] * symbol_scale * factor_scale).astype(np.float64)
+        loadings = (
+            leading_direction * symbol_scale * factor_scale
+        ).astype(np.float64)
         observed_mean = np.divide(
             matrix.sum(axis=1),
             np.maximum(valid.sum(axis=1), 1),

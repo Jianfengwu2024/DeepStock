@@ -70,6 +70,45 @@ def ranking_fixture(
 
 
 class PathEfficiencyAnalyzerTests(unittest.TestCase):
+    def test_vectorized_series_matches_endpoint_metrics(self) -> None:
+        rng = np.random.default_rng(17)
+        values = rng.normal(0.0, 0.02, (80, 3))
+        valid = rng.random(values.shape) > 0.12
+        panel, flow, attribution = ranking_fixture(values, valid=valid)
+        analyzer = PathEfficiencyAnalyzer((5, 15))
+
+        series = analyzer.compute_series(panel, flow, attribution, minutes=15)
+
+        for endpoint in (0, 4, 14, 39, 79):
+            expected = analyzer.compute(
+                panel, flow, attribution, endpoint=endpoint
+            )
+            actual = series.at(endpoint)
+            for expected_stock, actual_stock in zip(expected, actual):
+                expected_metric = expected_stock.window(15)
+                actual_metric = actual_stock.window(15)
+                self.assertEqual(
+                    actual_metric.valid_minutes, expected_metric.valid_minutes
+                )
+                self.assertEqual(
+                    actual_metric.reversal_count, expected_metric.reversal_count
+                )
+                self.assertAlmostEqual(
+                    actual_metric.efficiency, expected_metric.efficiency
+                )
+                self.assertAlmostEqual(
+                    actual_metric.directional_agreement,
+                    expected_metric.directional_agreement,
+                )
+                self.assertAlmostEqual(
+                    actual_metric.activity_confirmation,
+                    expected_metric.activity_confirmation,
+                )
+                self.assertAlmostEqual(
+                    actual_metric.residual_fraction,
+                    expected_metric.residual_fraction,
+                )
+
     def test_monotone_and_oscillating_paths_have_expected_efficiency(self) -> None:
         monotone = np.full(60, 0.01)
         oscillating = np.tile([0.01, -0.01], 30)
@@ -118,6 +157,62 @@ class PathEfficiencyAnalyzerTests(unittest.TestCase):
 
 
 class SourceProximityRankerTests(unittest.TestCase):
+    def test_series_posterior_approximates_detailed_monte_carlo(self) -> None:
+        rng = np.random.default_rng(29)
+        values = rng.normal(0.002, 0.01, (120, 2))
+        panel, flow, attribution = ranking_fixture(values)
+        analyzer = PathEfficiencyAnalyzer((60,))
+        series = analyzer.compute_series(panel, flow, attribution, minutes=60)
+        summaries = tuple(
+            StockFlowAttribution(
+                symbol=symbol,
+                leader_probability=0.7 + index * 0.1,
+                leader_horizon_minutes=2,
+                leader_coefficient_mean=0.5,
+                leader_coefficient_std=0.1,
+                response_probability=0.65,
+                response_delay_minutes=1,
+                response_coefficient_mean=0.4,
+                response_coefficient_std=0.1,
+                coupling_mean=0.35,
+                coupling_std=0.2,
+                residual_scale=0.1,
+            )
+            for index, symbol in enumerate(panel.symbols)
+        )
+        ranker = SourceProximityRanker(
+            RankingConfig(
+                windows=(60,),
+                ranking_window=60,
+                monte_carlo_samples=100_000,
+                random_seed=31,
+            )
+        )
+
+        fast = ranker.rank_series(series, summaries)
+        detailed = {
+            item.symbol: item
+            for item in ranker.rank(series.at(119), summaries)
+        }
+
+        for column, symbol in enumerate(panel.symbols):
+            self.assertAlmostEqual(
+                fast.source_proximity_probability[119, column],
+                detailed[symbol].source_proximity_probability,
+                delta=0.035,
+            )
+            component_product = (
+                fast.lead_or_response_probability[column]
+                * fast.coupling_probability[column]
+                * fast.efficiency_probability[119, column]
+                * fast.low_residual_probability[119, column]
+                * fast.activity_confirmation_probability[119, column]
+            )
+            self.assertAlmostEqual(
+                fast.source_proximity_probability[119, column],
+                component_product,
+            )
+
     def test_joint_posterior_is_reproducible_and_exposes_components(self) -> None:
         values = np.full((60, 1), 0.01)
         panel, flow, attribution = ranking_fixture(values)

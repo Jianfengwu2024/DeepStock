@@ -212,7 +212,7 @@ class SectorFlowPipeline:
             normalized, flow, fold.training_rows
         )
         attribution_summary = attribution_model.summarize(attribution_parameters)
-        attribution = attribution_model.score(
+        attribution = attribution_model.score_batch(
             normalized, flow, attribution_parameters
         )
         analyzer = PathEfficiencyAnalyzer(self.config.path_windows)
@@ -224,6 +224,13 @@ class SectorFlowPipeline:
                 random_seed=self.config.random_seed + fold.index * 10_000,
             )
         )
+        path_series = analyzer.compute_series(
+            normalized,
+            flow,
+            attribution,
+            minutes=self.config.ranking_window,
+        )
+        ranking_series = ranker.rank_series(path_series, attribution_summary)
         predictions: list[SectorFlowPrediction] = []
         baseline_observations: dict[str, list[RankingObservation]] = {
             name: []
@@ -237,6 +244,8 @@ class SectorFlowPipeline:
         }
         random = np.random.default_rng(self.config.random_seed + fold.index)
         latest_ranking: tuple[SourceProximityPosterior, ...] = ()
+        latest_ranking_endpoint: int | None = None
+        summary_by_symbol = {item.symbol: item for item in attribution_summary}
         horizon = self.config.evaluation_horizon_minutes
         for row in fold.test_rows:
             target_row = int(row) + horizon
@@ -247,17 +256,7 @@ class SectorFlowPipeline:
                 continue
             if not flow.valid[row]:
                 continue
-            paths = analyzer.compute(
-                normalized,
-                flow,
-                attribution,
-                endpoint=int(row),
-            )
-            ranking = ranker.rank(paths, attribution_summary)
-            latest_ranking = ranking
-            ranking_by_symbol = {item.symbol: item for item in ranking}
-            path_by_symbol = {item.symbol: item for item in paths}
-            summary_by_symbol = {item.symbol: item for item in attribution_summary}
+            latest_ranking_endpoint = int(row)
             for column, symbol in enumerate(panel.symbols):
                 if not (
                     panel.valid[row, column]
@@ -293,9 +292,9 @@ class SectorFlowPipeline:
                         training_cutoff=fold.test_start,
                         model_version=MODEL_VERSION,
                         fold=fold.index,
-                        source_probability=ranking_by_symbol[
-                            symbol
-                        ].source_proximity_probability,
+                        source_probability=float(
+                            ranking_series.source_proximity_probability[row, column]
+                        ),
                         direction_probability=direction_probability,
                         realized_return=realized_return,
                         interval_lower=predicted_mean - 1.96 * predicted_std,
@@ -308,9 +307,9 @@ class SectorFlowPipeline:
                     "random": float(random.random()),
                     "momentum": float(normalized.velocity[row, column]),
                     "relative_volume": float(normalized.activity[row, column]),
-                    "path_efficiency": path_by_symbol[symbol]
-                    .window(self.config.ranking_window)
-                    .efficiency,
+                    "path_efficiency": float(
+                        path_series.efficiency[row, column]
+                    ),
                     "static_beta": float(
                         factor_parameters.loadings[column] * flow.factor_mean[row]
                     ),
@@ -324,6 +323,14 @@ class SectorFlowPipeline:
                             realized_return=realized_return,
                         )
                     )
+        if latest_ranking_endpoint is not None:
+            latest_paths = analyzer.compute(
+                normalized,
+                flow,
+                attribution,
+                endpoint=latest_ranking_endpoint,
+            )
+            latest_ranking = ranker.rank(latest_paths, attribution_summary)
         test_valid = fold.test_rows[flow.valid[fold.test_rows]]
         latest_water_state: dict[str, float] = {}
         if len(test_valid):
