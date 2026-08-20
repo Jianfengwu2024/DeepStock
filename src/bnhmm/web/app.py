@@ -147,6 +147,23 @@ def config(request: Request) -> dict[str, Any]:
         "training_scope": "sector-pooled",
         "device": "cpu",
     }
+    sector_flow_defaults = {
+        **defaults,
+        "strategy": "sector-flow-bayes",
+        "training_scope": "sector-pooled",
+        "normalization_lookback_sessions": 20,
+        "normalization_minimum_observations": 10,
+        "minimum_train_sessions": 252,
+        "maximum_lag_minutes": 30,
+        "minimum_attribution_rows": 120,
+        "factor_process_variance": None,
+        "sector_flow_path_windows": [5, 15, 30, 60],
+        "sector_flow_ranking_window": 60,
+        "sector_flow_evaluation_horizon_minutes": 30,
+        "sector_flow_top_k": 10,
+        "sector_flow_monte_carlo_samples": 1000,
+        "device": "cpu",
+    }
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
@@ -159,6 +176,7 @@ def config(request: Request) -> dict[str, Any]:
             "holo-repair": repair_defaults,
             "stock-transformer": stock_defaults,
             "fk-stock": fk_defaults,
+            "sector-flow-bayes": sector_flow_defaults,
         },
         "datasets": [item.as_json() for item in datasets],
         "repair_variants": [
@@ -323,6 +341,10 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "fk-diagnostics.json",
             "run-summary.json",
             "repair-stage-report.md",
+            "sector-flow.png",
+            "sector-flow-report.md",
+            "ranking.csv",
+            "predictions.csv",
         )
         if store.artifact_path(record.id, name) is not None
     }

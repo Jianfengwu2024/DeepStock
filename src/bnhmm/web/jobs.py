@@ -42,6 +42,7 @@ class WalkForwardJobRequest(BaseModel):
         "holo-repair",
         "stock-transformer",
         "fk-stock",
+        "sector-flow-bayes",
     ] = "bnhmm"
     repair_variant: str | None = None
     name: str = "experiment"
@@ -77,6 +78,15 @@ class WalkForwardJobRequest(BaseModel):
     bin_width_bps: float = Field(10.0, gt=0.0, le=100.0)
     max_profile_bins: int = Field(512, ge=8, le=2048)
     normalization_lookback_sessions: int = Field(10, ge=2, le=120)
+    normalization_minimum_observations: int = Field(10, ge=2, le=120)
+    maximum_lag_minutes: int = Field(30, ge=0, le=120)
+    minimum_attribution_rows: int = Field(120, ge=20, le=100_000)
+    factor_process_variance: float | None = Field(None, gt=0.0, le=100.0)
+    sector_flow_path_windows: tuple[int, ...] = (5, 15, 30, 60)
+    sector_flow_ranking_window: int = Field(60, ge=1, le=240)
+    sector_flow_evaluation_horizon_minutes: int = Field(30, ge=1, le=120)
+    sector_flow_top_k: int = Field(10, ge=1, le=100)
+    sector_flow_monte_carlo_samples: int = Field(1000, ge=100, le=100_000)
     velocity_bins: int = Field(3, ge=3, le=31)
     velocity_aggregation_minutes: int = Field(10, ge=2, le=60)
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
@@ -181,8 +191,28 @@ class WalkForwardJobRequest(BaseModel):
         legacy = bool((info.context or {}).get("legacy_job"))
         if self.end <= self.start:
             raise ValueError("end must be later than start")
-        if self.minimum_train_sessions <= self.tuning_sessions:
+        if (
+            self.strategy != "sector-flow-bayes"
+            and self.minimum_train_sessions <= self.tuning_sessions
+        ):
             raise ValueError("minimum_train_sessions must exceed tuning_sessions")
+        if (
+            self.normalization_minimum_observations
+            > self.normalization_lookback_sessions
+        ):
+            raise ValueError("normalization observations cannot exceed lookback")
+        if (
+            not self.sector_flow_path_windows
+            or any(
+                not 1 <= item <= 240
+                for item in self.sector_flow_path_windows
+            )
+            or len(set(self.sector_flow_path_windows))
+            != len(self.sector_flow_path_windows)
+        ):
+            raise ValueError("sector flow path windows must be unique minute counts")
+        if self.sector_flow_ranking_window not in self.sector_flow_path_windows:
+            raise ValueError("sector flow ranking window must be a path window")
         if self.minimum_sequence_length > self.sequence_length:
             raise ValueError("minimum_sequence_length cannot exceed sequence_length")
         if self.return_standardization_min_observations > self.return_standardization_lookback:
@@ -205,6 +235,7 @@ class WalkForwardJobRequest(BaseModel):
                 "holo-repair",
                 "stock-transformer",
                 "fk-stock",
+                "sector-flow-bayes",
             }
             if self.strategy in sector_only and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
@@ -327,6 +358,8 @@ def gpu_memory_for_pid(process_id: int) -> int:
 
 
 def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]:
+    if request.strategy == "sector-flow-bayes":
+        return _build_sector_flow_command(request, output_dir)
     if request.strategy == "stock-transformer":
         return _build_stock_transformer_command(request, output_dir)
     if request.strategy == "fk-stock":
@@ -462,6 +495,60 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         command.extend(("--max-folds", str(request.max_folds)))
     if request.deterministic_training:
         command.append("--deterministic-training")
+    return command
+
+
+def _build_sector_flow_command(
+    request: WalkForwardJobRequest, output_dir: Path
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "bnhmm.cli",
+        "sector-flow-walk-forward",
+        "--duckdb-path",
+        request.database_path,
+        "--symbols",
+        ",".join(request.symbols),
+        "--start",
+        request.start.isoformat(),
+        "--end",
+        request.end.isoformat(),
+        "--output-dir",
+        str(output_dir),
+        "--normalization-lookback-sessions",
+        str(request.normalization_lookback_sessions),
+        "--normalization-minimum-observations",
+        str(request.normalization_minimum_observations),
+        "--minimum-train-sessions",
+        str(request.minimum_train_sessions),
+        "--maximum-lag-minutes",
+        str(request.maximum_lag_minutes),
+        "--minimum-attribution-rows",
+        str(request.minimum_attribution_rows),
+        "--path-windows",
+        ",".join(str(item) for item in request.sector_flow_path_windows),
+        "--ranking-window",
+        str(request.sector_flow_ranking_window),
+        "--evaluation-horizon-minutes",
+        str(request.sector_flow_evaluation_horizon_minutes),
+        "--top-k",
+        str(request.sector_flow_top_k),
+        "--transaction-cost-bps",
+        str(request.transaction_cost_bps),
+        "--monte-carlo-samples",
+        str(request.sector_flow_monte_carlo_samples),
+        "--seed",
+        str(request.seed),
+    ]
+    if request.dataset_id:
+        command.extend(("--dataset-id", request.dataset_id))
+    if request.factor_process_variance is not None:
+        command.extend(
+            ("--factor-process-variance", str(request.factor_process_variance))
+        )
+    if request.max_folds is not None:
+        command.extend(("--max-folds", str(request.max_folds)))
     return command
 
 

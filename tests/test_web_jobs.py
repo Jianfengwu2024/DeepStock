@@ -323,6 +323,40 @@ class WebJobTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(strategy="fk-stock")
 
+    def test_sector_flow_command_uses_only_causal_flow_parameters(self) -> None:
+        request = WalkForwardJobRequest(
+            strategy="sector-flow-bayes",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            minimum_train_sessions=120,
+            normalization_lookback_sessions=20,
+            normalization_minimum_observations=10,
+            maximum_lag_minutes=30,
+            factor_process_variance=0.2,
+            sector_flow_path_windows=(5, 15, 30, 60),
+            sector_flow_ranking_window=60,
+            sector_flow_top_k=10,
+        )
+
+        command = build_command(request, Path("/tmp/sector-flow"))
+
+        self.assertIn("sector-flow-walk-forward", command)
+        self.assertIn("--maximum-lag-minutes", command)
+        self.assertIn("--factor-process-variance", command)
+        self.assertIn("--top-k", command)
+        self.assertNotIn("--epochs", command)
+        self.assertNotIn("--device", command)
+        self.assertNotIn("--d-model", command)
+        self.assertNotIn("--latent-states", command)
+        with self.assertRaises(ValidationError):
+            request.model_copy(
+                update={"sector_flow_ranking_window": 45}
+            ).model_validate(
+                request.model_copy(
+                    update={"sector_flow_ranking_window": 45}
+                ).model_dump()
+            )
+
     def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
         output = "123, 512\n456, 900\n123, 256\n"
         with patch(
