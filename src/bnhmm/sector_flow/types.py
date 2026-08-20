@@ -126,3 +126,78 @@ class SectorFlowPosterior:
         )
         if any(item.shape != (rows,) for item in vectors):
             raise ValueError("sector-flow posterior vectors must match timestamps")
+
+
+@dataclass(frozen=True, slots=True)
+class FlowAttributionParameters:
+    symbols: tuple[str, ...]
+    lags: NDArray[np.int64]
+    leader_coefficient_mean: NDArray[np.float64]
+    leader_coefficient_covariance: NDArray[np.float64]
+    response_coefficient_mean: NDArray[np.float64]
+    response_coefficient_covariance: NDArray[np.float64]
+    leader_residual_scale: NDArray[np.float64]
+    response_residual_scale: NDArray[np.float64]
+    leader_prior_mean: NDArray[np.float64]
+    response_prior_mean: NDArray[np.float64]
+
+    def __post_init__(self) -> None:
+        symbols = len(self.symbols)
+        coefficients = len(self.lags)
+        matrix_shape = (symbols, coefficients)
+        covariance_shape = (symbols, coefficients, coefficients)
+        if self.leader_coefficient_mean.shape != matrix_shape:
+            raise ValueError("leader coefficients do not match symbols and lags")
+        if self.response_coefficient_mean.shape != matrix_shape:
+            raise ValueError("response coefficients do not match symbols and lags")
+        if self.leader_coefficient_covariance.shape != covariance_shape:
+            raise ValueError("leader covariance does not match coefficients")
+        if self.response_coefficient_covariance.shape != covariance_shape:
+            raise ValueError("response covariance does not match coefficients")
+        if self.leader_prior_mean.shape != (coefficients,):
+            raise ValueError("leader prior does not match lags")
+        if self.response_prior_mean.shape != (coefficients,):
+            raise ValueError("response prior does not match lags")
+        if self.leader_residual_scale.shape != (symbols,):
+            raise ValueError("leader residual scale does not match symbols")
+        if self.response_residual_scale.shape != (symbols,):
+            raise ValueError("response residual scale does not match symbols")
+
+
+@dataclass(frozen=True, slots=True)
+class StockFlowAttribution:
+    symbol: str
+    leader_probability: float
+    leader_horizon_minutes: int
+    leader_coefficient_mean: float
+    leader_coefficient_std: float
+    response_probability: float
+    response_delay_minutes: int
+    response_coefficient_mean: float
+    response_coefficient_std: float
+    coupling_mean: float
+    coupling_std: float
+    residual_scale: float
+
+
+@dataclass(frozen=True, slots=True)
+class FlowAttributionPosterior:
+    symbols: tuple[str, ...]
+    timestamps: NDArray[np.datetime64]
+    leader_mean: NDArray[np.float64]
+    leader_variance: NDArray[np.float64]
+    response_mean: NDArray[np.float64]
+    response_variance: NDArray[np.float64]
+    valid: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        shape = (len(self.timestamps), len(self.symbols))
+        arrays = (
+            self.leader_mean,
+            self.leader_variance,
+            self.response_mean,
+            self.response_variance,
+            self.valid,
+        )
+        if any(item.shape != shape for item in arrays):
+            raise ValueError("attribution posterior arrays must share panel shape")
