@@ -82,6 +82,7 @@ class SectorFlowRunResult:
     metrics: dict[str, float | int]
     baselines: dict[str, dict[str, float]]
     latest_ranking: tuple[SourceProximityPosterior, ...]
+    latest_water_state: dict[str, float]
 
 
 class SectorFlowPipeline:
@@ -119,6 +120,7 @@ class SectorFlowPipeline:
         latest_ranking: tuple[SourceProximityPosterior, ...] = ()
         all_factor_means: list[float] = []
         all_factor_times: list[np.datetime64] = []
+        latest_water_state: dict[str, float] = {}
         baseline_observations: dict[str, list[RankingObservation]] = {
             name: []
             for name in (
@@ -135,6 +137,7 @@ class SectorFlowPipeline:
                 fold_predictions,
                 fold_ranking,
                 fold_baselines,
+                fold_water_state,
                 factor_mean,
                 factor_times,
                 summary,
@@ -143,6 +146,7 @@ class SectorFlowPipeline:
             )
             predictions.extend(fold_predictions)
             latest_ranking = fold_ranking or latest_ranking
+            latest_water_state = fold_water_state or latest_water_state
             all_factor_means.extend(factor_mean)
             all_factor_times.extend(factor_times)
             fold_summaries.append(summary)
@@ -173,6 +177,7 @@ class SectorFlowPipeline:
             baselines,
             tuple(fold_summaries),
             latest_ranking,
+            latest_water_state,
             np.asarray(all_factor_times, dtype="datetime64[ns]"),
             np.asarray(all_factor_means, dtype=np.float64),
         )
@@ -182,6 +187,7 @@ class SectorFlowPipeline:
             metrics=metrics,
             baselines=baselines,
             latest_ranking=latest_ranking,
+            latest_water_state=latest_water_state,
         )
 
     def _run_fold(self, panel, normalized, fold: SectorFlowFold):
@@ -319,6 +325,18 @@ class SectorFlowPipeline:
                         )
                     )
         test_valid = fold.test_rows[flow.valid[fold.test_rows]]
+        latest_water_state: dict[str, float] = {}
+        if len(test_valid):
+            row = int(test_valid[-1])
+            latest_water_state = {
+                "direction": float(flow.factor_mean[row]),
+                "uncertainty": sqrt(float(flow.factor_variance[row])),
+                "activity": float(flow.activity[row]),
+                "breadth": float(flow.breadth[row]),
+                "coherence": float(flow.coherence[row]),
+                "dispersion": float(flow.dispersion[row]),
+                "flow_strength": float(flow.flow_strength[row]),
+            }
         summary = {
             "fold": fold.index,
             "training_cutoff": str(fold.test_start),
@@ -334,6 +352,7 @@ class SectorFlowPipeline:
             predictions,
             latest_ranking,
             baseline_observations,
+            latest_water_state,
             flow.factor_mean[test_valid].tolist(),
             panel.timestamps[test_valid].tolist(),
             summary,
@@ -347,6 +366,7 @@ class SectorFlowPipeline:
         baselines: dict[str, dict[str, float]],
         folds: tuple[dict[str, object], ...],
         ranking: tuple[SourceProximityPosterior, ...],
+        latest_water_state: dict[str, float],
         factor_times: np.ndarray,
         factor_mean: np.ndarray,
     ) -> None:
@@ -366,9 +386,25 @@ class SectorFlowPipeline:
             "folds": list(folds),
             "metrics": metrics,
             "baselines": baselines,
+            "latest_water_state": latest_water_state,
+            "latest_ranking": [asdict(item) for item in ranking],
         }
         (destination / "evaluation.json").write_text(
             json.dumps(evaluation, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        run_summary = {
+            "model_scope": "sector-flow",
+            "model_version": MODEL_VERSION,
+            "oos_predictions": len(predictions),
+            "metrics": metrics,
+            "baselines": baselines,
+            "folds": list(folds),
+            "latest_water_state": latest_water_state,
+            "latest_ranking": [asdict(item) for item in ranking],
+        }
+        (destination / "run-summary.json").write_text(
+            json.dumps(run_summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
         with (destination / "ranking.csv").open(
             "w", encoding="utf-8", newline=""

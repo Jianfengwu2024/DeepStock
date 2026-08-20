@@ -33,6 +33,7 @@
             <label><input type="radio" name="strategy" value="holo-repair"><span>HoloRepair</span></label>
             <label><input type="radio" name="strategy" value="stock-transformer"><span>StockTransformer</span></label>
             <label><input type="radio" name="strategy" value="fk-stock"><span>FKStock</span></label>
+            <label><input type="radio" name="strategy" value="sector-flow-bayes"><span>SectorFlow</span></label>
           </div>
           <label>训练范围
             <select name="training_scope" id="training-scope">
@@ -78,9 +79,10 @@
           <summary>滚动样本外验证</summary>
           <div class="two-columns">
             <label>最少训练日<input name="minimum_train_sessions" type="number"></label>
-            <label>调参日<input name="tuning_sessions" type="number"></label>
-            <label>测试日<input name="test_sessions" type="number"></label>
-            <label>步长<input name="step_sessions" type="number"></label>
+            <label class="legacy-walk-only">调参日<input name="tuning_sessions" type="number"></label>
+            <label class="legacy-walk-only">测试日<input name="test_sessions" type="number"></label>
+            <label class="legacy-walk-only">步长<input name="step_sessions" type="number"></label>
+            <label>归一化回看日<input name="normalization_lookback_sessions" type="number" min="2" max="120"></label>
             <label>最大折数<input name="max_folds" type="number" placeholder="不限"></label>
           </div>
         </details>
@@ -114,7 +116,6 @@
           <div class="two-columns">
             <label>每柱基点<input name="bin_width_bps" type="number" min="1" max="100" step="1"></label>
             <label>单日最大柱数<input name="max_profile_bins" type="number" min="8" max="2048"></label>
-            <label>归一化回看日<input name="normalization_lookback_sessions" type="number" min="2" max="120"></label>
           </div>
           <div class="two-columns flow-only">
             <label>速度聚合（分钟）<input name="velocity_aggregation_minutes" type="number" min="2" max="60" step="1"></label>
@@ -185,7 +186,36 @@
           <div class="isolation-note"><i data-lucide="shield-check"></i><span>正式模型不再计算守恒流、密度几何、漂移或上一日收益；固定实现参数不作为调参旋钮。</span></div>
         </details>
 
-        <details class="form-section" open>
+        <details class="form-section sector-flow-only hidden" open>
+          <summary>板块水势与传播</summary>
+          <input type="hidden" name="sector_flow_path_windows" value="5,15,30,60">
+          <div class="two-columns">
+            <label>归一化最少样本<input name="normalization_minimum_observations" type="number" min="2" max="120"></label>
+            <label>最大传播滞后（分钟）<input name="maximum_lag_minutes" type="number" min="0" max="120"></label>
+            <label>归因最少分钟数<input name="minimum_attribution_rows" type="number" min="20" max="100000"></label>
+            <label>过程噪声（自动可留空）<input name="factor_process_variance" type="number" min="0.000001" max="100" step="0.0001"></label>
+            <label>路径窗口
+              <select name="sector_flow_ranking_window">
+                <option value="5">5 分钟</option>
+                <option value="15">15 分钟</option>
+                <option value="30">30 分钟</option>
+                <option value="60">60 分钟</option>
+              </select>
+            </label>
+            <label>收益检验窗口
+              <select name="sector_flow_evaluation_horizon_minutes">
+                <option value="5">5 分钟</option>
+                <option value="15">15 分钟</option>
+                <option value="30">30 分钟</option>
+                <option value="60">60 分钟</option>
+              </select>
+            </label>
+            <label>精选数量<input name="sector_flow_top_k" type="number" min="1" max="100"></label>
+            <label>后验抽样<input name="sector_flow_monte_carlo_samples" type="number" min="100" max="100000"></label>
+          </div>
+        </details>
+
+        <details class="form-section non-sector-flow-only" open>
           <summary>输出定义</summary>
           <div class="fixed-spec-grid">
             <div class="fixed-spec"><span>预测目标</span><strong>下一交易日</strong></div>
@@ -228,12 +258,12 @@
         </details>
 
         <details class="form-section">
-          <summary>仓位策略</summary>
+          <summary id="policy-section-title">仓位策略</summary>
           <div class="two-columns">
-            <label>认知不确定性惩罚<input name="uncertainty_aversion" type="number" min="0" step="0.1"></label>
+            <label class="non-sector-flow-only">认知不确定性惩罚<input name="uncertainty_aversion" type="number" min="0" step="0.1"></label>
             <label>交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
           </div>
-          <div class="device-note">弱多半仓、强多满仓；弱空或强空平仓，策略不做空。</div>
+          <div class="device-note non-sector-flow-only">弱多半仓、强多满仓；弱空或强空平仓，策略不做空。</div>
         </details>
 
         <div class="form-actions">
@@ -308,24 +338,38 @@
 
             <div class="metrics-grid" id="metrics-grid"></div>
 
-            <div class="tabs" role="tablist">
+            <section class="sector-flow-results hidden" id="sector-flow-results">
+              <div class="sector-flow-head">
+                <div><h3>板块水势</h3><span id="sector-flow-result-status" role="status" aria-live="polite"></span></div>
+                <span class="scope-badge">分钟同步</span>
+              </div>
+              <div class="water-state-grid" id="sector-flow-water-state"></div>
+              <div class="report-image-wrap"><img id="sector-flow-image" alt="板块水势后验曲线"></div>
+              <div class="sector-flow-table-head"><h3>源头接近排名</h3><span>领先/响应、耦合、路径、残差与活跃确认的联合后验</span></div>
+              <div class="table-scroll"><table><thead><tr><th>股票</th><th>联合后验</th><th>领先或快响应</th><th>正耦合</th><th>路径效率</th><th>低残差</th><th>活跃确认</th><th>领先</th><th>响应</th></tr></thead><tbody id="sector-flow-ranking-table"></tbody></table></div>
+              <div class="sector-flow-table-head"><h3>样本外基线</h3><span>同一时间区间、Top-K 与交易成本</span></div>
+              <div class="table-scroll"><table><thead><tr><th>方法</th><th>Rank IC</th><th>Top-Bottom</th><th>成本后收益</th><th>换手</th></tr></thead><tbody id="sector-flow-baseline-table"></tbody></table></div>
+              <div class="download-row" id="sector-flow-downloads"></div>
+            </section>
+
+            <div class="tabs standard-result-only" role="tablist">
               <button class="tab active" data-tab="overview" type="button"><i data-lucide="chart-no-axes-combined"></i>收益</button>
               <button class="tab" data-tab="diagnostics" type="button"><i data-lucide="activity"></i>模型诊断</button>
               <button class="tab" data-tab="folds" type="button"><i data-lucide="rows-3"></i>滚动验证</button>
               <button class="tab" data-tab="logs" type="button"><i data-lucide="terminal"></i>日志</button>
             </div>
 
-            <div class="tab-panel" data-panel="overview">
+            <div class="tab-panel standard-result-only" data-panel="overview">
               <div class="chart-explanation"><span><b class="line-key strategy"></b>蓝线：模型仓位策略</span><span><b class="line-key benchmark"></b>橙线：等权持有基准</span><span><b class="area-key"></b>下图：从历史高点的回撤</span></div>
               <div class="report-image-wrap"><img id="equity-image" alt="净值和回撤报告"></div>
               <div class="download-row" id="download-row"></div>
             </div>
-            <div class="tab-panel hidden" data-panel="diagnostics">
+            <div class="tab-panel standard-result-only hidden" data-panel="diagnostics">
               <div class="diagnostic-note">残差越集中在 0 附近越好；校准线越接近对角线，模型给出的概率越可信。</div>
               <div class="report-image-wrap"><img id="residual-image" alt="残差报告"></div>
               <div class="report-image-wrap"><img id="calibration-image" alt="校准和残差自相关报告"></div>
             </div>
-            <div class="tab-panel hidden" data-panel="folds">
+            <div class="tab-panel standard-result-only hidden" data-panel="folds">
               <section id="symbol-results" class="hidden">
                 <h3>逐标的样本外结果</h3>
                 <div class="table-scroll"><table><thead><tr><th>标的</th><th>OOS</th><th>命中率</th><th>均衡命中率</th><th>训练先验</th><th>Brier</th><th>Log Loss</th><th>策略收益</th><th>最大回撤</th></tr></thead><tbody id="symbol-metrics-table"></tbody></table></div>
@@ -333,7 +377,7 @@
               <h3>逐标的滚动窗口</h3>
               <div class="table-scroll"><table><thead><tr><th>标的</th><th>窗口</th><th>调参开始</th><th>测试区间</th><th>Epoch</th><th>训练序列</th><th>OOS 预测</th><th>验证损失</th></tr></thead><tbody id="fold-table"></tbody></table></div>
             </div>
-            <div class="tab-panel hidden" data-panel="logs"><pre id="job-log"></pre></div>
+            <div class="tab-panel standard-result-only hidden" data-panel="logs"><pre id="job-log"></pre></div>
           </div>
         </section>
       </div>

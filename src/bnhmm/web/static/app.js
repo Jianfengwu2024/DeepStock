@@ -27,6 +27,10 @@ const numberFields = new Set([
   "conservation_grid_points", "conservation_ridge", "minimum_token_bins",
   "maximum_tokens", "boundary_threshold",
   "holographic_volume_bins", "holographic_smoothing",
+  "normalization_minimum_observations", "maximum_lag_minutes",
+  "minimum_attribution_rows", "factor_process_variance",
+  "sector_flow_ranking_window", "sector_flow_evaluation_horizon_minutes",
+  "sector_flow_top_k", "sector_flow_monte_carlo_samples",
 ]);
 
 const strategyParameterFields = {
@@ -64,6 +68,14 @@ const strategyParameterFields = {
     "d_model", "heads", "layers", "feedforward_dim", "dropout", "mc_samples", "device",
   ],
   "fk-stock": [],
+  "sector-flow-bayes": [
+    "minimum_train_sessions", "normalization_lookback_sessions",
+    "normalization_minimum_observations", "maximum_lag_minutes",
+    "minimum_attribution_rows", "factor_process_variance",
+    "sector_flow_path_windows", "sector_flow_ranking_window",
+    "sector_flow_evaluation_horizon_minutes", "sector_flow_top_k",
+    "sector_flow_monte_carlo_samples",
+  ],
 };
 
 const strategyNamePrefixes = {
@@ -73,6 +85,7 @@ const strategyNamePrefixes = {
   "holo-repair": "HoloRepair",
   "stock-transformer": "StockTransformer",
   "fk-stock": "FKStock",
+  "sector-flow-bayes": "SectorFlow",
 };
 
 const statusText = {
@@ -187,12 +200,13 @@ function syncStrategySelection() {
   const strategy = currentStrategy();
   const stock = strategy === "stock-transformer";
   const fk = strategy === "fk-stock";
+  const sectorFlow = strategy === "sector-flow-bayes";
   const holoLite = strategy === "holo-bnhmm-lite";
   const repair = strategy === "holo-repair";
   const repairName = document.querySelector("#repair-variant")?.value || "HoloRepair";
   const holo = strategy === "holo-bnhmm" || holoLite || repair;
   const bayesianHmm = strategy === "bnhmm" || holo;
-  const neural = !fk;
+  const neural = !fk && !sectorFlow;
   document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", strategy !== "bnhmm"));
   document.querySelectorAll(".holo-only").forEach(element => element.classList.toggle("hidden", !holo));
   document.querySelectorAll(".repair-only").forEach(element => element.classList.toggle("hidden", !repair));
@@ -200,21 +214,29 @@ function syncStrategySelection() {
   document.querySelectorAll(".flow-only").forEach(element => element.classList.toggle("hidden", !bayesianHmm));
   document.querySelectorAll(".stock-only").forEach(element => element.classList.toggle("hidden", !stock));
   document.querySelectorAll(".fk-only").forEach(element => element.classList.toggle("hidden", !fk));
+  document.querySelectorAll(".sector-flow-only").forEach(element => element.classList.toggle("hidden", !sectorFlow));
+  document.querySelectorAll(".non-sector-flow-only").forEach(element => element.classList.toggle("hidden", sectorFlow));
+  document.querySelectorAll(".legacy-walk-only").forEach(element => element.classList.toggle("hidden", sectorFlow));
   document.querySelectorAll(".neural-only").forEach(element => element.classList.toggle("hidden", !neural));
   const scope = document.querySelector("#training-scope");
   const perSymbol = scope.querySelector('option[value="per-symbol"]');
-  perSymbol.disabled = stock || fk || holo;
-  if (stock || fk || holo) scope.value = "sector-pooled";
+  perSymbol.disabled = stock || fk || holo || sectorFlow;
+  if (stock || fk || holo || sectorFlow) scope.value = "sector-pooled";
   document.querySelector('[name="profile_protocol"]').value = holo
     ? (holoLite
       ? "price-volume-holographic-lite-v1"
       : "price-volume-holographic-flow-v1")
     : "phase-space-10m-local-flow-v8";
-  document.querySelector("#brand-subtitle").textContent = fk
+  document.querySelector("#brand-subtitle").textContent = sectorFlow
+    ? "SectorFlow · Bayesian sector dynamics"
+    : fk
     ? "FKStock · Bayesian Feynman-Kac model"
     : stock ? "StockTransformer · conservation language model"
       : holo ? `${repair ? repairName : holoLite ? "HoloLite" : "HoloBNHMM"} · 2D Bayesian flow field`
         : "BNHMM · Bayesian hidden-state model";
+  document.querySelector("#policy-section-title").textContent = sectorFlow
+    ? "评估与成本"
+    : "仓位策略";
   document.querySelector("#state-section-title").textContent = stock || fk
     ? "每日价格-成交量密度态"
     : holo ? "每日二维全息态" : "每日相空间态";
@@ -226,10 +248,10 @@ function syncStrategySelection() {
       ? "守恒 Token Transformer"
       : holo ? "二维局部场编码器 + Transformer" : "确定性 Transformer";
   }
-  const noDataset = (stock || fk || holo) && state.datasets.length === 0;
+  const noDataset = (stock || fk || holo || sectorFlow) && state.datasets.length === 0;
   document.querySelector("#run-button").disabled = noDataset;
   document.querySelector("#form-error").textContent = noDataset
-    ? `${fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
+    ? `${sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
     : "";
 }
 
@@ -425,8 +447,10 @@ function formPayload() {
   for (const [name, value] of data.entries()) {
     if (name === "symbols") {
       payload.symbols = value.split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
+    } else if (name === "sector_flow_path_windows") {
+      payload[name] = value.split(",").map(item => Number(item.trim())).filter(Number.isFinite);
     } else if (numberFields.has(name)) {
-      payload[name] = value === "" && name === "max_folds" ? null : Number(value);
+      payload[name] = value === "" && ["max_folds", "factor_process_variance"].includes(name) ? null : Number(value);
     } else {
       payload[name] = value;
     }
@@ -510,7 +534,7 @@ function renderJobList() {
   list.replaceChildren(...state.jobs.map(job => {
     const strategy = job.request.strategy === "holo-repair"
       ? job.request.repair_variant
-      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock" })[job.request.strategy] || job.request.strategy;
+      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow" })[job.request.strategy] || job.request.strategy;
     const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
     if (state.historyEditing) {
       const label = document.createElement("label");
@@ -573,13 +597,17 @@ function renderJob(job) {
   badge.textContent = statusText[job.status];
   const stock = job.request.strategy === "stock-transformer";
   const fk = job.request.strategy === "fk-stock";
+  const sectorFlow = job.request.strategy === "sector-flow-bayes";
   const holoLite = job.request.strategy === "holo-bnhmm-lite";
   const repair = job.request.strategy === "holo-repair";
   const holo = job.request.strategy === "holo-bnhmm" || holoLite || repair;
   const dataset = state.datasets.find(
     item => item.dataset_id === job.request.dataset_id,
   );
-  if (fk) {
+  if (sectorFlow) {
+    const water = job.summary?.latest_water_state || {};
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 1分钟同步 · 最大滞后 ${job.request.maximum_lag_minutes} 分钟 · 水势 ${formatNumber(water.flow_strength, 3)} · ${job.request.normalization_lookback_sessions}日因果归一化`;
+  } else if (fk) {
     const fields = job.summary?.folds?.at(-1)?.outer_field_diagnostics;
     const fieldText = fields
       ? `μ=${formatNumber(fields.effective_drift_mean, 4)} · σ²=${formatNumber(fields.diffusion_variance_mean, 4)}`
@@ -657,8 +685,8 @@ function renderJob(job) {
   document.querySelector("#delete-button").classList.toggle("hidden", active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
-    ? (fk ? "等待 FKStock 任务" : "等待 GPU 任务")
-    : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
+    ? (sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
+    : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -710,6 +738,18 @@ function renderResultScope(job) {
 }
 
 function renderSelectedResult(job) {
+  const sectorFlow = job.request.strategy === "sector-flow-bayes";
+  document.querySelector("#sector-flow-results").classList.toggle("hidden", !sectorFlow);
+  const activePanel = document.querySelector(".tab.active")?.dataset.tab || "overview";
+  document.querySelectorAll(".standard-result-only").forEach(element => {
+    if (sectorFlow) element.classList.add("hidden");
+    else if (element.matches(".tab-panel")) element.classList.toggle("hidden", element.dataset.panel !== activePanel);
+    else element.classList.remove("hidden");
+  });
+  if (sectorFlow) {
+    renderSectorFlowResult(job);
+    return;
+  }
   const scope = resultScope(job);
   if (scope === "portfolio") {
     document.querySelector("#insight-label").textContent = job.summary?.model_scope === "per-symbol"
@@ -761,6 +801,76 @@ function renderSelectedResult(job) {
     state.symbolReportCache.delete(key);
     activeButton?.classList.remove("loading");
   });
+}
+
+function renderSectorFlowResult(job) {
+  const summary = job.summary || {};
+  const metrics = summary.metrics || {};
+  const water = summary.latest_water_state || {};
+  const status = document.querySelector("#sector-flow-result-status");
+  status.textContent = job.status === "completed"
+    ? `${formatInteger(summary.oos_predictions)} 条样本外预测`
+    : job.status === "failed" ? "运行失败，请查看日志" : "水势计算中";
+  const waterValues = [
+    ["方向", formatNumber(water.direction, 3)],
+    ["水势强度", formatNumber(water.flow_strength, 3)],
+    ["活跃度", formatNumber(water.activity, 2)],
+    ["广度", formatPercent(water.breadth)],
+    ["同步性", formatPercent(water.coherence)],
+    ["不确定性", formatNumber(water.uncertainty, 3)],
+  ];
+  document.querySelector("#sector-flow-water-state").innerHTML = waterValues
+    .map(([label, value]) => `<div class="water-state-item"><span>${label}</span><strong>${value}</strong></div>`)
+    .join("");
+
+  const ranking = summary.latest_ranking || [];
+  document.querySelector("#sector-flow-ranking-table").innerHTML = ranking.map(item => `<tr>
+    <td><strong>${escapeHtml(item.symbol)}</strong></td>
+    <td>${formatPercent(item.source_proximity_probability)}</td>
+    <td>${formatPercent(item.lead_or_response_probability)}</td>
+    <td>${formatPercent(item.coupling_probability)}</td>
+    <td>${formatPercent(item.efficiency_probability)}</td>
+    <td>${formatPercent(item.low_residual_probability)}</td>
+    <td>${formatPercent(item.activity_confirmation_probability)}</td>
+    <td>${formatPercent(item.leader_probability)}</td>
+    <td>${formatPercent(item.response_probability)}</td>
+  </tr>`).join("");
+
+  const baselineLabels = {
+    random: "随机",
+    momentum: "一分钟动量",
+    relative_volume: "相对成交量",
+    path_efficiency: "路径效率",
+    static_beta: "静态 Beta",
+  };
+  document.querySelector("#sector-flow-baseline-table").innerHTML = Object.entries(summary.baselines || {}).map(([name, value]) => `<tr>
+    <td>${baselineLabels[name] || escapeHtml(name)}</td>
+    <td>${formatNumber(value.rank_ic, 4)}</td>
+    <td>${formatPercent(value.top_bottom_return)}</td>
+    <td>${formatPercent(value.net_top_bottom_return)}</td>
+    <td>${formatPercent(value.turnover)}</td>
+  </tr>`).join("");
+
+  setImage("sector-flow-image", job.artifacts?.["sector-flow.png"], `?v=${encodeURIComponent(job.finished_at || Date.now())}`);
+  const downloads = {
+    "sector-flow-report.md": "完整报告",
+    "evaluation.json": "评估数据",
+    "ranking.csv": "排名明细",
+    "predictions.csv": "样本外预测",
+  };
+  document.querySelector("#sector-flow-downloads").innerHTML = Object.entries(downloads)
+    .filter(([name]) => job.artifacts?.[name])
+    .map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`)
+    .join("");
+
+  document.querySelector("#metrics-grid").innerHTML = [
+    ["Brier", formatNumber(metrics.brier_score, 4)],
+    ["Log Loss", formatNumber(metrics.log_loss, 4)],
+    ["Rank IC", formatNumber(metrics.rank_ic, 4)],
+    ["成本后 Top-Bottom", formatPercent(metrics.net_top_bottom_return)],
+    ["后验覆盖率", formatPercent(metrics.posterior_coverage)],
+    ["换手率", formatPercent(metrics.turnover)],
+  ].map(([label, value]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong></div>`).join("");
 }
 
 function renderSymbolResult(job, symbol, summary) {
@@ -920,7 +1030,7 @@ function renderArtifacts(job, artifacts) {
   setImage("residual-image", artifacts["residuals.png"], cache);
   setImage("calibration-image", artifacts["calibration_acf.png"], cache);
   const row = document.querySelector("#download-row");
-  const names = { "evaluation.json": "评估数据", "predictions.json": "OOS 预测", "fk-diagnostics.json": "FK 场诊断", "run-summary.json": "运行摘要", "repair-stage-report.md": "阶段报告" };
+  const names = { "evaluation.json": "评估数据", "predictions.json": "OOS 预测", "fk-diagnostics.json": "FK 场诊断", "run-summary.json": "运行摘要", "repair-stage-report.md": "阶段报告", "sector-flow-report.md": "水势报告", "ranking.csv": "排名明细", "predictions.csv": "预测明细" };
   row.innerHTML = Object.entries(names).filter(([name]) => artifacts[name]).map(([name, label]) => `<a href="${artifacts[name]}" download>${label}</a>`).join("");
 }
 

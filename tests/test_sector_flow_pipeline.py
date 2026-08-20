@@ -86,6 +86,8 @@ class SectorFlowPipelineTests(unittest.TestCase):
             root = Path(directory)
 
             self.assertTrue(result.predictions)
+            self.assertIn("direction", result.latest_water_state)
+            self.assertIn("coherence", result.latest_water_state)
             self.assertEqual(
                 set(result.baselines),
                 {"random", "momentum", "relative_volume", "path_efficiency", "static_beta"},
@@ -99,6 +101,7 @@ class SectorFlowPipelineTests(unittest.TestCase):
                 "ranking.csv",
                 "sector-flow-report.md",
                 "sector-flow.png",
+                "run-summary.json",
             ):
                 self.assertTrue((root / name).is_file(), name)
 
