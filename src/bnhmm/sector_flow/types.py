@@ -201,3 +201,40 @@ class FlowAttributionPosterior:
         )
         if any(item.shape != shape for item in arrays):
             raise ValueError("attribution posterior arrays must share panel shape")
+
+
+@dataclass(frozen=True, slots=True)
+class PathWindowMetrics:
+    minutes: int
+    valid_minutes: int
+    efficiency: float
+    directional_agreement: float
+    reversal_count: int
+    activity_confirmation: float
+    residual_fraction: float
+
+
+@dataclass(frozen=True, slots=True)
+class StockPathMetrics:
+    symbol: str
+    windows: tuple[PathWindowMetrics, ...]
+
+    def window(self, minutes: int) -> PathWindowMetrics:
+        for item in self.windows:
+            if item.minutes == minutes:
+                return item
+        raise KeyError(f"path window {minutes} is unavailable")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceProximityPosterior:
+    symbol: str
+    source_proximity_probability: float
+    lead_or_response_probability: float
+    coupling_probability: float
+    efficiency_probability: float
+    low_residual_probability: float
+    activity_confirmation_probability: float
+    leader_probability: float
+    response_probability: float
+    path_metrics: PathWindowMetrics
