@@ -26,7 +26,11 @@ from .factor import BayesianSectorFactor, SectorFactorConfig
 from .normalization import CausalSectorNormalizer, SectorNormalizationConfig
 from .panel import SectorMinutePanelBuilder
 from .ranking import PathEfficiencyAnalyzer, RankingConfig, SourceProximityRanker
-from .types import SourceProximityPosterior
+from .types import (
+    NormalizedSectorPanel,
+    SectorMinutePanel,
+    SourceProximityPosterior,
+)
 
 
 MODEL_VERSION = "sector-flow-bayes-v1"
@@ -126,6 +130,25 @@ class SectorFlowPipeline:
         )
         if not folds:
             raise ValueError("date range does not produce a monthly sample-out fold")
+        eligible_columns = self._first_fold_eligible_columns(
+            normalized, folds[0].training_rows
+        )
+        if len(eligible_columns) < 3:
+            raise ValueError(
+                "sector flow requires at least three symbols with sufficient "
+                "first-fold attribution history"
+            )
+        eligible_set = set(eligible_columns.tolist())
+        history_excluded = tuple(
+            symbol
+            for column, symbol in enumerate(panel.symbols)
+            if column not in eligible_set
+        )
+        excluded_symbols += history_excluded
+        if len(eligible_columns) != len(panel.symbols):
+            panel, normalized = self._select_symbols(
+                panel, normalized, eligible_columns
+            )
         predictions: list[SectorFlowPrediction] = []
         fold_summaries: list[dict[str, object]] = []
         latest_ranking: tuple[SourceProximityPosterior, ...] = ()
@@ -202,6 +225,61 @@ class SectorFlowPipeline:
             latest_water_state=latest_water_state,
             excluded_symbols=excluded_symbols,
         )
+
+    def _first_fold_eligible_columns(
+        self,
+        panel: NormalizedSectorPanel,
+        training_rows: np.ndarray,
+    ) -> np.ndarray:
+        lag_count = self.config.maximum_lag_minutes + 1
+        if len(panel.timestamps) < lag_count:
+            return np.asarray([], dtype=np.int64)
+        selected = np.zeros(len(panel.timestamps), dtype=np.bool_)
+        selected[training_rows] = True
+        selected_windows = np.all(
+            np.lib.stride_tricks.sliding_window_view(selected, lag_count),
+            axis=1,
+        )
+        eligible: list[int] = []
+        for column in range(len(panel.symbols)):
+            valid_windows = np.all(
+                np.lib.stride_tricks.sliding_window_view(
+                    panel.valid[:, column], lag_count
+                ),
+                axis=1,
+            )
+            if int(np.sum(selected_windows & valid_windows)) >= (
+                self.config.minimum_attribution_rows
+            ):
+                eligible.append(column)
+        return np.asarray(eligible, dtype=np.int64)
+
+    @staticmethod
+    def _select_symbols(
+        panel: SectorMinutePanel,
+        normalized: NormalizedSectorPanel,
+        columns: np.ndarray,
+    ) -> tuple[SectorMinutePanel, NormalizedSectorPanel]:
+        symbols = tuple(panel.symbols[int(column)] for column in columns)
+        selected_panel = SectorMinutePanel(
+            symbols=symbols,
+            timestamps=panel.timestamps,
+            close=panel.close[:, columns],
+            volume=panel.volume[:, columns],
+            valid=panel.valid[:, columns],
+        )
+        selected_normalized = NormalizedSectorPanel(
+            symbols=symbols,
+            timestamps=normalized.timestamps,
+            raw_velocity=normalized.raw_velocity[:, columns],
+            velocity=normalized.velocity[:, columns],
+            activity=normalized.activity[:, columns],
+            velocity_scale=normalized.velocity_scale[:, columns],
+            volume_baseline=normalized.volume_baseline[:, columns],
+            valid=normalized.valid[:, columns],
+            activity_valid=normalized.activity_valid[:, columns],
+        )
+        return selected_panel, selected_normalized
 
     def _run_fold(self, panel, normalized, fold: SectorFlowFold):
         usable_training_rows = fold.training_rows[

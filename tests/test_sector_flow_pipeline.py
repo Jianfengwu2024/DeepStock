@@ -97,6 +97,37 @@ class SectorFlowPipelineTests(unittest.TestCase):
         self.assertNotIn(missing_symbol, {item.symbol for item in result.predictions})
         self.assertIn(missing_symbol, evaluation)
 
+    def test_symbol_without_first_fold_training_history_is_excluded(self) -> None:
+        batches = synthetic_sector()
+        late_symbol = tuple(batches)[-1]
+        late_batch = batches[late_symbol]
+        late_rows = np.flatnonzero(
+            late_batch.timestamp >= np.datetime64("2025-02-01")
+        )
+        batches[late_symbol] = late_batch.take(late_rows)
+        source = MemoryBarSource(batches)
+        config = SectorFlowConfig(
+            symbols=tuple(source.batches),
+            start="2025-01-01",
+            end="2025-03-01",
+            normalization_lookback_sessions=5,
+            normalization_minimum_observations=2,
+            minimum_train_sessions=5,
+            maximum_lag_minutes=3,
+            minimum_attribution_rows=20,
+            path_windows=(5,),
+            ranking_window=5,
+            evaluation_horizon_minutes=3,
+            top_k=1,
+            monte_carlo_samples=200,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = SectorFlowPipeline(config).run(source, directory)
+
+        self.assertEqual(result.excluded_symbols, (late_symbol,))
+        self.assertNotIn(late_symbol, {item.symbol for item in result.predictions})
+
     def test_fewer_than_three_symbols_with_bars_is_rejected(self) -> None:
         batches = synthetic_sector()
         for symbol in tuple(batches)[2:]:
