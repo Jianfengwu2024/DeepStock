@@ -157,10 +157,15 @@ class PathEfficiencyAnalyzer:
         sector = np.where(valid, flow.leave_one_out_mean, 0.0)
         direction = np.sign(observed)
         sector_direction = np.sign(sector)
+        starts = np.searchsorted(
+            panel.timestamps,
+            panel.timestamps - np.timedelta64(minutes - 1, "m"),
+            side="left",
+        )
 
-        valid_minutes = self._rolling_sum(valid.astype(np.int64), minutes)
-        path_length = self._rolling_sum(np.abs(raw), minutes)
-        displacement = np.abs(self._rolling_sum(raw, minutes))
+        valid_minutes = self._rolling_sum(valid.astype(np.int64), starts)
+        path_length = self._rolling_sum(np.abs(raw), starts)
+        displacement = np.abs(self._rolling_sum(raw, starts))
         efficiency = np.divide(
             displacement,
             path_length,
@@ -169,7 +174,7 @@ class PathEfficiencyAnalyzer:
         )
         directional_matches = valid & (direction == sector_direction)
         directional_agreement = np.divide(
-            self._rolling_sum(directional_matches.astype(np.int64), minutes),
+            self._rolling_sum(directional_matches.astype(np.int64), starts),
             valid_minutes,
             out=np.zeros_like(path_length),
             where=valid_minutes > 0,
@@ -183,11 +188,7 @@ class PathEfficiencyAnalyzer:
             & (direction[:-1] != 0.0)
             & (direction[1:] != direction[:-1])
         )
-        reversal_count = self._rolling_sum(reversals, minutes)
-        starts = np.maximum(
-            np.arange(len(panel.timestamps), dtype=np.int64) + 1 - minutes,
-            0,
-        )
+        reversal_count = self._rolling_sum(reversals, starts)
         reversal_count -= reversals[starts]
 
         activity_valid = valid & panel.activity_valid
@@ -197,10 +198,10 @@ class PathEfficiencyAnalyzer:
             & (direction == sector_direction)
         )
         activity_count = self._rolling_sum(
-            activity_valid.astype(np.int64), minutes
+            activity_valid.astype(np.int64), starts
         )
         activity_confirmation = np.divide(
-            self._rolling_sum(activity_matches.astype(np.int64), minutes),
+            self._rolling_sum(activity_matches.astype(np.int64), starts),
             activity_count,
             out=np.zeros_like(path_length),
             where=activity_count > 0,
@@ -210,12 +211,12 @@ class PathEfficiencyAnalyzer:
         residual = np.where(
             residual_valid, observed - attribution.response_mean, 0.0
         )
-        residual_energy = self._rolling_sum(np.square(residual), minutes)
+        residual_energy = self._rolling_sum(np.square(residual), starts)
         observed_energy = self._rolling_sum(
-            np.where(residual_valid, np.square(observed), 0.0), minutes
+            np.where(residual_valid, np.square(observed), 0.0), starts
         )
         residual_count = self._rolling_sum(
-            residual_valid.astype(np.int64), minutes
+            residual_valid.astype(np.int64), starts
         )
         residual_fraction = np.divide(
             residual_energy,
@@ -237,7 +238,7 @@ class PathEfficiencyAnalyzer:
         )
 
     @staticmethod
-    def _rolling_sum(values: np.ndarray, window: int) -> np.ndarray:
+    def _rolling_sum(values: np.ndarray, starts: np.ndarray) -> np.ndarray:
         cumulative = np.concatenate(
             [
                 np.zeros((1, values.shape[1]), dtype=values.dtype),
@@ -246,7 +247,6 @@ class PathEfficiencyAnalyzer:
             axis=0,
         )
         ends = np.arange(1, len(values) + 1, dtype=np.int64)
-        starts = np.maximum(ends - window, 0)
         return cumulative[ends] - cumulative[starts]
 
     @staticmethod
@@ -259,7 +259,8 @@ class PathEfficiencyAnalyzer:
         endpoint: int,
     ) -> PathWindowMetrics:
         end = endpoint + 1
-        start = max(0, end - minutes)
+        cutoff = panel.timestamps[endpoint] - np.timedelta64(minutes - 1, "m")
+        start = int(np.searchsorted(panel.timestamps, cutoff, side="left"))
         raw = panel.raw_velocity[start:end, symbol]
         observed = panel.velocity[start:end, symbol]
         sector = flow.leave_one_out_mean[start:end, symbol]
@@ -387,18 +388,25 @@ class SourceProximityRanker:
                 & low_residual
                 & activity_confirmed
             )
+            has_observations = metric.valid_minutes > 0
             results.append(
                 SourceProximityPosterior(
                     symbol=path.symbol,
-                    source_proximity_probability=float(np.mean(joint)),
+                    source_proximity_probability=(
+                        float(np.mean(joint)) if has_observations else 0.0
+                    ),
                     lead_or_response_probability=float(
                         np.mean(lead_or_response)
                     ),
                     coupling_probability=float(np.mean(coupling)),
-                    efficiency_probability=float(np.mean(efficient)),
-                    low_residual_probability=float(np.mean(low_residual)),
+                    efficiency_probability=(
+                        float(np.mean(efficient)) if has_observations else 0.0
+                    ),
+                    low_residual_probability=(
+                        float(np.mean(low_residual)) if has_observations else 0.0
+                    ),
                     activity_confirmation_probability=float(
-                        np.mean(activity_confirmed)
+                        np.mean(activity_confirmed) if has_observations else 0.0
                     ),
                     leader_probability=attribution.leader_probability,
                     response_probability=attribution.response_probability,
@@ -460,6 +468,10 @@ class SourceProximityRanker:
             self.config.minimum_activity_confirmation,
             upper=True,
         )
+        observed = metrics.valid_minutes > 0
+        efficient *= observed
+        low_residual *= observed
+        activity *= observed
         source = (
             lead_or_response[None, :]
             * coupling[None, :]

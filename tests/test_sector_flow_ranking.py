@@ -155,8 +155,64 @@ class PathEfficiencyAnalyzerTests(unittest.TestCase):
 
         self.assertEqual(original, changed)
 
+    def test_path_windows_do_not_cross_market_time_gaps(self) -> None:
+        values = np.full((80, 1), 0.01)
+        panel, flow, attribution = ranking_fixture(values)
+        panel.timestamps[40:] += np.timedelta64(1, "D")
+        analyzer = PathEfficiencyAnalyzer((15,))
+
+        detailed = analyzer.compute(
+            panel, flow, attribution, endpoint=40
+        )[0].window(15)
+        vectorized = analyzer.compute_series(
+            panel, flow, attribution, minutes=15
+        ).at(40)[0].window(15)
+
+        self.assertEqual(detailed.valid_minutes, 1)
+        self.assertEqual(vectorized.valid_minutes, 1)
+        self.assertEqual(detailed.reversal_count, 0)
+        self.assertEqual(vectorized.reversal_count, 0)
+
 
 class SourceProximityRankerTests(unittest.TestCase):
+    def test_missing_endpoint_path_cannot_receive_source_probability(self) -> None:
+        values = np.full((60, 1), 0.01)
+        valid = np.ones_like(values, dtype=np.bool_)
+        valid[-1] = False
+        panel, flow, attribution = ranking_fixture(values, valid=valid)
+        analyzer = PathEfficiencyAnalyzer((1,))
+        series = analyzer.compute_series(panel, flow, attribution, minutes=1)
+        summaries = (
+            StockFlowAttribution(
+                symbol="S0",
+                leader_probability=0.99,
+                leader_horizon_minutes=1,
+                leader_coefficient_mean=1.0,
+                leader_coefficient_std=0.01,
+                response_probability=0.99,
+                response_delay_minutes=1,
+                response_coefficient_mean=1.0,
+                response_coefficient_std=0.01,
+                coupling_mean=1.0,
+                coupling_std=0.01,
+                residual_scale=0.01,
+            ),
+        )
+        ranker = SourceProximityRanker(
+            RankingConfig(
+                windows=(1,),
+                ranking_window=1,
+                monte_carlo_samples=1000,
+            )
+        )
+
+        detailed = ranker.rank(series.at(59), summaries)[0]
+        fast = ranker.rank_series(series, summaries)
+
+        self.assertEqual(detailed.path_metrics.valid_minutes, 0)
+        self.assertEqual(detailed.source_proximity_probability, 0.0)
+        self.assertEqual(fast.source_proximity_probability[59, 0], 0.0)
+
     def test_series_posterior_approximates_detailed_monte_carlo(self) -> None:
         rng = np.random.default_rng(29)
         values = rng.normal(0.002, 0.01, (120, 2))
