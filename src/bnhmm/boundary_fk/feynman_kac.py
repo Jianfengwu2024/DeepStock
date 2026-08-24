@@ -1,0 +1,113 @@
+"""Monte Carlo Feynman-Kac forecasts for Bayesian boundary dynamics."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+from scipy.special import ndtr
+
+from .bayesian_state import BayesianBoundaryPosterior, BoundaryStateLabels
+from .types import BoundaryDailyStates
+
+
+@dataclass(frozen=True, slots=True)
+class BoundaryFeynmanKacConfig:
+    paths: int = 10_000
+    seed: int = 7
+
+    def __post_init__(self) -> None:
+        if not 1_000 <= self.paths <= 100_000:
+            raise ValueError("Feynman-Kac paths must lie in [1000, 100000]")
+        if self.seed < 0:
+            raise ValueError("Feynman-Kac seed must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class BoundaryFeynmanKacForecast:
+    raw_state_probabilities: tuple[float, float, float]
+    survival_joint_probabilities: tuple[float, float, float]
+    trend_survival_probability: float
+    expected_return: float
+    epistemic_return_variance: float
+    aleatoric_return_variance: float
+    total_return_variance: float
+    expected_drift: float
+    expected_diffusion_variance: float
+    expected_effective_potential: float
+    bullish_probability_std: float
+
+
+class BoundaryFeynmanKacForecaster:
+    def __init__(self, config: BoundaryFeynmanKacConfig | None = None) -> None:
+        self.config = config or BoundaryFeynmanKacConfig()
+
+    def predict(
+        self,
+        posterior: BayesianBoundaryPosterior,
+        states: BoundaryDailyStates,
+        row: int,
+        labels: BoundaryStateLabels,
+        *,
+        neutral_threshold: float,
+    ) -> BoundaryFeynmanKacForecast:
+        if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
+            raise ValueError("neutral threshold must be finite and non-negative")
+        resolved_row = row if row >= 0 else len(states.sessions) + row
+        if resolved_row < 0 or resolved_row >= len(states.sessions):
+            raise IndexError("boundary forecast row is out of range")
+        if not states.valid[resolved_row]:
+            raise ValueError("cannot forecast an invalid boundary state")
+
+        rng = np.random.default_rng(self.config.seed)
+        drift_design = posterior.design_vector("drift", states, resolved_row, labels)
+        diffusion_design = posterior.design_vector("diffusion", states, resolved_row, labels)
+        potential_design = posterior.design_vector("potential", states, resolved_row, labels)
+
+        drift_coefficients = rng.multivariate_normal(
+            posterior.drift_mean, posterior.drift_covariance, size=self.config.paths
+        )
+        diffusion_coefficients = rng.multivariate_normal(
+            posterior.diffusion_mean,
+            posterior.diffusion_covariance,
+            size=self.config.paths,
+        )
+        potential_coefficients = rng.multivariate_normal(
+            posterior.potential_mean,
+            posterior.potential_covariance,
+            size=self.config.paths,
+        )
+
+        drift = drift_coefficients @ drift_design
+        log_variance = np.clip(diffusion_coefficients @ diffusion_design, -30.0, 10.0)
+        diffusion_variance = np.exp(log_variance)
+        effective_potential = np.logaddexp(0.0, potential_coefficients @ potential_design)
+        survival = np.exp(-effective_potential)
+
+        returns = drift + np.sqrt(diffusion_variance) * rng.standard_normal(self.config.paths)
+        bear = returns < -neutral_threshold
+        bull = returns > neutral_threshold
+        flat = ~(bear | bull)
+        classes = (bear, flat, bull)
+
+        raw = tuple(float(np.mean(mask)) for mask in classes)
+        survival_joint = tuple(float(np.mean(survival * mask)) for mask in classes)
+        epistemic = float(np.var(drift))
+        aleatoric = float(np.mean(diffusion_variance))
+        conditional_bullish = ndtr(
+            (drift - neutral_threshold) / np.sqrt(diffusion_variance)
+        )
+
+        return BoundaryFeynmanKacForecast(
+            raw_state_probabilities=raw,
+            survival_joint_probabilities=survival_joint,
+            trend_survival_probability=float(np.mean(survival)),
+            expected_return=float(np.mean(returns)),
+            epistemic_return_variance=epistemic,
+            aleatoric_return_variance=aleatoric,
+            total_return_variance=epistemic + aleatoric,
+            expected_drift=float(np.mean(drift)),
+            expected_diffusion_variance=aleatoric,
+            expected_effective_potential=float(np.mean(effective_potential)),
+            bullish_probability_std=float(np.std(conditional_bullish)),
+        )
