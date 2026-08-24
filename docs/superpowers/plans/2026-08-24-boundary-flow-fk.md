@@ -2,89 +2,75 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. The user explicitly prohibited subagents and multi-agent development.
 
-**Goal:** Build a causal, low-parameter BoundaryFlowFK strategy that compresses semiconductor constituent minute flow into named boundary-layer states, predicts the next-session real sector-index return distribution, and exposes five fixed ablations in DeepStock Lab.
+**Goal:** Build a causal, low-parameter BoundaryFlowFK strategy that compresses semiconductor constituent minute flow into named boundary-layer states, predicts the next-session synthetic sector-index return distribution, and exposes five fixed ablations in DeepStock Lab.
 
-**Architecture:** Keep all new model code in `bnhmm.boundary_fk`. Reuse sector panel alignment, monthly topology, ranking, job persistence, and web infrastructure, but do not insert BoundaryFlowFK branches into `sector_flow/pipeline.py`. Fit every projection, normalization, branch topology, threshold, and posterior inside each walk-forward fold; the UI and CLI only orchestrate the independent pipeline.
+**Architecture:** Keep all new model code in `bnhmm.boundary_fk`. Reuse sector panel alignment, monthly topology, ranking, job persistence, and web infrastructure, but do not insert BoundaryFlowFK branches into `sector_flow/pipeline.py`. Freeze every index weight set, normalization, branch topology, threshold, and posterior causally inside each walk-forward fold; the UI and CLI only orchestrate the independent pipeline.
 
 **Tech Stack:** Python 3.12, NumPy, SciPy, DuckDB/broker, FastAPI/Pydantic, vanilla JavaScript/CSS, pytest. No PyTorch, CNN, Transformer, PyMC, or new model runtime dependency.
 
 ---
 
-### Task 1: Real 881121 minute-index data gate
+### Task 1: Bounded historical market-cap source
 
 **Files:**
-- Create: `scripts/sync_sector_index_1m.py`
 - Modify: `src/bnhmm/data/source.py`
-- Test: `tests/test_sector_index_source.py`
+- Test: `tests/test_market_cap_source.py`
 
-- [ ] **Step 1: Write failing minute-index source tests**
-
-```python
-def test_duckdb_source_fetches_sector_index_minutes(tmp_path):
-    database = make_sector_database(tmp_path, table="sector_index_1m")
-    bars = DuckDBBarSource(str(database)).fetch_sector_index_minutes(
-        "semiconductor", "881121", "2024-01-02", "2024-01-03"
-    )
-    assert bars.symbol == "881121"
-    assert len(bars) == 240
-
-def test_missing_minute_index_is_not_replaced_by_daily_data(tmp_path):
-    database = make_sector_database(tmp_path, table="sector_index_1d")
-    with pytest.raises(ValueError, match="一分钟指数数据"):
-        DuckDBBarSource(str(database)).fetch_sector_index_minutes(
-            "semiconductor", "881121", "2024-01-02", "2024-01-03"
-        )
-```
-
-- [ ] **Step 2: Run the focused test and verify it fails**
-
-Run: `PYTHONPATH=src python -m pytest tests/test_sector_index_source.py -q`
-
-Expected: FAIL because `fetch_sector_index_minutes` and the `sector_index_1m` import path do not exist.
-
-- [ ] **Step 3: Implement the explicit minute-index contract and idempotent transfer tool**
+- [ ] **Step 1: Write failing bounded market-cap source tests**
 
 ```python
-def fetch_sector_index_minutes(
-    self, dataset_id: str, symbol: str, start: DateLike, end: DateLike
-) -> BarBatch:
-    return self._fetch_sector_index_table(
-        "sector_index_1m", dataset_id, symbol, start, end,
-        missing_message="缺少真实板块一分钟指数数据",
+def test_duckdb_source_fetches_bounded_historical_market_caps(tmp_path):
+    database = make_sector_database_with_daily_caps(tmp_path)
+    rows = DuckDBBarSource(str(database)).fetch_market_caps(
+        ["000001", "000002"], "2024-01-01", "2024-03-01"
     )
+    assert [(row.symbol, row.session) for row in rows] == [
+        ("000001", np.datetime64("2024-01-31")),
+        ("000002", np.datetime64("2024-01-31")),
+    ]
+
+def test_market_cap_query_does_not_read_outside_requested_bounds(tmp_path):
+    rows = DuckDBBarSource(str(database)).fetch_market_caps(
+        ["000001"], "2024-02-01", "2024-03-01"
+    )
+    assert all(np.datetime64("2024-02-01") <= row.session < np.datetime64("2024-03-01") for row in rows)
 ```
 
-The sync script must copy only `dataset_id=semiconductor, symbol=881121`, preserve timestamps and OHLCV, upsert on `(dataset_id, symbol, timestamp)`, and print source/target row counts, first timestamp, last timestamp, duplicate count, and missing trading-minute count. It must refuse to open a broker-owned DuckDB while the broker is running.
+- [ ] **Step 2: Run the focused test and verify RED**
 
-- [ ] **Step 4: Transfer and verify data before model work**
+Run: `PYTHONPATH=src python -m pytest tests/test_market_cap_source.py -q`
 
-Run on 144 under a maintenance window, transfer the exported Parquet to 145, then import to `/home/share/data/market.duckdb`. Verify with:
+Expected: FAIL because `MarketCapRecord` and `fetch_market_caps` do not exist.
 
-```sql
-SELECT count(*), min(timestamp), max(timestamp), count(DISTINCT timestamp)
-FROM sector_index_1m
-WHERE dataset_id = 'semiconductor' AND symbol = '881121';
+- [ ] **Step 3: Implement one bounded read contract for broker and static DuckDB sources**
+
+```python
+@dataclass(frozen=True, slots=True)
+class MarketCapRecord:
+    symbol: str
+    session: np.datetime64
+    circ_mv: float
 ```
 
-Expected: non-zero minute rows, `count(*) = count(DISTINCT timestamp)`, and coverage spanning the intended 2024-2025 experiment range. Stop here if this gate fails.
+Both sources query only requested symbols and `[start, end)`, return rows sorted by session and symbol, reject duplicate `(symbol, session)` rows, and retain only finite positive `circ_mv`. The broker path must continue to avoid opening its owned DuckDB directly.
 
-- [ ] **Step 5: Re-run tests and commit**
+- [ ] **Step 4: Re-run tests and commit**
 
-Run: `PYTHONPATH=src python -m pytest tests/test_sector_index_source.py -q`
+Run: `PYTHONPATH=src python -m pytest tests/test_market_cap_source.py tests/test_sector_index_source.py -q`
 
-Commit: `git commit -m "feat: add real sector minute index source"`
+Commit: `git commit -m "feat: add bounded market cap source"`
 
-### Task 2: Boundary contracts, causal normalization, and frozen index projection
+### Task 2: Boundary contracts, causal normalization, and synthetic sector index
 
 **Files:**
 - Create: `src/bnhmm/boundary_fk/__init__.py`
 - Create: `src/bnhmm/boundary_fk/types.py`
 - Create: `src/bnhmm/boundary_fk/normalization.py`
-- Create: `src/bnhmm/boundary_fk/index_projection.py`
+- Create: `src/bnhmm/boundary_fk/synthetic_index.py`
 - Test: `tests/test_boundary_fk_normalization.py`
-- Test: `tests/test_boundary_fk_index_projection.py`
+- Test: `tests/test_boundary_fk_synthetic_index.py`
 
-- [ ] **Step 1: Write failing causality and projection tests**
+- [ ] **Step 1: Write failing causality and synthetic-index tests**
 
 ```python
 def test_normalization_uses_only_prior_complete_sessions():
@@ -92,28 +78,53 @@ def test_normalization_uses_only_prior_complete_sessions():
     changed = normalize(panel_with_future_volume_shock("2024-03-04"))
     np.testing.assert_allclose(base.activity[:-240], changed.activity[:-240], equal_nan=True)
 
-def test_projection_is_nonnegative_normalized_and_monthly_frozen():
-    projection = IndexProjectionBuilder(lookback_sessions=60).fit(panel, index, cutoff)
-    assert np.all(projection.weights >= 0.0)
-    assert projection.weights.sum() == pytest.approx(1.0)
-    assert projection.training_cutoff < projection.effective_month
+def test_weights_use_prior_month_end_caps_and_stay_frozen():
+    index = SyntheticSectorIndexBuilder().build(panel, market_caps)
+    january = index.weights_for("2024-01")
+    assert january.weight_date == np.datetime64("2023-12-29")
+    np.testing.assert_allclose(january.weights, [0.25, 0.75])
+    assert index.weights_at("2024-01-02") == index.weights_at("2024-01-31")
+
+def test_future_caps_cannot_change_earlier_index_values():
+    base = SyntheticSectorIndexBuilder().build(panel, caps_through("2024-01-31"))
+    changed = SyntheticSectorIndexBuilder().build(panel, caps_with_future_shock())
+    np.testing.assert_allclose(base.velocity[january], changed.velocity[january], equal_nan=True)
+
+def test_missing_minutes_renormalize_available_weights_without_zero_fill():
+    index = SyntheticSectorIndexBuilder(min_active_weight=0.5).build(panel_with_one_gap(), caps)
+    assert index.velocity[gap] == pytest.approx(available_stock_return)
+
+def test_no_prior_cap_month_fails_instead_of_equal_weighting():
+    with pytest.raises(ValueError, match="上月末.*流通市值"):
+        SyntheticSectorIndexBuilder().build(panel, empty_caps)
 ```
 
 - [ ] **Step 2: Run tests and verify they fail**
 
-Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_normalization.py tests/test_boundary_fk_index_projection.py -q`
+Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_normalization.py tests/test_boundary_fk_synthetic_index.py -q`
 
 - [ ] **Step 3: Implement immutable public contracts**
 
 ```python
 @dataclass(frozen=True, slots=True)
-class IndexProjection:
+class MonthlyIndexWeights:
+    month: np.datetime64
+    weight_date: np.datetime64
     symbols: tuple[str, ...]
     weights: FloatArray
-    effective_month: np.datetime64
     training_cutoff: np.datetime64
-    source: Literal["published", "minute-fit"]
-    normalized_rmse: float
+    excluded_symbols: tuple[str, ...]
+
+@dataclass(frozen=True, slots=True)
+class SyntheticSectorIndex:
+    timestamps: TimeArray
+    velocity: FloatArray
+    valid: BoolArray
+    active_weight: FloatArray
+    active_fraction: FloatArray
+    monthly_weights: tuple[MonthlyIndexWeights, ...]
+    daily_sessions: TimeArray
+    daily_open_to_close_return: FloatArray
 
 @dataclass(frozen=True, slots=True)
 class BoundaryMinuteMoments:
@@ -131,13 +142,15 @@ class BoundaryMinuteMoments:
     valid: BoolArray
 ```
 
-Implement the design formulas exactly: price velocity is one-minute log return; its RMS uses the prior 10 complete sessions; relative volume is current minute volume divided by prior 10-session mean daily volume divided by 240. Current-session values never update their own baseline. Fit minute projection weights with non-negative constrained least squares plus previous-month shrinkage; freeze them for the whole month and fail when normalized RMSE exceeds 0.50.
+First remove constituents with no minute bars anywhere in the requested panel; fail if fewer than three remain. For month `m`, select each remaining symbol's last finite positive `circ_mv` from a completed session before month start, normalize it once, and freeze it for the entire month. New listings join only after both minute data and a prior market-cap observation exist. At each minute, calculate the weighted constituent log return over members with valid adjacent prices and renormalize by their available frozen weight; never fill a missing return with zero. Mark the minute invalid if active frozen weight or active member fraction is below its configured threshold. Calculate daily synthetic open-to-close returns with the same frozen monthly weights over members that have valid session open and close. Fail a month with no eligible market cap instead of using equal weights.
+
+Normalization follows the approved formulas: price velocity is one-minute log return; its RMS uses the prior 10 complete sessions; relative volume is current minute volume divided by prior 10-session mean daily volume divided by 240. Current-session values never update their own baseline.
 
 - [ ] **Step 4: Run focused tests and commit**
 
-Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_normalization.py tests/test_boundary_fk_index_projection.py -q`
+Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_normalization.py tests/test_boundary_fk_synthetic_index.py tests/test_market_cap_source.py -q`
 
-Commit: `git commit -m "feat: add causal boundary normalization and projection"`
+Commit: `git commit -m "feat: add causal synthetic sector index"`
 
 ### Task 3: Minute fluid moments and physical invariants
 
@@ -313,7 +326,7 @@ Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_pipeline.py -q`
 
 - [ ] **Step 3: Implement causal monthly walk-forward orchestration**
 
-Run `BFK-GBM -> BFK-Global -> BFK-Boundary -> BFK-Branches -> BoundaryFlowFK` with identical folds and seeds. Require at least 120 mature training sessions. Freeze projection, topology, scales, thresholds, and feature schema inside every fold. Stop progression when Brier/Log Loss or calibration gates fail. Write the nine named artifacts from the design plus PNGs for distribution, calibration, residuals, equity, and drawdown. Every prediction includes `signal_time`, `available_at`, `target_time`, `training_cutoff`, and `model_version`.
+Run `BFK-GBM -> BFK-Global -> BFK-Boundary -> BFK-Branches -> BoundaryFlowFK` with identical folds and seeds. Require at least 120 mature training sessions. Freeze synthetic-index weights, topology, scales, thresholds, and feature schema inside every fold. Stop progression when Brier/Log Loss or calibration gates fail. Write the nine named artifacts from the design plus PNGs for distribution, calibration, residuals, equity, and drawdown. Every prediction includes `signal_time`, `available_at`, `target_time`, `training_cutoff`, and `model_version`.
 
 - [ ] **Step 4: Run tests and commit**
 
@@ -352,7 +365,7 @@ Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_cli.py tests/test_w
 
 - [ ] **Step 3: Add the independent dispatch path**
 
-Add strategy literal `boundary-flow-fk`, CLI command `boundary-flow-fk-walk-forward`, validated fields for projection history, branch count, topology history, viscosity window, minimum training days, neutral sigma, direction sigma, FK paths, gate thresholds, Top-K, costs, seed, and max folds. Keep GPU/model-layer controls out of this strategy. Extend `_job_payload` with BoundaryFlowFK artifacts while retaining cancel/delete semantics and unique experiment names.
+Add strategy literal `boundary-flow-fk`, CLI command `boundary-flow-fk-walk-forward`, validated fields for minimum active index weight/fraction, branch count, topology history, viscosity window, minimum training days, neutral sigma, direction sigma, FK paths, gate thresholds, Top-K, costs, seed, and max folds. Keep GPU/model-layer controls out of this strategy. Extend `_job_payload` with BoundaryFlowFK artifacts while retaining cancel/delete semantics and unique experiment names.
 
 - [ ] **Step 4: Run tests and commit**
 
