@@ -43,6 +43,7 @@ class WalkForwardJobRequest(BaseModel):
         "stock-transformer",
         "fk-stock",
         "sector-flow-bayes",
+        "boundary-flow-fk",
     ] = "bnhmm"
     repair_variant: str | None = None
     name: str = "experiment"
@@ -94,6 +95,14 @@ class WalkForwardJobRequest(BaseModel):
     sector_flow_top_k: int = Field(10, ge=1, le=100)
     sector_flow_monte_carlo_samples: int = Field(1000, ge=100, le=100_000)
     sector_index_symbol: str = Field("881121", pattern=r"^[A-Za-z0-9._-]{1,24}$")
+    boundary_branch_count: Literal[3, 4] = 4
+    boundary_viscosity_window: int = Field(60, ge=10, le=240)
+    boundary_fk_paths: int = Field(10_000, ge=1_000, le=100_000)
+    boundary_min_raw_bullish_probability: float = Field(0.55, ge=0.0, le=1.0)
+    boundary_min_survival_bullish_probability: float = Field(0.55, ge=0.0, le=1.0)
+    boundary_min_trend_survival_probability: float = Field(0.60, ge=0.0, le=1.0)
+    boundary_max_bullish_probability_std: float = Field(0.15, ge=0.0, le=1.0)
+    boundary_max_thickness_risk_quantile: float = Field(0.90, ge=0.0, le=1.0)
     regime_context_sessions: int = Field(5, ge=2, le=20)
     regime_hidden_channels: int = Field(16, ge=4, le=256)
     regime_latent_states: int = Field(12, ge=3, le=256)
@@ -213,7 +222,7 @@ class WalkForwardJobRequest(BaseModel):
         if self.end <= self.start:
             raise ValueError("end must be later than start")
         if (
-            self.strategy != "sector-flow-bayes"
+            self.strategy not in {"sector-flow-bayes", "boundary-flow-fk"}
             and self.minimum_train_sessions <= self.tuning_sessions
         ):
             raise ValueError("minimum_train_sessions must exceed tuning_sessions")
@@ -264,6 +273,7 @@ class WalkForwardJobRequest(BaseModel):
                 "stock-transformer",
                 "fk-stock",
                 "sector-flow-bayes",
+                "boundary-flow-fk",
             }
             if self.strategy in sector_only and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
@@ -386,6 +396,8 @@ def gpu_memory_for_pid(process_id: int) -> int:
 
 
 def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]:
+    if request.strategy == "boundary-flow-fk":
+        return _build_boundary_flow_command(request, output_dir)
     if request.strategy == "sector-flow-bayes":
         return _build_sector_flow_command(request, output_dir)
     if request.strategy == "stock-transformer":
@@ -523,6 +535,60 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         command.extend(("--max-folds", str(request.max_folds)))
     if request.deterministic_training:
         command.append("--deterministic-training")
+    return command
+
+
+def _build_boundary_flow_command(
+    request: WalkForwardJobRequest, output_dir: Path
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "bnhmm.cli",
+        "boundary-flow-fk-walk-forward",
+        "--duckdb-path",
+        request.database_path,
+        "--symbols",
+        ",".join(request.symbols),
+        "--dataset-id",
+        request.dataset_id or "",
+        "--start",
+        request.start.isoformat(),
+        "--end",
+        request.end.isoformat(),
+        "--output-dir",
+        str(output_dir),
+        "--branch-count",
+        str(request.boundary_branch_count),
+        "--topology-lookback-sessions",
+        str(request.topology_lookback_sessions),
+        "--viscosity-window",
+        str(request.boundary_viscosity_window),
+        "--minimum-train-sessions",
+        str(request.minimum_train_sessions),
+        "--neutral-sigma",
+        str(request.regime_neutral_sigma),
+        "--fk-paths",
+        str(request.boundary_fk_paths),
+        "--minimum-raw-bullish-probability",
+        str(request.boundary_min_raw_bullish_probability),
+        "--minimum-survival-bullish-probability",
+        str(request.boundary_min_survival_bullish_probability),
+        "--minimum-trend-survival-probability",
+        str(request.boundary_min_trend_survival_probability),
+        "--maximum-bullish-probability-std",
+        str(request.boundary_max_bullish_probability_std),
+        "--maximum-thickness-risk-quantile",
+        str(request.boundary_max_thickness_risk_quantile),
+        "--top-k",
+        str(request.sector_flow_top_k),
+        "--transaction-cost-bps",
+        str(request.transaction_cost_bps),
+        "--seed",
+        str(request.seed),
+    ]
+    if request.max_folds is not None:
+        command.extend(("--max-folds", str(request.max_folds)))
     return command
 
 

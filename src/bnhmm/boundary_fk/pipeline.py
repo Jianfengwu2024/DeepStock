@@ -69,6 +69,11 @@ class BoundaryFlowPipelineConfig:
     minimum_neutral_threshold: float = 0.002
     transaction_cost_bps: float = 10.0
     metric_tolerance: float = 0.0
+    minimum_raw_bullish_probability: float = 0.55
+    minimum_survival_bullish_probability: float = 0.55
+    minimum_trend_survival_probability: float = 0.60
+    maximum_bullish_probability_std: float = 0.15
+    maximum_thickness_risk_quantile: float = 0.90
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -79,6 +84,15 @@ class BoundaryFlowPipelineConfig:
             raise ValueError("neutral threshold settings must be positive")
         if self.metric_tolerance < 0.0:
             raise ValueError("metric tolerance cannot be negative")
+        gates = (
+            self.minimum_raw_bullish_probability,
+            self.minimum_survival_bullish_probability,
+            self.minimum_trend_survival_probability,
+            self.maximum_bullish_probability_std,
+            self.maximum_thickness_risk_quantile,
+        )
+        if any(not 0.0 <= value <= 1.0 for value in gates):
+            raise ValueError("BoundaryFlowFK gates must lie in [0, 1]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,8 +324,8 @@ class BoundaryFlowPipeline:
             and current.ece <= previous.ece + tolerance
         )
 
-    @staticmethod
     def _first_layer_decision(
+        self,
         forecast,
         thickness_risk_quantile: float,
         *,
@@ -323,14 +337,33 @@ class BoundaryFlowPipeline:
             if forecast.trend_survival_probability > 0.0
             else 0.0
         )
-        opened = forecast.raw_state_probabilities[2] >= 0.55
+        opened = (
+            forecast.raw_state_probabilities[2]
+            >= self.config.minimum_raw_bullish_probability
+        )
         reason = "raw_bullish_probability"
         if opened and use_effective_potential:
             gates = (
-                (conditional >= 0.55, "survival_bullish_probability"),
-                (forecast.trend_survival_probability >= 0.60, "trend_survival_probability"),
-                (forecast.bullish_probability_std <= 0.15, "bullish_probability_uncertainty"),
-                (thickness_risk_quantile < 0.90, "boundary_thickening_risk"),
+                (
+                    conditional
+                    >= self.config.minimum_survival_bullish_probability,
+                    "survival_bullish_probability",
+                ),
+                (
+                    forecast.trend_survival_probability
+                    >= self.config.minimum_trend_survival_probability,
+                    "trend_survival_probability",
+                ),
+                (
+                    forecast.bullish_probability_std
+                    <= self.config.maximum_bullish_probability_std,
+                    "bullish_probability_uncertainty",
+                ),
+                (
+                    thickness_risk_quantile
+                    < self.config.maximum_thickness_risk_quantile,
+                    "boundary_thickening_risk",
+                ),
             )
             for passed, failed_reason in gates:
                 if not passed:

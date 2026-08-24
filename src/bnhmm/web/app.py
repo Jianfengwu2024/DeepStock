@@ -183,6 +183,24 @@ def config(request: Request) -> dict[str, Any]:
         "regime_mc_samples": 16,
         "device": "cpu",
     }
+    boundary_flow_defaults = {
+        **defaults,
+        "strategy": "boundary-flow-fk",
+        "training_scope": "sector-pooled",
+        "device": "cpu",
+        "topology_lookback_sessions": 60,
+        "boundary_branch_count": 4,
+        "boundary_viscosity_window": 60,
+        "minimum_train_sessions": 120,
+        "regime_neutral_sigma": 0.35,
+        "boundary_fk_paths": 10_000,
+        "boundary_min_raw_bullish_probability": 0.55,
+        "boundary_min_survival_bullish_probability": 0.55,
+        "boundary_min_trend_survival_probability": 0.60,
+        "boundary_max_bullish_probability_std": 0.15,
+        "boundary_max_thickness_risk_quantile": 0.90,
+        "sector_flow_top_k": 10,
+    }
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
@@ -196,6 +214,7 @@ def config(request: Request) -> dict[str, Any]:
             "stock-transformer": stock_defaults,
             "fk-stock": fk_defaults,
             "sector-flow-bayes": sector_flow_defaults,
+            "boundary-flow-fk": boundary_flow_defaults,
         },
         "datasets": [item.as_json() for item in datasets],
         "repair_variants": [
@@ -538,6 +557,12 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "sector-regime-evaluation.json",
             "sector-policy-evaluation.json",
             "sector-state-forecasts.npz",
+            "boundary-daily-states.json",
+            "boundary-model-posterior.json",
+            "feynman-kac-predictions.json",
+            "boundary-policy-evaluation.json",
+            "boundary-ablation-report.md",
+            "boundary-residual-analysis.json",
             "ranking.csv",
             "predictions.csv",
         )

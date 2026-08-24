@@ -11,6 +11,31 @@ from bnhmm.web.jobs import JobManager, JobRecord, WalkForwardJobRequest
 
 
 class WebSectorFlowConfigTests(unittest.TestCase):
+    def test_config_exposes_boundary_flow_specific_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = JobManager(directory, Path.cwd())
+            request = SimpleNamespace(
+                app=SimpleNamespace(
+                    state=SimpleNamespace(
+                        jobs=manager,
+                        sector_datasets=SimpleNamespace(list=lambda: []),
+                    )
+                )
+            )
+
+            payload = config(request)
+            manager.close()
+
+        defaults = payload["strategy_defaults"]["boundary-flow-fk"]
+        self.assertEqual(defaults["strategy"], "boundary-flow-fk")
+        self.assertEqual(defaults["boundary_branch_count"], 4)
+        self.assertEqual(defaults["topology_lookback_sessions"], 60)
+        self.assertEqual(defaults["boundary_viscosity_window"], 60)
+        self.assertEqual(defaults["minimum_train_sessions"], 120)
+        self.assertEqual(defaults["regime_neutral_sigma"], 0.35)
+        self.assertEqual(defaults["boundary_fk_paths"], 10_000)
+        self.assertEqual(defaults["device"], "cpu")
+
     def test_config_exposes_sector_flow_specific_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manager = JobManager(directory, Path.cwd())

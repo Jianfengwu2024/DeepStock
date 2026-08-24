@@ -31,6 +31,8 @@ _EXPORT_MODULES = {
     "BoundaryFlowRunResult": "pipeline",
     "BoundaryStageResult": "pipeline",
     "BoundaryWalkForwardData": "pipeline",
+    "build_boundary_experiment_data": "experiment",
+    "run_boundary_flow_experiment": "experiment",
     "BoundaryDailyStateBuilder": "daily_state",
     "BoundaryDailyStateConfig": "daily_state",
     "BoundaryTopologyBuilder": "daily_state",

@@ -167,6 +167,13 @@ def _sector_flow_walk_forward(args: argparse.Namespace) -> int:
     return 0
 
 
+def _boundary_flow_walk_forward(args: argparse.Namespace) -> int:
+    from .boundary_fk.experiment import run_boundary_flow_experiment
+
+    run_boundary_flow_experiment(args)
+    return 0
+
+
 def _train(args: argparse.Namespace) -> int:
     import torch
 
@@ -1392,6 +1399,30 @@ def build_parser() -> argparse.ArgumentParser:
     sector_flow.add_argument("--regime-mc-samples", type=int, default=16)
     sector_flow.add_argument("--device", default="cpu")
     sector_flow.set_defaults(handler=_sector_flow_walk_forward)
+
+    boundary_flow = subparsers.add_parser("boundary-flow-fk-walk-forward")
+    boundary_flow.add_argument("--duckdb-path", required=True)
+    boundary_flow.add_argument("--symbols", required=True)
+    boundary_flow.add_argument("--dataset-id", required=True)
+    boundary_flow.add_argument("--start", required=True)
+    boundary_flow.add_argument("--end", required=True)
+    boundary_flow.add_argument("--output-dir", required=True)
+    boundary_flow.add_argument("--branch-count", type=int, choices=(3, 4), default=4)
+    boundary_flow.add_argument("--topology-lookback-sessions", type=int, choices=(60,), default=60)
+    boundary_flow.add_argument("--viscosity-window", type=int, default=60)
+    boundary_flow.add_argument("--minimum-train-sessions", type=int, default=120)
+    boundary_flow.add_argument("--neutral-sigma", type=float, default=0.35)
+    boundary_flow.add_argument("--fk-paths", type=int, default=10_000)
+    boundary_flow.add_argument("--minimum-raw-bullish-probability", type=float, default=0.55)
+    boundary_flow.add_argument("--minimum-survival-bullish-probability", type=float, default=0.55)
+    boundary_flow.add_argument("--minimum-trend-survival-probability", type=float, default=0.60)
+    boundary_flow.add_argument("--maximum-bullish-probability-std", type=float, default=0.15)
+    boundary_flow.add_argument("--maximum-thickness-risk-quantile", type=float, default=0.90)
+    boundary_flow.add_argument("--top-k", type=int, default=10)
+    boundary_flow.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    boundary_flow.add_argument("--seed", type=int, default=7)
+    boundary_flow.add_argument("--max-folds", type=int)
+    boundary_flow.set_defaults(handler=_boundary_flow_walk_forward)
 
     train = subparsers.add_parser("train")
     train.add_argument("--duckdb-path", required=True)

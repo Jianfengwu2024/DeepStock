@@ -383,6 +383,26 @@ class WebJobTests(unittest.TestCase):
                 ).model_dump()
             )
 
+    def test_boundary_flow_command_uses_independent_cpu_pipeline(self) -> None:
+        request = WalkForwardJobRequest(
+            strategy="boundary-flow-fk",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            minimum_train_sessions=120,
+        )
+
+        command = build_command(request, Path("/tmp/boundary-flow"))
+
+        self.assertIn("boundary-flow-fk-walk-forward", command)
+        self.assertEqual(command[command.index("--branch-count") + 1], "4")
+        self.assertEqual(command[command.index("--fk-paths") + 1], "10000")
+        self.assertIn("--minimum-raw-bullish-probability", command)
+        self.assertIn("--maximum-thickness-risk-quantile", command)
+        self.assertNotIn("--epochs", command)
+        self.assertNotIn("--device", command)
+        self.assertNotIn("--layers", command)
+        self.assertNotIn("--latent-states", command)
+
     def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
         output = "123, 512\n456, 900\n123, 256\n"
         with patch(
