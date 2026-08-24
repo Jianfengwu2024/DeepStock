@@ -9,15 +9,27 @@ import numpy as np
 from .types import BoundaryDailyStates
 
 
-_DRIFT_BASE = (
+_GBM_DRIFT = ("historical_index_volatility",)
+_GLOBAL_DRIFT = (
+    "historical_index_volatility",
+    "water_last60",
     "velocity_last60",
     "momentum_last60",
     "coherence_last60",
+)
+_BOUNDARY_DRIFT = (
+    *_GLOBAL_DRIFT,
     "decoupling_last60",
     "thickness_last60",
     "thickness_slope_close",
+    "viscosity_close",
 )
-_DIFFUSION = (
+_GBM_DIFFUSION = ("historical_index_volatility",)
+_GLOBAL_DIFFUSION = (
+    "historical_index_volatility",
+    "low_coherence_last60",
+)
+_BOUNDARY_DIFFUSION = (
     "turbulence_last60",
     "thickness_last60",
     "abs_decoupling_last60",
@@ -130,6 +142,7 @@ class BayesianBoundaryStateConfig:
     minimum_rows: int = 30
     maximum_newton_steps: int = 50
     convergence_tolerance: float = 1e-8
+    feature_profile: str = "full"
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -138,6 +151,14 @@ class BayesianBoundaryStateConfig:
             raise ValueError("Bayesian boundary fitting budget is invalid")
         if self.convergence_tolerance <= 0.0:
             raise ValueError("convergence tolerance must be positive")
+        if self.feature_profile not in {
+            "gbm",
+            "global",
+            "boundary",
+            "branches",
+            "full",
+        }:
+            raise ValueError("unknown Bayesian boundary feature profile")
 
 
 class BayesianBoundaryStateModel:
@@ -162,13 +183,7 @@ class BayesianBoundaryStateModel:
         if int(survival_labelled.sum()) < self.config.minimum_rows:
             raise ValueError("insufficient matured survival labels for Bayesian boundary fit")
 
-        drift_names = tuple(
-            (*_DRIFT_BASE, *sorted(
-                name
-                for name in states.feature_names
-                if name.startswith("branch_") and name.endswith("_cumulative_contribution")
-            ))
-        )
+        drift_names, diffusion_names = self._profile_features(states)
         drift_x, drift_center, drift_scale = self._design(
             states, labels, drift_names, labelled
         )
@@ -177,7 +192,7 @@ class BayesianBoundaryStateModel:
         drift_residual = y - drift_x @ drift_mean
 
         diffusion_x, diffusion_center, diffusion_scale = self._design(
-            states, labels, _DIFFUSION, labelled
+            states, labels, diffusion_names, labelled
         )
         log_variance = np.log(np.square(drift_residual) + self.config.variance_floor)
         diffusion_mean, diffusion_covariance, diffusion_noise = self._gaussian_fit(
@@ -200,7 +215,7 @@ class BayesianBoundaryStateModel:
             drift_mean=drift_mean,
             drift_covariance=drift_covariance,
             drift_noise_variance=drift_noise,
-            diffusion_feature_names=_DIFFUSION,
+            diffusion_feature_names=diffusion_names,
             diffusion_center=diffusion_center,
             diffusion_scale=diffusion_scale,
             diffusion_mean=diffusion_mean,
@@ -215,6 +230,27 @@ class BayesianBoundaryStateModel:
             fit_rows=int(labelled.sum()),
             survival_fit_rows=int(survival_labelled.sum()),
         )
+
+    def _profile_features(
+        self, states: BoundaryDailyStates
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        profile = self.config.feature_profile
+        if profile == "gbm":
+            return _GBM_DRIFT, _GBM_DIFFUSION
+        if profile == "global":
+            return _GLOBAL_DRIFT, _GLOBAL_DIFFUSION
+        drift = _BOUNDARY_DRIFT
+        if profile in {"branches", "full"}:
+            branches = tuple(
+                sorted(
+                    name
+                    for name in states.feature_names
+                    if name.startswith("branch_")
+                    and name.endswith("_cumulative_contribution")
+                )
+            )
+            drift = (*drift, *branches)
+        return drift, _BOUNDARY_DIFFUSION
 
     @staticmethod
     def _validate_alignment(

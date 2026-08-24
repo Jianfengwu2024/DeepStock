@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from bnhmm.boundary_fk.bayesian_state import (
+    BayesianBoundaryStateConfig,
     BayesianBoundaryStateModel,
     BoundaryStateLabels,
 )
@@ -114,11 +115,12 @@ def test_model_uses_only_named_low_dimensional_features() -> None:
         training_cutoff=labels.target_time[-1],
     )
 
-    assert set(posterior.drift_feature_names).issubset(set(FEATURES))
     named_or_derived = set(FEATURES) | {
         "abs_decoupling_last60",
         "low_coherence_last60",
+        "historical_index_volatility",
     }
+    assert set(posterior.drift_feature_names).issubset(named_or_derived)
     assert set(posterior.potential_feature_names).issubset(named_or_derived)
     assert "historical_index_volatility" in posterior.diffusion_feature_names
     assert len(posterior.drift_feature_names) <= 10
@@ -169,3 +171,38 @@ def test_posterior_design_vectors_are_finite_and_include_intercept() -> None:
         design = posterior.design_vector(component, states, -1, labels)
         assert design[0] == pytest.approx(1.0)
         assert np.isfinite(design).all()
+
+
+def test_ablation_profiles_use_strictly_bounded_named_feature_sets() -> None:
+    states, labels = _dataset()
+    branch_name = "branch_1_cumulative_contribution"
+    states = replace(
+        states,
+        feature_names=(*states.feature_names, branch_name),
+        units=(*states.units, "ratio_minutes"),
+        values=np.column_stack((states.values, np.linspace(-1.0, 1.0, len(states.sessions)))),
+    )
+    posteriors = {
+        profile: BayesianBoundaryStateModel(
+            BayesianBoundaryStateConfig(feature_profile=profile)
+        ).fit(states, labels, training_cutoff=labels.target_time[-1])
+        for profile in ("gbm", "global", "boundary", "branches", "full")
+    }
+
+    assert posteriors["gbm"].drift_feature_names == (
+        "historical_index_volatility",
+    )
+    assert set(posteriors["gbm"].drift_feature_names) < set(
+        posteriors["global"].drift_feature_names
+    )
+    assert set(posteriors["global"].drift_feature_names) < set(
+        posteriors["boundary"].drift_feature_names
+    )
+    assert branch_name not in posteriors["boundary"].drift_feature_names
+    assert branch_name in posteriors["branches"].drift_feature_names
+    assert posteriors["branches"].drift_feature_names == posteriors["full"].drift_feature_names
+
+
+def test_unknown_ablation_profile_is_rejected() -> None:
+    with pytest.raises(ValueError, match="feature profile"):
+        BayesianBoundaryStateConfig(feature_profile="large-neural-network")

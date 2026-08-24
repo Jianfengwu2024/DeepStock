@@ -15,6 +15,7 @@ from .types import BoundaryDailyStates
 class BoundaryFeynmanKacConfig:
     paths: int = 10_000
     seed: int = 7
+    use_effective_potential: bool = True
 
     def __post_init__(self) -> None:
         if not 1_000 <= self.paths <= 100_000:
@@ -81,8 +82,14 @@ class BoundaryFeynmanKacForecaster:
         drift = drift_coefficients @ drift_design
         log_variance = np.clip(diffusion_coefficients @ diffusion_design, -30.0, 10.0)
         diffusion_variance = np.exp(log_variance)
-        effective_potential = np.logaddexp(0.0, potential_coefficients @ potential_design)
-        survival = np.exp(-effective_potential)
+        if self.config.use_effective_potential:
+            effective_potential = np.logaddexp(
+                0.0, potential_coefficients @ potential_design
+            )
+            survival = np.exp(-effective_potential)
+        else:
+            effective_potential = np.zeros(self.config.paths, dtype=np.float64)
+            survival = np.ones(self.config.paths, dtype=np.float64)
 
         returns = drift + np.sqrt(diffusion_variance) * rng.standard_normal(self.config.paths)
         bear = returns < -neutral_threshold

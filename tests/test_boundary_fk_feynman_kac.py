@@ -54,3 +54,22 @@ def test_neutral_threshold_partitions_each_sample_once() -> None:
     ).predict(posterior, states, -1, labels, neutral_threshold=0.5)
 
     assert forecast.raw_state_probabilities[1] > 0.99
+
+
+def test_ablation_can_disable_effective_potential_without_changing_raw_distribution() -> None:
+    states, labels = _dataset()
+    posterior = BayesianBoundaryStateModel().fit(
+        states, labels, training_cutoff=labels.target_time[-1]
+    )
+    with_potential = BoundaryFeynmanKacForecaster(
+        BoundaryFeynmanKacConfig(paths=1000, seed=13)
+    ).predict(posterior, states, -1, labels, neutral_threshold=0.002)
+    without_potential = BoundaryFeynmanKacForecaster(
+        BoundaryFeynmanKacConfig(paths=1000, seed=13, use_effective_potential=False)
+    ).predict(posterior, states, -1, labels, neutral_threshold=0.002)
+
+    assert without_potential.raw_state_probabilities == with_potential.raw_state_probabilities
+    assert without_potential.trend_survival_probability == pytest.approx(1.0)
+    assert without_potential.survival_joint_probabilities == pytest.approx(
+        without_potential.raw_state_probabilities
+    )
