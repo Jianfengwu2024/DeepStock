@@ -20,6 +20,12 @@ from .regime_data import (
     SectorStateImage,
     build_sector_state_image,
 )
+from .regime_model import (
+    BayesianSectorRegimeHMM,
+    SectorRegimeModelConfig,
+    SectorRegimePass,
+    SectorRegimePosterior,
+)
 from .topology import RiverTopologyBuilder, TopologyConfig
 from .types import (
     DailyGraphState,
@@ -76,6 +82,10 @@ __all__ = [
     "SectorRegimeState",
     "SectorStateImage",
     "build_sector_state_image",
+    "BayesianSectorRegimeHMM",
+    "SectorRegimeModelConfig",
+    "SectorRegimePass",
+    "SectorRegimePosterior",
     "StockFlowAttribution",
     "StockPathMetrics",
     "TopologyConfig",
