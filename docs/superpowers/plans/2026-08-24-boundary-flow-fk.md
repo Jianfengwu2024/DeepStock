@@ -16,7 +16,7 @@
 - Modify: `src/bnhmm/data/source.py`
 - Test: `tests/test_market_cap_source.py`
 
-- [ ] **Step 1: Write failing bounded market-cap source tests**
+- [x] **Step 1: Write failing bounded market-cap source tests**
 
 ```python
 def test_duckdb_source_fetches_bounded_historical_market_caps(tmp_path):
@@ -36,13 +36,13 @@ def test_market_cap_query_does_not_read_outside_requested_bounds(tmp_path):
     assert all(np.datetime64("2024-02-01") <= row.session < np.datetime64("2024-03-01") for row in rows)
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_market_cap_source.py -q`
 
 Expected: FAIL because `MarketCapRecord` and `fetch_market_caps` do not exist.
 
-- [ ] **Step 3: Implement one bounded read contract for broker and static DuckDB sources**
+- [x] **Step 3: Implement one bounded read contract for broker and static DuckDB sources**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -54,7 +54,7 @@ class MarketCapRecord:
 
 Both sources query only requested symbols and `[start, end)`, return rows sorted by session and symbol, reject duplicate `(symbol, session)` rows, and retain only finite positive `circ_mv`. The broker path must continue to avoid opening its owned DuckDB directly.
 
-- [ ] **Step 4: Re-run tests and commit**
+- [x] **Step 4: Re-run tests and commit**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_market_cap_source.py tests/test_sector_index_source.py -q`
 
@@ -70,7 +70,7 @@ Commit: `git commit -m "feat: add bounded market cap source"`
 - Test: `tests/test_boundary_fk_normalization.py`
 - Test: `tests/test_boundary_fk_synthetic_index.py`
 
-- [ ] **Step 1: Write failing causality and synthetic-index tests**
+- [x] **Step 1: Write failing causality and synthetic-index tests**
 
 ```python
 def test_normalization_uses_only_prior_complete_sessions():
@@ -99,11 +99,11 @@ def test_no_prior_cap_month_fails_instead_of_equal_weighting():
         SyntheticSectorIndexBuilder().build(panel, empty_caps)
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_normalization.py tests/test_boundary_fk_synthetic_index.py -q`
 
-- [ ] **Step 3: Implement immutable public contracts**
+- [x] **Step 3: Implement immutable public contracts**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -146,7 +146,7 @@ First remove constituents with no minute bars anywhere in the requested panel; f
 
 Normalization follows the approved formulas: price velocity is one-minute log return; its RMS uses the prior 10 complete sessions; relative volume is current minute volume divided by prior 10-session mean daily volume divided by 240. Current-session values never update their own baseline.
 
-- [ ] **Step 4: Run focused tests and commit**
+- [x] **Step 4: Run focused tests and commit**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_normalization.py tests/test_boundary_fk_synthetic_index.py tests/test_market_cap_source.py -q`
 
@@ -158,7 +158,7 @@ Commit: `git commit -m "feat: add causal synthetic sector index"`
 - Create: `src/bnhmm/boundary_fk/moments.py`
 - Test: `tests/test_boundary_fk_moments.py`
 
-- [ ] **Step 1: Write failing formula and synthetic-field tests**
+- [x] **Step 1: Write failing formula and synthetic-field tests**
 
 ```python
 def test_high_volume_same_direction_flow_has_high_coherence():
@@ -173,15 +173,15 @@ def test_index_move_without_density_support_increases_decoupling():
     assert abs(weak.decoupling[-1]) > abs(strong.decoupling[-1])
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_moments.py -q`
 
-- [ ] **Step 3: Implement `BoundaryFieldExtractor.extract`**
+- [x] **Step 3: Implement `BoundaryFieldExtractor.extract`**
 
 Compute `M, J, u, C, T, B, H, N_eff, D, delta, delta_slope, nu` using the formulas in the approved design. Preserve masks, never bridge lunch/cross-day gaps, require a configurable minimum valid-symbol fraction, use training-fold `q0.25` for the thickness stabilizer, and reject every NaN or infinity before returning.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_moments.py -q`
 
@@ -194,7 +194,7 @@ Commit: `git commit -m "feat: extract boundary flow moments"`
 - Modify: `src/bnhmm/boundary_fk/types.py`
 - Test: `tests/test_boundary_fk_daily_state.py`
 
-- [ ] **Step 1: Write failing tests for monthly freezing, permutation invariance, and feature limit**
+- [x] **Step 1: Write failing tests for monthly freezing, permutation invariance, and feature limit**
 
 ```python
 def test_branch_membership_is_frozen_inside_month():
@@ -208,15 +208,15 @@ def test_daily_schema_is_named_and_bounded():
     assert all(name and unit for name, unit in zip(state.feature_names, state.units))
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_daily_state.py -q`
 
-- [ ] **Step 3: Implement branch summaries and daily compression**
+- [x] **Step 3: Implement branch summaries and daily compression**
 
 Reuse `RiverTopologyBuilder` with a 60-session lookback and canonical monthly ordering. Default to four branches, permit three to five, and mark `branch_degraded` rather than duplicating unstable branches. Compress the main flow to close, full-day integral/variance, last-30/last-60 density-weighted means, and high-coherence/high-turbulence occupancy; retain only branch close contribution, cumulative contribution, and last-60 coherence. Assert the final matrix width is at most 36.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_daily_state.py -q`
 
