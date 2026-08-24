@@ -8,6 +8,48 @@ ROOT = Path(__file__).parents[1] / "src" / "bnhmm" / "web" / "static"
 
 
 class SectorFlowStaticContractTests(unittest.TestCase):
+    def test_boundary_flow_configuration_and_results_have_stable_hooks(self) -> None:
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('value="boundary-flow-fk"', html)
+        for field in (
+            "boundary_branch_count",
+            "boundary_viscosity_window",
+            "boundary_fk_paths",
+            "boundary_min_raw_bullish_probability",
+            "boundary_min_survival_bullish_probability",
+            "boundary_min_trend_survival_probability",
+            "boundary_max_bullish_probability_std",
+            "boundary_max_thickness_risk_quantile",
+        ):
+            self.assertIn(f'name="{field}"', html)
+        for identifier in (
+            "boundary-flow-results",
+            "boundary-stage-table",
+            "boundary-probabilities",
+            "boundary-dynamics",
+            "boundary-gate-reason",
+        ):
+            self.assertIn(f'id="{identifier}"', html)
+        self.assertIn("renderBoundaryFlowResult", script)
+        self.assertIn('"boundary-flow-fk"', script)
+        for artifact in (
+            "boundary-policy-evaluation.json",
+            "feynman-kac-predictions.json",
+        ):
+            self.assertIn(artifact, script)
+        for field in (
+            "raw_state_probabilities",
+            "survival_joint_probabilities",
+            "trend_survival_probability",
+            "expected_effective_potential",
+            "epistemic_return_variance",
+            "aleatoric_return_variance",
+            "gate_reason",
+        ):
+            self.assertIn(field, script)
+
     def test_river_workspace_has_four_views_and_stock_inspector(self) -> None:
         html = (ROOT / "river.html").read_text(encoding="utf-8")
         script = (ROOT / "river.js").read_text(encoding="utf-8")

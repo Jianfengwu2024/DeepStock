@@ -195,6 +195,25 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .report-image-wrap img:not([src]) { display: none; }
 .download-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .download-row a { display: inline-flex; align-items: center; min-height: 30px; padding: 0 9px; color: var(--blue); background: white; border: 1px solid var(--line); border-radius: 4px; text-decoration: none; font-size: 11px; }
+.boundary-flow-results { display: grid; gap: 14px; margin-bottom: 18px; }
+.boundary-result-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.boundary-result-grid > section { min-width: 0; padding: 12px; border: 1px solid var(--line); background: white; }
+.boundary-result-grid h3 { margin: 0 0 10px; font-size: 12px; }
+.boundary-probabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.boundary-probability { min-width: 0; padding: 10px; border-top: 3px solid #69767c; background: var(--panel-muted); }
+.boundary-probability.bear { border-top-color: #147f63; }
+.boundary-probability.bull { border-top-color: #c8463f; }
+.boundary-probability strong, .boundary-probability span { display: block; }
+.boundary-probability strong { margin-bottom: 7px; font-size: 13px; }
+.boundary-probability span { color: var(--muted); font-size: 10px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.boundary-dynamics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); }
+.boundary-dynamics > div { min-width: 0; min-height: 52px; padding: 9px; background: white; }
+.boundary-dynamics span, .boundary-dynamics strong { display: block; overflow-wrap: anywhere; }
+.boundary-dynamics span { color: var(--muted); font-size: 10px; }
+.boundary-dynamics strong { margin-top: 6px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.boundary-gate { display: grid; gap: 4px; padding: 11px 12px; border-left: 3px solid var(--green); background: var(--green-soft); }
+.boundary-gate strong { font-size: 11px; }
+.boundary-gate span, .boundary-empty { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .sector-flow-results { display: grid; gap: 16px; margin-bottom: 18px; }
 .sector-flow-results.regime-mode > #sector-flow-water-state,
 .sector-flow-results.regime-mode > .report-image-wrap,
@@ -275,6 +294,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 }
 
 @media (max-width: 820px) {
+  .boundary-result-grid, .boundary-dynamics { grid-template-columns: 1fr; }
+  .boundary-probabilities { grid-template-columns: repeat(3, minmax(76px, 1fr)); }
   .sector-regime-probabilities, .sector-regime-summary-grid { grid-template-columns: 1fr; }
   .mobile-only { display: inline-flex !important; }
   .app-shell { display: block; }
