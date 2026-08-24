@@ -265,7 +265,7 @@ Commit: `git commit -m "feat: fit Bayesian boundary dynamics"`
 - Test: `tests/test_boundary_fk_policy.py`
 - Test: `tests/test_boundary_fk_evaluation.py`
 
-- [ ] **Step 1: Write failing distribution, uncertainty, and gate tests**
+- [x] **Step 1: Write failing distribution, uncertainty, and gate tests**
 
 ```python
 def test_raw_probabilities_are_normalized_and_kept_separate_from_survival():
@@ -282,15 +282,15 @@ def test_policy_calls_ranker_only_after_all_bullish_gates_pass(mocker):
     ranker.rank.assert_called_once()
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_feynman_kac.py tests/test_boundary_fk_policy.py tests/test_boundary_fk_evaluation.py -q`
 
-- [ ] **Step 3: Implement forecasts and metrics**
+- [x] **Step 3: Implement forecasts and metrics**
 
 Sample posterior parameters and return noise separately so epistemic and aleatoric variances remain identifiable. Store raw three-state probabilities, survival probability, and joint direction-and-survival mass as different fields. Apply the approved five gates before calling `SourceProximityRanker`; trade next-session open to close, long-only, Top-K equal weight, 10 BP default cost. Evaluate Log Loss, Brier, ECE, CRPS, coverage, balanced accuracy, Macro F1, residual autocorrelation, return, drawdown, turnover, open rate, and concentration of profits across trade days.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_feynman_kac.py tests/test_boundary_fk_policy.py tests/test_boundary_fk_evaluation.py -q`
 
