@@ -228,7 +228,7 @@ Commit: `git commit -m "feat: build frozen branch boundary states"`
 - Create: `src/bnhmm/boundary_fk/bayesian_state.py`
 - Test: `tests/test_boundary_fk_bayesian_state.py`
 
-- [ ] **Step 1: Write failing posterior tests**
+- [x] **Step 1: Write failing posterior tests**
 
 ```python
 def test_fit_rejects_unmatured_targets():
@@ -241,15 +241,15 @@ def test_posterior_covariances_are_positive_semidefinite():
     assert posterior.diffusion_variance > 0.0
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_bayesian_state.py -q`
 
-- [ ] **Step 3: Implement low-parameter posterior fitting**
+- [x] **Step 3: Implement low-parameter posterior fitting**
 
 Use conjugate Gaussian shrinkage for drift; a low-dimensional log-variance regression with a Gaussian prior and Laplace covariance for diffusion; and Bayesian binomial regression with Laplace covariance for survival/effective potential. Standardize features only on each training fold. Add bounded Cholesky jitter once, then fail loudly. Do not add a hidden neural layer or unnamed latent embedding.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_bayesian_state.py -q`
 
