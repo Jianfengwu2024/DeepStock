@@ -143,6 +143,11 @@ def synthetic_sector_index(batches: dict[str, BarBatch]) -> BarBatch:
 class SectorFlowPipelineTests(unittest.TestCase):
     def test_regime_protocol_predicts_sector_then_gates_stock_selection(self) -> None:
         batches = synthetic_river_sector(80)
+        sparse_symbol = tuple(batches)[-1]
+        sparse = batches[sparse_symbol]
+        batches[sparse_symbol] = sparse.take(
+            np.flatnonzero(sparse.timestamp < np.datetime64("2025-03-01"))
+        )
         source = MemoryBarSource(batches, synthetic_sector_index(batches))
         config = SectorFlowConfig(
             symbols=tuple(source.batches),

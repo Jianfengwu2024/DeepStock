@@ -712,26 +712,34 @@ class SectorFlowPipeline:
                     prediction.symbols,
                     relative=False,
                 )
-                relative_returns = raw_returns.copy()
-                finite = np.isfinite(relative_returns)
-                if finite.any():
-                    relative_returns[finite] -= float(
-                        np.mean(relative_returns[finite])
-                    )
-                if not finite.all():
+                expected = np.asarray(
+                    prediction.expected_relative_return, dtype=np.float64
+                )
+                predictive_variance = np.asarray(
+                    prediction.predictive_variance, dtype=np.float64
+                )
+                valid_rows = np.flatnonzero(
+                    np.isfinite(raw_returns)
+                    & np.isfinite(expected)
+                    & np.isfinite(predictive_variance)
+                )
+                if not len(valid_rows):
                     continue
+                relative_returns = raw_returns[valid_rows].copy()
+                relative_returns -= float(np.mean(relative_returns))
+                available_symbols = tuple(
+                    prediction.symbols[int(row)] for row in valid_rows
+                )
                 snapshots.append(
                     StockSelectionSnapshot(
                         signal_time=regime.signal_time,
-                        symbols=prediction.symbols,
-                        relative_scores=np.asarray(
-                            prediction.expected_relative_return,
-                            dtype=np.float64,
-                        ),
-                        next_open_close_returns=raw_returns,
+                        symbols=available_symbols,
+                        relative_scores=expected[valid_rows],
+                        next_open_close_returns=raw_returns[valid_rows],
                     )
                 )
-                for row, symbol in enumerate(prediction.symbols):
+                for result_row, source_row in enumerate(valid_rows):
+                    symbol = prediction.symbols[int(source_row)]
                     graph_observations.append(
                         GraphPredictionObservation(
                             symbol=symbol,
@@ -741,13 +749,13 @@ class SectorFlowPipeline:
                             model_version=prediction.model_version,
                             fold=fold.index,
                             expected_relative_return=float(
-                                prediction.expected_relative_return[row]
+                                expected[source_row]
                             ),
                             predictive_variance=float(
-                                prediction.predictive_variance[row]
+                                predictive_variance[source_row]
                             ),
                             realized_relative_return=float(
-                                relative_returns[row]
+                                relative_returns[result_row]
                             ),
                         )
                     )
