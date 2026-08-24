@@ -12,6 +12,14 @@ from .ranking import (
     RankingConfig,
     SourceProximityRanker,
 )
+from .regime_data import (
+    SectorRegimeDataConfig,
+    SectorRegimeDatasetBuilder,
+    SectorRegimeSample,
+    SectorRegimeState,
+    SectorStateImage,
+    build_sector_state_image,
+)
 from .topology import RiverTopologyBuilder, TopologyConfig
 from .types import (
     DailyGraphState,
@@ -62,6 +70,12 @@ __all__ = [
     "SectorNormalizationConfig",
     "SourceProximityPosterior",
     "SourceProximityRanker",
+    "SectorRegimeDataConfig",
+    "SectorRegimeDatasetBuilder",
+    "SectorRegimeSample",
+    "SectorRegimeState",
+    "SectorStateImage",
+    "build_sector_state_image",
     "StockFlowAttribution",
     "StockPathMetrics",
     "TopologyConfig",
