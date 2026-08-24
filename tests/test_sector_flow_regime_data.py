@@ -91,6 +91,7 @@ class SectorRegimeDataTests(unittest.TestCase):
         self.assertEqual(samples[0].signal_time, slices[1].timestamps[-1])
         self.assertEqual(samples[0].available_at, slices[2].timestamps[0])
         self.assertEqual(samples[0].target_state, SectorRegimeState.BULL)
+        self.assertEqual(samples[0].previous_state, SectorRegimeState.BEAR)
 
     def test_target_day_return_does_not_change_its_causal_scale(self) -> None:
         slices = tuple(

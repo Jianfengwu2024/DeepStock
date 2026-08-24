@@ -26,6 +26,16 @@ from .regime_model import (
     SectorRegimePass,
     SectorRegimePosterior,
 )
+from .regime_evaluation import (
+    SectorRegimePredictionRecord,
+    evaluate_sector_regimes,
+)
+from .regime_training import (
+    SectorRegimeTrainer,
+    SectorRegimeTrainerConfig,
+    SectorRegimeTrainingResult,
+    state_reconstruction_loss,
+)
 from .topology import RiverTopologyBuilder, TopologyConfig
 from .types import (
     DailyGraphState,
@@ -86,6 +96,12 @@ __all__ = [
     "SectorRegimeModelConfig",
     "SectorRegimePass",
     "SectorRegimePosterior",
+    "SectorRegimePredictionRecord",
+    "evaluate_sector_regimes",
+    "SectorRegimeTrainer",
+    "SectorRegimeTrainerConfig",
+    "SectorRegimeTrainingResult",
+    "state_reconstruction_loss",
     "StockFlowAttribution",
     "StockPathMetrics",
     "TopologyConfig",

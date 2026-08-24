@@ -63,6 +63,7 @@ class SectorRegimeSample:
     images: NDArray[np.float32]
     next_image: NDArray[np.float32]
     target_state: SectorRegimeState
+    previous_state: SectorRegimeState
     target_return: float
     return_scale: float
     signal_time: np.datetime64
@@ -148,12 +149,9 @@ class SectorRegimeDatasetBuilder:
             scale = max(float(np.std(history)), self.config.minimum_return_scale)
             target_return = float(intraday_returns[target_position])
             threshold = self.config.neutral_sigma * scale
-            state = (
-                SectorRegimeState.BULL
-                if target_return > threshold
-                else SectorRegimeState.BEAR
-                if target_return < -threshold
-                else SectorRegimeState.FLAT
+            state = self._state(target_return, threshold)
+            previous_state = self._state(
+                float(intraday_returns[target_position - 1]), threshold
             )
             context_start = current - self.config.context_sessions + 1
             signal_slice = ordered[current]
@@ -165,6 +163,7 @@ class SectorRegimeDatasetBuilder:
                     ),
                     next_image=images[target].values,
                     target_state=state,
+                    previous_state=previous_state,
                     target_return=target_return,
                     return_scale=scale,
                     signal_time=np.datetime64(signal_slice.timestamps[-1], "ns"),
@@ -174,3 +173,12 @@ class SectorRegimeDatasetBuilder:
             )
         return tuple(samples)
 
+    @staticmethod
+    def _state(value: float, threshold: float) -> SectorRegimeState:
+        return (
+            SectorRegimeState.BULL
+            if value > threshold
+            else SectorRegimeState.BEAR
+            if value < -threshold
+            else SectorRegimeState.FLAT
+        )
