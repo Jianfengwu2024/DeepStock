@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -166,6 +167,11 @@ class SectorFlowPipelineTests(unittest.TestCase):
             self.assertEqual(len(list((root / "river" / "topologies").glob("*.npz"))), 1)
             self.assertTrue(list((root / "river" / "slices").glob("*.npz")))
             self.assertTrue((root / "sector-flow-v2-report.md").is_file())
+            structure = json.loads(
+                (root / "structure-evaluation.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("mean_synchronization_lift", structure["summary"])
+            self.assertEqual(structure["summary"]["months"], 1)
 
     def test_symbols_without_bars_are_excluded_from_requested_period(self) -> None:
         batches = synthetic_sector()

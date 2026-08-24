@@ -482,6 +482,7 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "sector-flow.png",
             "sector-flow-report.md",
             "sector-flow-v2-report.md",
+            "structure-evaluation.json",
             "ranking.csv",
             "predictions.csv",
         )

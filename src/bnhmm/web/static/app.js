@@ -858,6 +858,7 @@ function renderSectorFlowResult(job) {
   setImage("sector-flow-image", job.artifacts?.["sector-flow.png"], `?v=${encodeURIComponent(job.finished_at || Date.now())}`);
   const downloads = {
     "sector-flow-v2-report.md": "v2 完整报告",
+    "structure-evaluation.json": "结构评估",
     "sector-flow-report.md": "完整报告",
     "evaluation.json": "评估数据",
     "ranking.csv": "排名明细",

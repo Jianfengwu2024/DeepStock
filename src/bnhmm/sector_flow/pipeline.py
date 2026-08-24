@@ -30,6 +30,7 @@ from .normalization import CausalSectorNormalizer, SectorNormalizationConfig
 from .panel import SectorMinutePanelBuilder
 from .ranking import PathEfficiencyAnalyzer, RankingConfig, SourceProximityRanker
 from .river import DailyRiverSliceBuilder
+from .structure_evaluation import evaluate_topology_structure, migration_rate
 from .topology import RiverTopologyBuilder, TopologyConfig
 from .types import (
     DailyRiverSlice,
@@ -580,6 +581,57 @@ class SectorFlowPipeline:
         (river / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        structure_months = [
+            {
+                "month": np.datetime_as_string(topology.month, unit="M"),
+                **evaluate_topology_structure(
+                    topology,
+                    random_seed=self.config.random_seed + index,
+                ),
+            }
+            for index, topology in enumerate(topologies)
+        ]
+        migrations = [
+            {
+                "from_month": np.datetime_as_string(previous.month, unit="M"),
+                "to_month": np.datetime_as_string(current.month, unit="M"),
+                "migration_rate": migration_rate(previous, current),
+            }
+            for previous, current in zip(topologies, topologies[1:])
+        ]
+        structure_summary = {
+            "months": len(structure_months),
+            "mean_synchronization_lift": float(
+                np.mean(
+                    [item["synchronization_lift"] for item in structure_months]
+                )
+            ),
+            "minimum_synchronization_lift": float(
+                np.min(
+                    [item["synchronization_lift"] for item in structure_months]
+                )
+            ),
+            "mean_unassigned_rate": float(
+                np.mean([item["unassigned_rate"] for item in structure_months])
+            ),
+            "mean_band_count": float(
+                np.mean([item["band_count"] for item in structure_months])
+            ),
+            "mean_migration_rate": float(
+                np.mean([item["migration_rate"] for item in migrations])
+            )
+            if migrations
+            else 0.0,
+        }
+        structure_evaluation = {
+            "summary": structure_summary,
+            "months_detail": structure_months,
+            "migrations": migrations,
+        }
+        (destination / "structure-evaluation.json").write_text(
+            json.dumps(structure_evaluation, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         prediction_payload = [
             {
                 **asdict(item),
@@ -594,6 +646,7 @@ class SectorFlowPipeline:
             "config": asdict(self.config),
             "folds": list(folds),
             "metrics": metrics,
+            "structure": structure_summary,
             "predictions": prediction_payload,
             "excluded_symbols": list(excluded_symbols),
         }
@@ -606,6 +659,7 @@ class SectorFlowPipeline:
             "protocol": "river-topology-v2",
             "oos_predictions": len(predictions),
             "metrics": metrics,
+            "structure": structure_summary,
             "folds": list(folds),
         }
         (destination / "run-summary.json").write_text(
@@ -622,6 +676,8 @@ class SectorFlowPipeline:
             f"- Net Top-K minus Bottom-K return: {metrics['net_top_bottom_return']:.6f}",
             f"- Brier score: {metrics['brier_score']:.6f}",
             f"- Posterior coverage: {metrics['posterior_coverage']:.6f}",
+            f"- Mean synchronization lift: {structure_summary['mean_synchronization_lift']:.6f}",
+            f"- Mean monthly migration rate: {structure_summary['mean_migration_rate']:.6f}",
             "",
             "Each sample-out month uses a topology fitted only through the prior month and frozen for the full month.",
         ]

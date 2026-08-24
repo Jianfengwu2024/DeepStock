@@ -80,6 +80,17 @@ token parameters. See `docs/fk-stock-v2-ablation-report.md` for the nested
 selection protocol and complete ablation table. The rejected v1 design remains
 documented in `docs/fk-stock-v1-report.md`.
 
+## SectorFlowBayes v2
+
+SectorFlowBayes v2 builds a causal monthly synchronization topology from the
+prior 60 completed sessions, freezes the stock ordering for the full month, and
+projects each completed trading day into a stock-by-minute river slice. A small
+Bayesian graph-Laplacian model predicts next-session cross-sectional relative
+return. DeepStock Lab provides daily river, topology, migration, structure, and
+stock-inspector views through job-scoped compressed artifacts. See
+`docs/sector-flow-bayes-v2-report.md` for the implementation, leakage controls,
+browser verification, and the 96-stock semiconductor walk-forward experiment.
+
 Self-supervised pretraining uses only states available before each walk-forward
 cutoff. It reconstructs randomly masked daily metadata and fixed-width
 mass/location/spread summaries, then predicts their next-session values from
