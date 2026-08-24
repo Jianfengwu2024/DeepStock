@@ -182,6 +182,10 @@ class SectorFlowPipelineTests(unittest.TestCase):
             )
 
             self.assertTrue(result.regime_predictions)
+            self.assertGreaterEqual(
+                result.folds[0]["training_samples"],
+                config.minimum_train_sessions,
+            )
             self.assertEqual(
                 len(result.policy_observations), len(result.regime_predictions)
             )

@@ -205,7 +205,11 @@ class SectorFlowPipeline:
         folds = build_monthly_folds(
             panel.timestamps,
             minimum_train_sessions=self.config.minimum_train_sessions,
-            max_folds=self.config.max_folds,
+            max_folds=(
+                None
+                if self.config.protocol == "river-regime-v3"
+                else self.config.max_folds
+            ),
         )
         if not folds:
             raise ValueError("date range does not produce a monthly sample-out fold")
@@ -630,6 +634,11 @@ class SectorFlowPipeline:
             samples = SectorRegimeDatasetBuilder(data_config).build(
                 tuple(fold_slice_by_session.values()), index_bars
             )
+            matured_samples = tuple(
+                item for item in samples if item.target_time <= training_cutoff
+            )
+            if len(matured_samples) < self.config.minimum_train_sessions:
+                continue
             trainer = SectorRegimeTrainer(
                 SectorRegimeTrainerConfig(
                     epochs=self.config.regime_epochs,
@@ -770,12 +779,23 @@ class SectorFlowPipeline:
                     "test_start": str(fold.test_start),
                     "test_end": str(fold.test_end),
                     "training_samples": training_result.training_count,
+                    "training_sample_start": str(matured_samples[0].signal_time),
+                    "training_sample_end": str(matured_samples[-1].signal_time),
+                    "training_class_counts": np.rint(
+                        training_result.class_prior
+                        * training_result.training_count
+                    ).astype(np.int64).tolist(),
                     "regime_predictions": len(fold_regimes),
                     "stock_predictions": fold_graph_count,
                     "topology_month": str(topology.month),
                     "loss_history": list(training_result.loss_history),
                 }
             )
+            if (
+                self.config.max_folds is not None
+                and len(fold_summaries) >= self.config.max_folds
+            ):
+                break
 
         if not regime_records:
             raise ValueError(
