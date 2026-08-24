@@ -9,6 +9,43 @@ from numpy.typing import NDArray
 
 
 @dataclass(frozen=True, slots=True)
+class NormalizedBoundaryPanel:
+    symbols: tuple[str, ...]
+    timestamps: NDArray[np.datetime64]
+    raw_velocity: NDArray[np.float64]
+    standardized_velocity: NDArray[np.float64]
+    relative_volume: NDArray[np.float64]
+    velocity_scale: NDArray[np.float64]
+    minute_volume_baseline: NDArray[np.float64]
+    raw_velocity_valid: NDArray[np.bool_]
+    velocity_valid: NDArray[np.bool_]
+    density_valid: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        shape = (len(self.timestamps), len(self.symbols))
+        arrays = (
+            self.raw_velocity,
+            self.standardized_velocity,
+            self.relative_volume,
+            self.velocity_scale,
+            self.minute_volume_baseline,
+            self.raw_velocity_valid,
+            self.velocity_valid,
+            self.density_valid,
+        )
+        if any(item.shape != shape for item in arrays):
+            raise ValueError("boundary normalization arrays must share panel shape")
+        if np.any(self.raw_velocity_valid & ~np.isfinite(self.raw_velocity)):
+            raise ValueError("valid raw velocities must be finite")
+        if np.any(self.velocity_valid & ~np.isfinite(self.standardized_velocity)):
+            raise ValueError("valid standardized velocities must be finite")
+        if np.any(self.density_valid & ~np.isfinite(self.relative_volume)):
+            raise ValueError("valid relative volume must be finite")
+        if np.any(self.density_valid & (self.relative_volume < 0.0)):
+            raise ValueError("relative volume cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
 class MonthlyIndexWeights:
     month: np.datetime64
     weight_date: np.datetime64
