@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import numpy as np
 
 from ..types import BarBatch
 
@@ -24,6 +27,51 @@ class BrokerError(RuntimeError):
 
 class SectorIndexMinuteDataError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class MarketCapRecord:
+    symbol: str
+    session: np.datetime64
+    circ_mv: float
+
+    def __post_init__(self) -> None:
+        if not self.symbol:
+            raise ValueError("market-cap symbol cannot be empty")
+        if np.isnat(self.session):
+            raise ValueError("market-cap session cannot be NaT")
+        if not np.isfinite(self.circ_mv) or self.circ_mv <= 0.0:
+            raise ValueError("market-cap value must be finite and positive")
+
+
+def _market_cap_records(records: list[dict[str, Any]]) -> tuple[MarketCapRecord, ...]:
+    rows: list[MarketCapRecord] = []
+    seen: set[tuple[str, int]] = set()
+    for record in records:
+        value = float(record["circ_mv"])
+        if not np.isfinite(value) or value <= 0.0:
+            continue
+        symbol = str(record["symbol"])
+        session = np.datetime64(record["session"], "D")
+        key = (symbol, int(session.astype(np.int64)))
+        if key in seen:
+            raise ValueError(f"重复流通市值记录：{symbol}/{session}")
+        seen.add(key)
+        rows.append(MarketCapRecord(symbol=symbol, session=session, circ_mv=value))
+    return tuple(sorted(rows, key=lambda row: (row.session, row.symbol)))
+
+
+def _market_cap_query(symbols: list[str] | tuple[str, ...]) -> tuple[str, list[str]]:
+    selected = sorted(set(symbols))
+    if not selected or any(not symbol for symbol in selected):
+        raise ValueError("at least one non-empty market-cap symbol is required")
+    placeholders = ", ".join("?" for _ in selected)
+    query = (
+        "SELECT symbol, timestamp AS session, circ_mv FROM kline_1d "
+        f"WHERE symbol IN ({placeholders}) AND timestamp >= ? AND timestamp < ? "
+        "AND circ_mv IS NOT NULL ORDER BY timestamp, symbol"
+    )
+    return query, selected
 
 
 class BrokerBarSource:
@@ -105,6 +153,24 @@ class BrokerBarSource:
                 f"缺少真实板块一分钟指数数据：{dataset_id}/{symbol}"
             )
         return BarBatch.from_records(symbol, records)
+
+    def fetch_market_caps(
+        self,
+        symbols: list[str] | tuple[str, ...],
+        start: str | date | datetime,
+        end: str | date | datetime,
+    ) -> tuple[MarketCapRecord, ...]:
+        sql, selected = _market_cap_query(symbols)
+        payload = self.query(
+            sql,
+            [*selected, self._iso(start), self._iso(end)],
+        )
+        columns = payload.get("columns", [])
+        records = [
+            {column: self._decode(value) for column, value in zip(columns, row, strict=True)}
+            for row in payload.get("rows", [])
+        ]
+        return _market_cap_records(records)
 
     def query(self, sql: str, params: list[Any] | None = None) -> dict[str, Any]:
         body = json.dumps(
@@ -248,6 +314,23 @@ class DuckDBBarSource:
             )
         columns = ("timestamp", "open", "high", "low", "close", "volume")
         return BarBatch.from_records(symbol, (dict(zip(columns, row)) for row in rows))
+
+    def fetch_market_caps(
+        self,
+        symbols: list[str] | tuple[str, ...],
+        start: str | date | datetime,
+        end: str | date | datetime,
+    ) -> tuple[MarketCapRecord, ...]:
+        try:
+            import duckdb
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("DuckDBBarSource requires the 'data' extra") from exc
+        query, selected = _market_cap_query(symbols)
+        params = [*selected, BrokerBarSource._iso(start), BrokerBarSource._iso(end)]
+        with duckdb.connect(self.database_path, read_only=True) as connection:
+            rows = connection.execute(query, params).fetchall()
+        columns = ("symbol", "session", "circ_mv")
+        return _market_cap_records([dict(zip(columns, row)) for row in rows])
 
     def list_symbols(self, limit: int | None = None) -> list[str]:
         if limit is not None and limit < 1:
