@@ -99,6 +99,38 @@ class BoundaryMinuteMoments:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundaryDailyStates:
+    sessions: NDArray[np.datetime64]
+    topology_months: NDArray[np.datetime64]
+    feature_names: tuple[str, ...]
+    units: tuple[str, ...]
+    values: NDArray[np.float64]
+    valid: NDArray[np.bool_]
+    branch_degraded: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        rows = len(self.sessions)
+        columns = len(self.feature_names)
+        if not self.feature_names or len(set(self.feature_names)) != columns:
+            raise ValueError("daily boundary feature names must be unique and non-empty")
+        if columns > 36 or len(self.units) != columns or any(not unit for unit in self.units):
+            raise ValueError("daily boundary schema must contain at most 36 named units")
+        if self.values.shape != (rows, columns):
+            raise ValueError("daily boundary values do not match their schema")
+        if any(item.shape != (rows,) for item in (self.topology_months, self.valid, self.branch_degraded)):
+            raise ValueError("daily boundary metadata must align with sessions")
+        if np.any(self.valid & ~np.all(np.isfinite(self.values), axis=1)):
+            raise ValueError("valid daily boundary states must be finite")
+
+    def feature(self, name: str) -> NDArray[np.float64]:
+        try:
+            column = self.feature_names.index(name)
+        except ValueError as exc:
+            raise KeyError(name) from exc
+        return self.values[:, column]
+
+
+@dataclass(frozen=True, slots=True)
 class MonthlyIndexWeights:
     month: np.datetime64
     weight_date: np.datetime64
