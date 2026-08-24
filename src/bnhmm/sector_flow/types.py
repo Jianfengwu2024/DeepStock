@@ -238,3 +238,158 @@ class SourceProximityPosterior:
     leader_probability: float
     response_probability: float
     path_metrics: PathWindowMetrics
+
+
+@dataclass(frozen=True, slots=True)
+class MonthlyRiverTopology:
+    month: np.datetime64
+    training_cutoff: np.datetime64
+    symbols: tuple[str, ...]
+    assigned: NDArray[np.bool_]
+    band_ids: NDArray[np.int64]
+    row_order: NDArray[np.int64]
+    common_similarity: NDArray[np.float64]
+    residual_similarity: NDArray[np.float64]
+    fused_similarity: NDArray[np.float64]
+    graph: NDArray[np.float64]
+    cohesion: NDArray[np.float64]
+    centrality: NDArray[np.float64]
+    stale: bool = False
+
+    def __post_init__(self) -> None:
+        count = len(self.symbols)
+        if count == 0 or len(set(self.symbols)) != count:
+            raise ValueError("topology symbols must be unique and non-empty")
+        vectors = (
+            self.assigned,
+            self.band_ids,
+            self.row_order,
+            self.cohesion,
+            self.centrality,
+        )
+        if any(item.shape != (count,) for item in vectors):
+            raise ValueError("topology vectors must contain one value per symbol")
+        matrices = (
+            self.common_similarity,
+            self.residual_similarity,
+            self.fused_similarity,
+            self.graph,
+        )
+        if any(item.shape != (count, count) for item in matrices):
+            raise ValueError("topology matrices must be square and symbol-aligned")
+        if sorted(self.row_order.tolist()) != list(range(count)):
+            raise ValueError("topology row order must be a complete permutation")
+        if any(not np.all(np.isfinite(item)) for item in matrices):
+            raise ValueError("topology matrices must be finite")
+        if not np.allclose(self.graph, self.graph.T):
+            raise ValueError("topology graph must be symmetric")
+
+
+@dataclass(frozen=True, slots=True)
+class DailyRiverSlice:
+    session: np.datetime64
+    topology_month: np.datetime64
+    symbols: tuple[str, ...]
+    timestamps: NDArray[np.datetime64]
+    velocity: NDArray[np.float64]
+    residual_velocity: NDArray[np.float64]
+    activity: NDArray[np.float64]
+    valid: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        shape = (len(self.symbols), len(self.timestamps))
+        channels = (
+            self.velocity,
+            self.residual_velocity,
+            self.activity,
+            self.valid,
+        )
+        if any(item.shape != shape for item in channels):
+            raise ValueError("river slice channels must be symbols by minutes")
+        if len(self.timestamps) > 1 and np.any(
+            self.timestamps[1:] <= self.timestamps[:-1]
+        ):
+            raise ValueError("river slice timestamps must be strictly increasing")
+        if np.any(self.valid & ~np.isfinite(self.velocity)):
+            raise ValueError("valid river velocities must be finite")
+        if np.any(self.valid & ~np.isfinite(self.residual_velocity)):
+            raise ValueError("valid residual velocities must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class DailyGraphState:
+    session: np.datetime64
+    symbols: tuple[str, ...]
+    sector_mean: float
+    band_mean: NDArray[np.float64]
+    stock_mean: NDArray[np.float64]
+    stock_variance: NDArray[np.float64]
+
+    def __post_init__(self) -> None:
+        count = len(self.symbols)
+        if any(
+            item.shape != (count,)
+            for item in (self.band_mean, self.stock_mean, self.stock_variance)
+        ):
+            raise ValueError("graph-state vectors must match symbols")
+        if np.any(~np.isfinite(self.stock_variance)) or np.any(
+            self.stock_variance < 0.0
+        ):
+            raise ValueError("graph-state variances must be finite and nonnegative")
+
+
+@dataclass(frozen=True, slots=True)
+class GraphStateParameters:
+    feature_center: NDArray[np.float64]
+    feature_scale: NDArray[np.float64]
+    coefficient_mean: NDArray[np.float64]
+    coefficient_covariance: NDArray[np.float64]
+    residual_variance: float
+    graph_strength: float
+    training_cutoff: np.datetime64
+    model_version: str
+
+    def __post_init__(self) -> None:
+        features = len(self.feature_center)
+        coefficients = features + 1
+        if self.feature_scale.shape != (features,):
+            raise ValueError("feature center and scale must align")
+        if np.any(~np.isfinite(self.feature_scale)) or np.any(
+            self.feature_scale <= 0.0
+        ):
+            raise ValueError("feature scales must be finite and positive")
+        if self.coefficient_mean.shape != (coefficients,):
+            raise ValueError("coefficient mean must include an intercept")
+        if self.coefficient_covariance.shape != (coefficients, coefficients):
+            raise ValueError("coefficient covariance must match coefficients")
+        if self.residual_variance <= 0.0 or self.graph_strength < 0.0:
+            raise ValueError("graph-state variances and strength are invalid")
+        if not self.model_version:
+            raise ValueError("graph-state model version is required")
+
+
+@dataclass(frozen=True, slots=True)
+class SectorGraphPrediction:
+    topology_month: np.datetime64
+    symbols: tuple[str, ...]
+    expected_relative_return: NDArray[np.float64]
+    predictive_variance: NDArray[np.float64]
+    signal_time: np.datetime64
+    available_at: np.datetime64
+    training_cutoff: np.datetime64
+    model_version: str
+
+    def __post_init__(self) -> None:
+        shape = (len(self.symbols),)
+        if self.expected_relative_return.shape != shape:
+            raise ValueError("prediction means must match symbols")
+        if self.predictive_variance.shape != shape:
+            raise ValueError("prediction variances must match symbols")
+        if np.any(~np.isfinite(self.predictive_variance)) or np.any(
+            self.predictive_variance < 0.0
+        ):
+            raise ValueError("prediction variances must be finite and nonnegative")
+        if not self.training_cutoff < self.signal_time < self.available_at:
+            raise ValueError("prediction timing must be strictly causal")
+        if not self.model_version:
+            raise ValueError("prediction model version is required")

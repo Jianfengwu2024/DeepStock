@@ -28,12 +28,18 @@ class SectorFlowCliTests(unittest.TestCase):
                 "0.2",
                 "--top-k",
                 "10",
+                "--protocol",
+                "river-topology-v2",
+                "--topology-lookback-sessions",
+                "60",
             ]
         )
 
         self.assertEqual(args.command, "sector-flow-walk-forward")
         self.assertEqual(args.maximum_lag_minutes, 30)
         self.assertEqual(args.factor_process_variance, 0.2)
+        self.assertEqual(args.protocol, "river-topology-v2")
+        self.assertEqual(args.topology_lookback_sessions, 60)
         self.assertFalse(hasattr(args, "epochs"))
         self.assertFalse(hasattr(args, "d_model"))
 

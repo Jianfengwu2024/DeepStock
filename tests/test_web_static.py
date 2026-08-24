@@ -8,6 +8,29 @@ ROOT = Path(__file__).parents[1] / "src" / "bnhmm" / "web" / "static"
 
 
 class SectorFlowStaticContractTests(unittest.TestCase):
+    def test_river_workspace_has_four_views_and_stock_inspector(self) -> None:
+        html = (ROOT / "river.html").read_text(encoding="utf-8")
+        script = (ROOT / "river.js").read_text(encoding="utf-8")
+
+        for identifier in (
+            "river-heatmap",
+            "topology-view",
+            "migration-view",
+            "structure-view",
+            "stock-inspector",
+        ):
+            self.assertIn(f'id="{identifier}"', html)
+        self.assertIn("loadTopology", script)
+        self.assertIn("loadSlice", script)
+        self.assertIn("renderStockInspector", script)
+
+    def test_sector_flow_result_links_selected_job_to_river_workspace(self) -> None:
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="open-river-view"', html)
+        self.assertIn("/jobs/${encodeURIComponent(job.id)}/river", script)
+
     def test_sector_flow_configuration_and_results_have_stable_hooks(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")

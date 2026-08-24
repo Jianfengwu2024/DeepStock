@@ -82,6 +82,10 @@ class WalkForwardJobRequest(BaseModel):
     maximum_lag_minutes: int = Field(30, ge=0, le=120)
     minimum_attribution_rows: int = Field(120, ge=20, le=100_000)
     factor_process_variance: float | None = Field(None, gt=0.0, le=100.0)
+    sector_flow_protocol: Literal["legacy-v1", "river-topology-v2"] = (
+        "river-topology-v2"
+    )
+    topology_lookback_sessions: Literal[60] = 60
     sector_flow_path_windows: tuple[int, ...] = (5, 15, 30, 60)
     sector_flow_ranking_window: int = Field(60, ge=1, le=240)
     sector_flow_evaluation_horizon_minutes: int = Field(30, ge=1, le=120)
@@ -516,6 +520,10 @@ def _build_sector_flow_command(
         request.end.isoformat(),
         "--output-dir",
         str(output_dir),
+        "--protocol",
+        request.sector_flow_protocol,
+        "--topology-lookback-sessions",
+        str(request.topology_lookback_sessions),
         "--normalization-lookback-sessions",
         str(request.normalization_lookback_sessions),
         "--normalization-minimum-observations",
@@ -800,6 +808,57 @@ class JobManager:
         if candidate.parent != Path(record.output_dir).resolve() or not candidate.is_file():
             return None
         return candidate
+
+    def river_manifest(self, identifier: str) -> dict[str, Any] | None:
+        record = self.get(identifier)
+        if record is None:
+            return None
+        output_root = Path(record.output_dir).resolve()
+        river_root = (output_root / "river").resolve()
+        if river_root.parent != output_root:
+            return None
+        path = river_root / "manifest.json"
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def river_artifact_path(
+        self, identifier: str, kind: Literal["topology", "slice"], key: str
+    ) -> Path | None:
+        if kind == "topology":
+            collection, identity, pattern = "topologies", "month", r"^\d{4}-\d{2}$"
+        elif kind == "slice":
+            collection, identity, pattern = "slices", "session", r"^\d{4}-\d{2}-\d{2}$"
+        else:
+            return None
+        if not re.fullmatch(pattern, key):
+            return None
+        manifest = self.river_manifest(identifier)
+        record = self.get(identifier)
+        if manifest is None or record is None:
+            return None
+        entries = manifest.get(collection)
+        if not isinstance(entries, list):
+            return None
+        filename: str | None = None
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get(identity) == key:
+                value = entry.get("file")
+                filename = value if isinstance(value, str) else None
+                break
+        if filename is None:
+            return None
+        river_root = (Path(record.output_dir).resolve() / "river").resolve()
+        candidate = (river_root / filename).resolve()
+        try:
+            candidate.relative_to(river_root)
+        except ValueError:
+            return None
+        return candidate if candidate.is_file() and candidate.suffix == ".npz" else None
 
     def symbol_artifact_path(
         self, identifier: str, symbol: str, name: str

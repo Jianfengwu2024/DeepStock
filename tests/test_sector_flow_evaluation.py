@@ -5,8 +5,10 @@ import unittest
 import numpy as np
 
 from bnhmm.sector_flow.evaluation import (
+    GraphPredictionObservation,
     SectorFlowPrediction,
     build_monthly_folds,
+    evaluate_graph_predictions,
     evaluate_predictions,
 )
 
@@ -93,6 +95,36 @@ class SectorFlowMetricTests(unittest.TestCase):
         self.assertEqual(metrics["posterior_coverage"], 1.0)
         self.assertGreaterEqual(metrics["leader_lag_stability"], 0.0)
         self.assertGreaterEqual(metrics["response_lag_stability"], 0.0)
+
+    def test_graph_metrics_use_daily_cross_section_and_uncertainty(self) -> None:
+        records = []
+        for day in range(4):
+            signal = np.datetime64("2025-02-03T15:00") + np.timedelta64(day, "D")
+            for symbol, score, realized in (
+                ("A", 0.02, 0.015),
+                ("B", 0.00, 0.001),
+                ("C", -0.02, -0.016),
+            ):
+                records.append(
+                    GraphPredictionObservation(
+                        symbol=symbol,
+                        signal_time=signal,
+                        available_at=signal + np.timedelta64(18 * 60 + 31, "m"),
+                        training_cutoff=np.datetime64("2025-01-31T15:00"),
+                        model_version="sector-flow-river-v2",
+                        fold=0,
+                        expected_relative_return=score,
+                        predictive_variance=0.0001,
+                        realized_relative_return=realized,
+                    )
+                )
+
+        metrics = evaluate_graph_predictions(records, top_k=1, transaction_cost_bps=10.0)
+
+        self.assertGreater(metrics["rank_ic"], 0.9)
+        self.assertGreater(metrics["net_top_bottom_return"], 0.0)
+        self.assertLess(metrics["brier_score"], 0.2)
+        self.assertGreater(metrics["posterior_coverage"], 0.9)
 
 
 if __name__ == "__main__":

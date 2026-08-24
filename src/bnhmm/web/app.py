@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
@@ -326,6 +329,141 @@ def symbol_artifact(
     return FileResponse(path)
 
 
+@app.get("/jobs/{identifier}/river", include_in_schema=False)
+def river_page(identifier: str, request: Request) -> FileResponse:
+    if manager(request).river_manifest(identifier) is None:
+        raise HTTPException(status_code=404, detail="river workspace not found")
+    return FileResponse(STATIC_ROOT / "river.html")
+
+
+@app.get("/api/jobs/{identifier}/river/manifest")
+def river_manifest(identifier: str, request: Request) -> dict[str, Any]:
+    payload = manager(request).river_manifest(identifier)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="river manifest not found")
+    return payload
+
+
+@app.get("/api/jobs/{identifier}/river/topology/{month}")
+def river_topology(
+    identifier: str, month: str, request: Request
+) -> dict[str, Any]:
+    path = manager(request).river_artifact_path(identifier, "topology", month)
+    if path is None:
+        raise HTTPException(status_code=404, detail="river topology not found")
+    return _npz_payload(path)
+
+
+@app.get("/api/jobs/{identifier}/river/slice/{session}")
+def river_slice(
+    identifier: str, session: str, request: Request
+) -> dict[str, Any]:
+    path = manager(request).river_artifact_path(identifier, "slice", session)
+    if path is None:
+        raise HTTPException(status_code=404, detail="river slice not found")
+    return _npz_payload(path)
+
+
+@app.get("/api/jobs/{identifier}/river/migration")
+def river_migration(identifier: str, request: Request) -> dict[str, Any]:
+    manifest = manager(request).river_manifest(identifier)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="river manifest not found")
+    entries = manifest.get("topologies")
+    if not isinstance(entries, list) or len(entries) > 120:
+        raise HTTPException(status_code=422, detail="river topology history is invalid")
+    snapshots: list[tuple[str, dict[str, tuple[int, int]]]] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("month"), str):
+            continue
+        month = entry["month"]
+        path = manager(request).river_artifact_path(identifier, "topology", month)
+        if path is None:
+            continue
+        payload = _npz_payload(path)
+        symbols = payload.get("symbols", [])
+        order = payload.get("row_order", [])
+        bands = payload.get("band_ids", [])
+        positions = {int(symbol_index): row for row, symbol_index in enumerate(order)}
+        snapshot = {
+            str(symbol): (positions.get(index, index), int(bands[index]))
+            for index, symbol in enumerate(symbols)
+        }
+        snapshots.append((month, snapshot))
+    transitions: list[dict[str, Any]] = []
+    for (source_month, source), (target_month, target) in zip(
+        snapshots, snapshots[1:]
+    ):
+        for symbol in sorted(set(source) & set(target)):
+            source_row, source_band = source[symbol]
+            target_row, target_band = target[symbol]
+            transitions.append(
+                {
+                    "symbol": symbol,
+                    "from_month": source_month,
+                    "to_month": target_month,
+                    "from_row": source_row,
+                    "to_row": target_row,
+                    "from_band": source_band,
+                    "to_band": target_band,
+                }
+            )
+    return {
+        "months": [month for month, _ in snapshots],
+        "transitions": transitions,
+    }
+
+
+@app.get("/api/jobs/{identifier}/river/symbol/{symbol}")
+def river_symbol(
+    identifier: str, symbol: str, request: Request
+) -> dict[str, Any]:
+    normalized = symbol.replace(".", "").replace("-", "").replace("_", "")
+    if not normalized.isalnum() or len(symbol) > 24:
+        raise HTTPException(status_code=404, detail="river symbol not found")
+    path = manager(request).artifact_path(identifier, "evaluation.json")
+    if path is None:
+        raise HTTPException(status_code=404, detail="river evaluation not found")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="river evaluation is invalid") from exc
+    predictions = payload.get("predictions", []) if isinstance(payload, dict) else []
+    if not isinstance(predictions, list):
+        predictions = []
+    selected = [
+        item
+        for item in predictions
+        if isinstance(item, dict) and item.get("symbol") == symbol
+    ][-512:]
+    return {"symbol": symbol, "predictions": selected}
+
+
+def _npz_payload(path: Path, *, maximum_values: int = 1_000_000) -> dict[str, Any]:
+    with np.load(path, allow_pickle=False) as archive:
+        count = sum(int(archive[name].size) for name in archive.files)
+        if count > maximum_values:
+            raise HTTPException(status_code=413, detail="river artifact is too large")
+        return {name: _array_json(archive[name]) for name in archive.files}
+
+
+def _array_json(value: np.ndarray) -> Any:
+    if np.issubdtype(value.dtype, np.datetime64):
+        unit = np.datetime_data(value.dtype)[0]
+        rendered = np.datetime_as_string(value, unit=unit)
+        return rendered.item() if rendered.ndim == 0 else rendered.tolist()
+    payload = value.item() if value.ndim == 0 else value.tolist()
+    return _finite_json(payload)
+
+
+def _finite_json(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_finite_json(item) for item in value]
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
+
+
 def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[str, Any]:
     payload = record.model_dump(mode="json")
     payload.pop("process_id", None)
@@ -343,6 +481,7 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "repair-stage-report.md",
             "sector-flow.png",
             "sector-flow-report.md",
+            "sector-flow-v2-report.md",
             "ranking.csv",
             "predictions.csv",
         )

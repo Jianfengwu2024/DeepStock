@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from math import exp
+from math import erf, exp, sqrt
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -61,6 +61,27 @@ class RankingObservation:
     signal_time: np.datetime64
     score: float
     realized_return: float
+
+
+@dataclass(frozen=True, slots=True)
+class GraphPredictionObservation:
+    symbol: str
+    signal_time: np.datetime64
+    available_at: np.datetime64
+    training_cutoff: np.datetime64
+    model_version: str
+    fold: int
+    expected_relative_return: float
+    predictive_variance: float
+    realized_relative_return: float
+
+    def __post_init__(self) -> None:
+        if not self.symbol or not self.model_version:
+            raise ValueError("graph prediction identity fields cannot be empty")
+        if not self.training_cutoff < self.signal_time < self.available_at:
+            raise ValueError("graph prediction timing must be strictly causal")
+        if self.predictive_variance <= 0.0:
+            raise ValueError("graph predictive variance must be positive")
 
 
 def build_monthly_folds(
@@ -163,6 +184,66 @@ def evaluate_predictions(
         "posterior_coverage": coverage,
         "leader_lag_stability": exp(-float(np.std(leader_lags))),
         "response_lag_stability": exp(-float(np.std(response_lags))),
+    }
+
+
+def evaluate_graph_predictions(
+    predictions: Sequence[GraphPredictionObservation],
+    *,
+    top_k: int,
+    transaction_cost_bps: float,
+) -> dict[str, float | int]:
+    if not predictions:
+        raise ValueError("cannot evaluate an empty graph prediction set")
+    mean = np.asarray(
+        [item.expected_relative_return for item in predictions], dtype=np.float64
+    )
+    variance = np.asarray(
+        [item.predictive_variance for item in predictions], dtype=np.float64
+    )
+    realized = np.asarray(
+        [item.realized_relative_return for item in predictions], dtype=np.float64
+    )
+    z_score = mean / np.sqrt(np.maximum(variance, 1e-12))
+    probability = np.asarray(
+        [0.5 * (1.0 + erf(float(value) / sqrt(2.0))) for value in z_score],
+        dtype=np.float64,
+    )
+    probability = np.clip(probability, 1e-9, 1.0 - 1e-9)
+    target = (realized > 0.0).astype(np.float64)
+    brier = float(np.mean(np.square(probability - target)))
+    log_loss = float(
+        -np.mean(
+            target * np.log(probability)
+            + (1.0 - target) * np.log(1.0 - probability)
+        )
+    )
+    standard_deviation = np.sqrt(np.maximum(variance, 1e-12))
+    coverage = float(
+        np.mean(
+            (realized >= mean - 1.96 * standard_deviation)
+            & (realized <= mean + 1.96 * standard_deviation)
+        )
+    )
+    ranking = evaluate_ranking_observations(
+        [
+            RankingObservation(
+                symbol=item.symbol,
+                signal_time=item.signal_time,
+                score=item.expected_relative_return,
+                realized_return=item.realized_relative_return,
+            )
+            for item in predictions
+        ],
+        top_k=top_k,
+        transaction_cost_bps=transaction_cost_bps,
+    )
+    return {
+        "prediction_count": len(predictions),
+        "brier_score": brier,
+        "log_loss": log_loss,
+        **ranking,
+        "posterior_coverage": coverage,
     }
 
 

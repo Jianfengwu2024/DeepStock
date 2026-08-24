@@ -808,6 +808,10 @@ function renderSectorFlowResult(job) {
   const metrics = summary.metrics || {};
   const water = summary.latest_water_state || {};
   const status = document.querySelector("#sector-flow-result-status");
+  const riverButton = document.querySelector("#open-river-view");
+  const riverAvailable = job.status === "completed" && summary.protocol === "river-topology-v2";
+  riverButton.classList.toggle("hidden", !riverAvailable);
+  riverButton.href = riverAvailable ? `/jobs/${encodeURIComponent(job.id)}/river` : "#";
   status.textContent = job.status === "completed"
     ? `${formatInteger(summary.oos_predictions)} 条样本外预测`
     : job.status === "failed" ? "运行失败，请查看日志" : "水势计算中";
@@ -853,6 +857,7 @@ function renderSectorFlowResult(job) {
 
   setImage("sector-flow-image", job.artifacts?.["sector-flow.png"], `?v=${encodeURIComponent(job.finished_at || Date.now())}`);
   const downloads = {
+    "sector-flow-v2-report.md": "v2 完整报告",
     "sector-flow-report.md": "完整报告",
     "evaluation.json": "评估数据",
     "ranking.csv": "排名明细",

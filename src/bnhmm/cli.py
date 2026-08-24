@@ -104,6 +104,8 @@ def _sector_flow_walk_forward(args: argparse.Namespace) -> int:
         symbols=symbols,
         start=args.start,
         end=args.end,
+        protocol=args.protocol,
+        topology_lookback_sessions=args.topology_lookback_sessions,
         normalization_lookback_sessions=args.normalization_lookback_sessions,
         normalization_minimum_observations=args.normalization_minimum_observations,
         minimum_train_sessions=args.minimum_train_sessions,
@@ -121,11 +123,16 @@ def _sector_flow_walk_forward(args: argparse.Namespace) -> int:
     )
     result = SectorFlowPipeline(config).run(source, args.output_dir)
     summary = {
-        "model_version": "sector-flow-bayes-v1",
+        "model_version": (
+            "sector-flow-river-v2"
+            if args.protocol == "river-topology-v2"
+            else "sector-flow-bayes-v1"
+        ),
+        "protocol": args.protocol,
         "dataset_id": args.dataset_id,
         "symbols": len(symbols),
         "folds": len(result.folds),
-        "predictions": len(result.predictions),
+        "predictions": len(result.graph_predictions or result.predictions),
         "metrics": result.metrics,
         "output_dir": args.output_dir,
     }
@@ -1303,6 +1310,14 @@ def build_parser() -> argparse.ArgumentParser:
     sector_flow.add_argument("--start", required=True)
     sector_flow.add_argument("--end", required=True)
     sector_flow.add_argument("--output-dir", required=True)
+    sector_flow.add_argument(
+        "--protocol",
+        choices=("legacy-v1", "river-topology-v2"),
+        default="river-topology-v2",
+    )
+    sector_flow.add_argument(
+        "--topology-lookback-sessions", type=int, default=60
+    )
     sector_flow.add_argument(
         "--normalization-lookback-sessions", type=int, default=20
     )

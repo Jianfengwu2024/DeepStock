@@ -40,6 +40,7 @@ class WebSectorFlowConfigTests(unittest.TestCase):
             for name in (
                 "sector-flow.png",
                 "sector-flow-report.md",
+                "sector-flow-v2-report.md",
                 "ranking.csv",
                 "evaluation.json",
                 "predictions.json",
@@ -65,6 +66,7 @@ class WebSectorFlowConfigTests(unittest.TestCase):
 
         self.assertIn("sector-flow.png", payload["artifacts"])
         self.assertIn("sector-flow-report.md", payload["artifacts"])
+        self.assertIn("sector-flow-v2-report.md", payload["artifacts"])
         self.assertIn("ranking.csv", payload["artifacts"])
 
 

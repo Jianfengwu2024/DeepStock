@@ -341,6 +341,12 @@ class WebJobTests(unittest.TestCase):
         command = build_command(request, Path("/tmp/sector-flow"))
 
         self.assertIn("sector-flow-walk-forward", command)
+        self.assertEqual(
+            command[command.index("--protocol") + 1], "river-topology-v2"
+        )
+        self.assertEqual(
+            command[command.index("--topology-lookback-sessions") + 1], "60"
+        )
         self.assertIn("--maximum-lag-minutes", command)
         self.assertIn("--factor-process-variance", command)
         self.assertIn("--top-k", command)

@@ -12,6 +12,7 @@ from bnhmm.sector_flow.pipeline import (
     SectorFlowPipeline,
 )
 from bnhmm.sector_flow.ranking import PathEfficiencyAnalyzer, SourceProximityRanker
+from bnhmm.sector_flow.topology import RiverTopologyBuilder
 from bnhmm.types import BarBatch
 
 
@@ -65,7 +66,107 @@ def synthetic_sector() -> dict[str, BarBatch]:
     return batches
 
 
+def synthetic_river_sector(session_count: int = 55) -> dict[str, BarBatch]:
+    sessions = np.busday_offset(
+        np.datetime64("2025-01-02"), np.arange(session_count)
+    )
+    slots = np.concatenate((np.arange(571, 691), np.arange(781, 901)))
+    rng = np.random.default_rng(412)
+    rows = (len(sessions), len(slots))
+    common = rng.normal(0.0, 0.00035, rows)
+    branches = (
+        rng.normal(0.0, 0.00045, rows),
+        rng.normal(0.0, 0.00045, rows),
+    )
+    batches: dict[str, BarBatch] = {}
+    timestamps = np.asarray(
+        [session + np.timedelta64(int(slot), "m") for session in sessions for slot in slots],
+        dtype="datetime64[ns]",
+    )
+    for symbol_index in range(6):
+        branch = branches[0 if symbol_index < 3 else 1]
+        returns = (
+            common
+            + branch
+            + rng.normal(0.0, 0.00008, rows)
+        ).reshape(-1)
+        close = 20.0 * np.exp(np.cumsum(returns))
+        volume = rng.lognormal(7.0 + symbol_index * 0.03, 0.2, len(close))
+        batches[f"R{symbol_index}"] = BarBatch(
+            symbol=f"R{symbol_index}",
+            timestamp=timestamps,
+            open=close.copy(),
+            high=close * 1.001,
+            low=close * 0.999,
+            close=close,
+            volume=volume,
+        )
+    return batches
+
+
 class SectorFlowPipelineTests(unittest.TestCase):
+    def test_river_protocol_builds_each_monthly_topology_only_once(self) -> None:
+        source = MemoryBarSource(synthetic_river_sector(80))
+        config = SectorFlowConfig(
+            symbols=tuple(source.batches),
+            start="2025-01-01",
+            end="2025-05-01",
+            protocol="river-topology-v2",
+            topology_lookback_sessions=20,
+            normalization_lookback_sessions=5,
+            normalization_minimum_observations=2,
+            minimum_train_sessions=35,
+            top_k=1,
+            max_folds=2,
+        )
+        months: list[np.datetime64] = []
+        original_build = RiverTopologyBuilder.build
+
+        def counted_build(instance, panel, cutoff, month, previous=None):
+            months.append(np.datetime64(month, "M"))
+            return original_build(instance, panel, cutoff, month, previous)
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            RiverTopologyBuilder, "build", new=counted_build
+        ):
+            result = SectorFlowPipeline(config).run(source, directory)
+
+        self.assertEqual(len(result.folds), 2)
+        self.assertEqual(len(months), len(set(months)))
+
+    def test_river_protocol_freezes_monthly_topology_and_writes_artifacts(self) -> None:
+        source = MemoryBarSource(synthetic_river_sector())
+        config = SectorFlowConfig(
+            symbols=tuple(source.batches),
+            start="2025-01-01",
+            end="2025-04-01",
+            protocol="river-topology-v2",
+            topology_lookback_sessions=20,
+            normalization_lookback_sessions=5,
+            normalization_minimum_observations=2,
+            minimum_train_sessions=35,
+            top_k=1,
+            max_folds=1,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = SectorFlowPipeline(config).run(source, directory)
+            root = Path(directory)
+
+            self.assertTrue(result.graph_predictions)
+            self.assertEqual(len(result.topologies), 1)
+            topology = result.topologies[0]
+            self.assertTrue(
+                all(item.signal_time.astype("datetime64[M]") == topology.month for item in result.graph_predictions)
+            )
+            self.assertTrue(
+                all(item.available_at > item.signal_time for item in result.graph_predictions)
+            )
+            self.assertTrue((root / "river" / "manifest.json").is_file())
+            self.assertEqual(len(list((root / "river" / "topologies").glob("*.npz"))), 1)
+            self.assertTrue(list((root / "river" / "slices").glob("*.npz")))
+            self.assertTrue((root / "sector-flow-v2-report.md").is_file())
+
     def test_symbols_without_bars_are_excluded_from_requested_period(self) -> None:
         batches = synthetic_sector()
         missing_symbol = tuple(batches)[-1]
