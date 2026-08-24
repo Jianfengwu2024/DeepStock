@@ -52,7 +52,7 @@ def test_pipeline_runs_named_ablations_on_the_same_fold_and_writes_artifacts(tmp
     }.issubset(predictions[0])
 
 
-def test_failed_stage_prevents_later_stage_promotion(tmp_path) -> None:
+def test_failed_stage_does_not_stop_later_diagnostics_or_restore_promotion(tmp_path) -> None:
     def fail_global(previous, current, name):
         return name != "BFK-Global"
 
@@ -67,7 +67,21 @@ def test_failed_stage_prevents_later_stage_promotion(tmp_path) -> None:
 
     assert result.stages[0].status == "passed"
     assert result.stages[1].status == "failed"
-    assert all(stage.status == "skipped" for stage in result.stages[2:])
+    assert all(stage.status == "passed" for stage in result.stages[2:])
+    assert all(stage.metrics is not None for stage in result.stages)
+    assert [stage.promotion_eligible for stage in result.stages] == [
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]
+
+    predictions = json.loads((tmp_path / "feynman-kac-predictions.json").read_text())
+    assert {item["model_version"] for item in predictions} == set(BOUNDARY_MODEL_NAMES)
+    report = (tmp_path / "boundary-ablation-report.md").read_text(encoding="utf-8")
+    assert "后续级别仍继续运行" in report
+    assert "后续级别停止" not in report
 
 
 def test_minimum_training_sessions_counts_only_mature_targets(tmp_path) -> None:

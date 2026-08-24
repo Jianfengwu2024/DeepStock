@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.21.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.22.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.21.0" defer></script>
+  <script src="/static/app.js?v=0.22.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -412,7 +412,7 @@
                 <div><h3>BoundaryFlowFK 五级消融</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
                 <span class="scope-badge">月度样本外</span>
               </div>
-              <div class="table-scroll"><table><thead><tr><th>模型</th><th>状态</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>开仓率</th></tr></thead><tbody id="boundary-stage-table"></tbody></table></div>
+              <div class="table-scroll"><table><thead><tr><th>模型</th><th>增量比较</th><th>晋级链</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>开仓率</th></tr></thead><tbody id="boundary-stage-table"></tbody></table></div>
               <div class="boundary-result-grid">
                 <section><h3>最后一条样本外概率</h3><div class="boundary-probabilities" id="boundary-probabilities"></div></section>
                 <section><h3>动力学后验</h3><div class="boundary-dynamics" id="boundary-dynamics"></div></section>

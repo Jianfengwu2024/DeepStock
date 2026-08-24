@@ -74,6 +74,7 @@ def run_boundary_flow_experiment(args: Any) -> None:
             {
                 "model_name": stage.model_name,
                 "status": stage.status,
+                "promotion_eligible": stage.promotion_eligible,
                 "failure_reason": stage.failure_reason,
             }
             for stage in result.stages

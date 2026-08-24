@@ -101,6 +101,7 @@ class BoundaryStageResult:
     status: str
     passed: bool
     test_months: tuple[str, ...]
+    promotion_eligible: bool = False
     drift_feature_names: tuple[str, ...] = ()
     diffusion_feature_names: tuple[str, ...] = ()
     minimum_fit_rows: int = 0
@@ -145,17 +146,8 @@ class BoundaryFlowPipeline:
         all_predictions: list[dict[str, object]] = []
         posterior_artifacts: list[dict[str, object]] = []
         previous_metrics: BoundaryEvaluationMetrics | None = None
-        stopped = False
-        for stage_index, (model_name, profile) in enumerate(
-            zip(BOUNDARY_MODEL_NAMES, _PROFILES, strict=True)
-        ):
-            if stopped:
-                stages.append(
-                    BoundaryStageResult(
-                        model_name, "skipped", False, test_months, failure_reason="previous_stage_failed"
-                    )
-                )
-                continue
+        promotion_chain = True
+        for model_name, profile in zip(BOUNDARY_MODEL_NAMES, _PROFILES, strict=True):
             observations: list[BoundaryForecastObservation] = []
             stage_drift: tuple[str, ...] = ()
             stage_diffusion: tuple[str, ...] = ()
@@ -241,11 +233,13 @@ class BoundaryFlowPipeline:
             passed = previous_metrics is None or self.stage_gate(
                 previous_metrics, metrics, model_name
             )
+            promotion_chain = promotion_chain and passed
             stage = BoundaryStageResult(
                 model_name=model_name,
                 status="passed" if passed else "failed",
                 passed=passed,
                 test_months=test_months,
+                promotion_eligible=promotion_chain,
                 drift_feature_names=stage_drift,
                 diffusion_feature_names=stage_diffusion,
                 minimum_fit_rows=min(fit_rows),
@@ -254,7 +248,6 @@ class BoundaryFlowPipeline:
             )
             stages.append(stage)
             previous_metrics = metrics
-            stopped = not passed
 
         stage_payload = [self._stage_payload(stage) for stage in stages]
         write_json(root / "boundary-model-posterior.json", posterior_artifacts)
@@ -404,6 +397,7 @@ class BoundaryFlowPipeline:
             "model_name": stage.model_name,
             "status": stage.status,
             "passed": stage.passed,
+            "promotion_eligible": stage.promotion_eligible,
             "test_months": list(stage.test_months),
             "drift_feature_names": list(stage.drift_feature_names),
             "diffusion_feature_names": list(stage.diffusion_feature_names),

@@ -18,17 +18,19 @@ def write_ablation_report(path: Path, stages: list[dict[str, Any]]) -> None:
     lines = [
         "# BoundaryFlowFK 固定五级消融报告",
         "",
-        "五个模型使用相同样本外月份和随机种子。某一级失败后，后续级别停止。",
+        "五个模型使用相同样本外月份和随机种子。某一级失败后，后续级别仍继续运行，",
+        "但严格晋级链从失败处断开，后续结果只用于诊断，不能自动发布。",
         "",
-        "| 模型 | 状态 | Brier | Log Loss | ECE | 样本数 |",
-        "| --- | --- | ---: | ---: | ---: | ---: |",
+        "| 模型 | 增量比较 | 晋级链 | Brier | Log Loss | ECE | 样本数 |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for stage in stages:
         metrics = stage.get("metrics") or {}
         lines.append(
-            "| {model} | {status} | {brier} | {log_loss} | {ece} | {count} |".format(
+            "| {model} | {status} | {promotion} | {brier} | {log_loss} | {ece} | {count} |".format(
                 model=stage["model_name"],
                 status=stage["status"],
+                promotion="可晋级" if stage.get("promotion_eligible") else "仅诊断",
                 brier=_number(metrics.get("brier_score")),
                 log_loss=_number(metrics.get("log_loss")),
                 ece=_number(metrics.get("ece")),

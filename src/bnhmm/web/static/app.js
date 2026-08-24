@@ -904,6 +904,7 @@ function paintBoundaryFlowResult(job, stages, predictions) {
     return `<tr>
       <td><strong>${escapeHtml(stage.model_name || "—")}</strong></td>
       <td><span class="status-badge ${stage.status === "passed" ? "completed" : stage.status === "failed" ? "failed" : "neutral"}">${statusLabels[stage.status] || escapeHtml(stage.status || "未知")}</span></td>
+      <td><span class="status-badge ${stage.promotion_eligible ? "completed" : "neutral"}">${stage.promotion_eligible ? "可晋级" : "仅诊断"}</span></td>
       <td>${formatInteger(stage.minimum_fit_rows)}</td>
       <td>${formatNumber(metrics.brier_score, 4)}</td>
       <td>${formatNumber(metrics.log_loss, 4)}</td>
@@ -914,10 +915,10 @@ function paintBoundaryFlowResult(job, stages, predictions) {
 
   const latest = predictions.at(-1);
   const totalPredictions = predictions.length;
-  const failedStage = stages.find(stage => stage.status === "failed");
-  document.querySelector("#boundary-flow-result-status").textContent = failedStage
-    ? `${formatInteger(totalPredictions)} 条样本外预测 · 在 ${failedStage.model_name} 停止升级`
-    : `${formatInteger(totalPredictions)} 条样本外预测 · ${stages.filter(stage => stage.status === "passed").length}/${stages.length} 级通过`;
+  const failedStages = stages.filter(stage => stage.status === "failed");
+  document.querySelector("#boundary-flow-result-status").textContent = failedStages.length
+    ? `${formatInteger(totalPredictions)} 条样本外预测 · 五级均已运行 · ${failedStages.length} 级增量未通过`
+    : `${formatInteger(totalPredictions)} 条样本外预测 · 五级均已运行并保持晋级链`;
 
   if (!latest) {
     document.querySelector("#boundary-probabilities").innerHTML = '<p class="boundary-empty">没有样本外预测。</p>';

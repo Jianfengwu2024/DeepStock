@@ -34,6 +34,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn("renderBoundaryFlowResult", script)
         self.assertIn('"boundary-flow-fk"', script)
+        self.assertIn("晋级链", html)
+        self.assertIn("promotion_eligible", script)
         for artifact in (
             "boundary-policy-evaluation.json",
             "feynman-kac-predictions.json",
