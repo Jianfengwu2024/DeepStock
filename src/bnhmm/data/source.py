@@ -56,6 +56,26 @@ class BrokerBarSource:
         ]
         return BarBatch.from_records(symbol, records)
 
+    def fetch_sector_index(
+        self,
+        dataset_id: str,
+        symbol: str,
+        start: str | date | datetime,
+        end: str | date | datetime,
+    ) -> BarBatch:
+        payload = self.query(
+            "SELECT timestamp, open, high, low, close, volume "
+            "FROM sector_index_1d WHERE dataset_id = ? AND symbol = ? "
+            "AND timestamp >= ? AND timestamp < ? ORDER BY timestamp",
+            [dataset_id, symbol, self._iso(start), self._iso(end)],
+        )
+        columns = payload.get("columns", [])
+        records = [
+            {column: self._decode(value) for column, value in zip(columns, row, strict=True)}
+            for row in payload.get("rows", [])
+        ]
+        return BarBatch.from_records(symbol, records)
+
     def query(self, sql: str, params: list[Any] | None = None) -> dict[str, Any]:
         body = json.dumps(
             {"sql": sql, "params": params or [], "db_type": "duckdb", "read_only": True}
@@ -121,6 +141,37 @@ class DuckDBBarSource:
             rows = connection.execute(
                 query,
                 [symbol, BrokerBarSource._iso(start), BrokerBarSource._iso(end)],
+            ).fetchall()
+        columns = ("timestamp", "open", "high", "low", "close", "volume")
+        return BarBatch.from_records(symbol, (dict(zip(columns, row)) for row in rows))
+
+    def fetch_sector_index(
+        self,
+        dataset_id: str,
+        symbol: str,
+        start: str | date | datetime,
+        end: str | date | datetime,
+    ) -> BarBatch:
+        if not dataset_id or not symbol:
+            raise ValueError("dataset_id and sector index symbol are required")
+        try:
+            import duckdb
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("DuckDBBarSource requires the 'data' extra") from exc
+        query = (
+            "SELECT timestamp, open, high, low, close, volume FROM sector_index_1d "
+            "WHERE dataset_id = ? AND symbol = ? AND timestamp >= ? AND timestamp < ? "
+            "ORDER BY timestamp"
+        )
+        with duckdb.connect(self.database_path, read_only=True) as connection:
+            rows = connection.execute(
+                query,
+                [
+                    dataset_id,
+                    symbol,
+                    BrokerBarSource._iso(start),
+                    BrokerBarSource._iso(end),
+                ],
             ).fetchall()
         columns = ("timestamp", "open", "high", "low", "close", "volume")
         return BarBatch.from_records(symbol, (dict(zip(columns, row)) for row in rows))
