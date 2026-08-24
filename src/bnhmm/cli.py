@@ -105,6 +105,8 @@ def _sector_flow_walk_forward(args: argparse.Namespace) -> int:
         start=args.start,
         end=args.end,
         protocol=args.protocol,
+        dataset_id=args.dataset_id,
+        sector_index_symbol=args.sector_index_symbol,
         topology_lookback_sessions=args.topology_lookback_sessions,
         normalization_lookback_sessions=args.normalization_lookback_sessions,
         normalization_minimum_observations=args.normalization_minimum_observations,
@@ -120,11 +122,32 @@ def _sector_flow_walk_forward(args: argparse.Namespace) -> int:
         monte_carlo_samples=args.monte_carlo_samples,
         random_seed=args.seed,
         max_folds=args.max_folds,
+        regime_context_sessions=args.regime_context_sessions,
+        regime_hidden_channels=args.regime_hidden_channels,
+        regime_latent_states=args.regime_latent_states,
+        regime_neutral_sigma=args.regime_neutral_sigma,
+        regime_volatility_lookback_sessions=(
+            args.regime_volatility_lookback_sessions
+        ),
+        regime_volatility_minimum_observations=(
+            args.regime_volatility_minimum_observations
+        ),
+        regime_confidence_threshold=args.regime_confidence_threshold,
+        regime_maximum_bull_variance=args.regime_maximum_bull_variance,
+        regime_epochs=args.regime_epochs,
+        regime_batch_size=args.regime_batch_size,
+        regime_learning_rate=args.regime_learning_rate,
+        regime_kl_weight=args.regime_kl_weight,
+        regime_state_loss_weight=args.regime_state_loss_weight,
+        regime_mc_samples=args.regime_mc_samples,
+        device=args.device,
     )
     result = SectorFlowPipeline(config).run(source, args.output_dir)
     summary = {
         "model_version": (
-            "sector-flow-river-v2"
+            "sector-regime-bnhmm-v1"
+            if args.protocol == "river-regime-v3"
+            else "sector-flow-river-v2"
             if args.protocol == "river-topology-v2"
             else "sector-flow-bayes-v1"
         ),
@@ -132,7 +155,11 @@ def _sector_flow_walk_forward(args: argparse.Namespace) -> int:
         "dataset_id": args.dataset_id,
         "symbols": len(symbols),
         "folds": len(result.folds),
-        "predictions": len(result.graph_predictions or result.predictions),
+        "predictions": len(
+            result.regime_predictions
+            or result.graph_predictions
+            or result.predictions
+        ),
         "metrics": result.metrics,
         "output_dir": args.output_dir,
     }
@@ -1312,7 +1339,7 @@ def build_parser() -> argparse.ArgumentParser:
     sector_flow.add_argument("--output-dir", required=True)
     sector_flow.add_argument(
         "--protocol",
-        choices=("legacy-v1", "river-topology-v2"),
+        choices=("legacy-v1", "river-topology-v2", "river-regime-v3"),
         default="river-topology-v2",
     )
     sector_flow.add_argument(
@@ -1338,6 +1365,32 @@ def build_parser() -> argparse.ArgumentParser:
     sector_flow.add_argument("--monte-carlo-samples", type=int, default=1000)
     sector_flow.add_argument("--max-folds", type=int)
     sector_flow.add_argument("--seed", type=int, default=20260820)
+    sector_flow.add_argument("--sector-index-symbol", default="881121")
+    sector_flow.add_argument("--regime-context-sessions", type=int, default=5)
+    sector_flow.add_argument("--regime-hidden-channels", type=int, default=16)
+    sector_flow.add_argument("--regime-latent-states", type=int, default=12)
+    sector_flow.add_argument("--regime-neutral-sigma", type=float, default=0.35)
+    sector_flow.add_argument(
+        "--regime-volatility-lookback-sessions", type=int, default=20
+    )
+    sector_flow.add_argument(
+        "--regime-volatility-minimum-observations", type=int, default=10
+    )
+    sector_flow.add_argument(
+        "--regime-confidence-threshold", type=float, default=0.6
+    )
+    sector_flow.add_argument(
+        "--regime-maximum-bull-variance", type=float, default=0.02
+    )
+    sector_flow.add_argument("--regime-epochs", type=int, default=20)
+    sector_flow.add_argument("--regime-batch-size", type=int, default=8)
+    sector_flow.add_argument("--regime-learning-rate", type=float, default=3e-4)
+    sector_flow.add_argument("--regime-kl-weight", type=float, default=1e-4)
+    sector_flow.add_argument(
+        "--regime-state-loss-weight", type=float, default=0.25
+    )
+    sector_flow.add_argument("--regime-mc-samples", type=int, default=16)
+    sector_flow.add_argument("--device", default="cpu")
     sector_flow.set_defaults(handler=_sector_flow_walk_forward)
 
     train = subparsers.add_parser("train")

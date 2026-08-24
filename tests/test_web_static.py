@@ -37,14 +37,20 @@ class SectorFlowStaticContractTests(unittest.TestCase):
 
         self.assertIn('value="sector-flow-bayes"', html)
         for field in (
-            "normalization_minimum_observations",
-            "maximum_lag_minutes",
-            "minimum_attribution_rows",
-            "factor_process_variance",
-            "sector_flow_ranking_window",
-            "sector_flow_evaluation_horizon_minutes",
+            "sector_index_symbol",
+            "regime_context_sessions",
+            "regime_hidden_channels",
+            "regime_latent_states",
+            "regime_neutral_sigma",
+            "regime_confidence_threshold",
+            "regime_maximum_bull_variance",
+            "regime_epochs",
+            "regime_batch_size",
+            "regime_learning_rate",
+            "regime_kl_weight",
+            "regime_state_loss_weight",
+            "regime_mc_samples",
             "sector_flow_top_k",
-            "sector_flow_monte_carlo_samples",
         ):
             self.assertIn(f'name="{field}"', html)
         for identifier in (
@@ -53,11 +59,25 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "sector-flow-ranking-table",
             "sector-flow-baseline-table",
             "sector-flow-result-status",
+            "sector-regime-results",
+            "sector-regime-probabilities",
+            "sector-regime-baselines",
+            "sector-regime-policy",
         ):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn('role="status"', html)
         self.assertIn("renderSectorFlowResult", script)
         self.assertIn('"sector-flow-bayes"', script)
+        self.assertIn("renderSectorRegimeResult", script)
+
+    def test_river_workspace_has_next_session_forecast_view(self) -> None:
+        html = (ROOT / "river.html").read_text(encoding="utf-8")
+        script = (ROOT / "river.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="forecast-view"', html)
+        self.assertIn('id="forecast-canvas"', html)
+        self.assertIn("loadForecast", script)
+        self.assertIn("renderForecast", script)
 
 
 if __name__ == "__main__":

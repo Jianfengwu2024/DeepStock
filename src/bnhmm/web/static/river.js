@@ -6,6 +6,8 @@ const riverState = {
   topology: null,
   slice: null,
   migration: null,
+  forecast: null,
+  forecastIndex: null,
   selectedSymbol: null,
   channel: "velocity",
 };
@@ -36,13 +38,23 @@ async function boot() {
     populateSelectors();
     const topologies = riverState.manifest.topologies || [];
     const slices = riverState.manifest.slices || [];
+    const forecasts = riverState.manifest.forecasts || [];
     if (!topologies.length || !slices.length) throw new Error("该任务没有可视化制品");
     riverState.month = topologies.at(-1).month;
     riverState.session = slices.filter(item => item.topology_month === riverState.month).at(-1)?.session || slices.at(-1).session;
     document.querySelector("#month-select").value = riverState.month;
     syncSessionOptions();
     document.querySelector("#session-select").value = riverState.session;
-    await Promise.all([loadTopology(riverState.month), loadSlice(riverState.session), loadMigration()]);
+    riverState.forecastIndex = forecasts.length ? forecasts.at(-1).index : null;
+    if (riverState.forecastIndex !== null) {
+      document.querySelector("#forecast-select").value = String(riverState.forecastIndex);
+    }
+    await Promise.all([
+      loadTopology(riverState.month),
+      loadSlice(riverState.session),
+      loadMigration(),
+      riverState.forecastIndex === null ? Promise.resolve() : loadForecast(riverState.forecastIndex),
+    ]);
     document.querySelector("#river-status").textContent = `${slices.length} 个交易日 · 月内排序冻结`;
   } catch (error) {
     showError(error.message);
@@ -69,6 +81,10 @@ function bindControls() {
     riverState.session = event.target.value;
     try { await loadSlice(riverState.session); } catch (error) { showError(error.message); }
   });
+  document.querySelector("#forecast-select").addEventListener("change", async event => {
+    riverState.forecastIndex = Number(event.target.value);
+    try { await loadForecast(riverState.forecastIndex); } catch (error) { showError(error.message); }
+  });
   document.querySelectorAll('input[name="channel"]').forEach(input => input.addEventListener("change", event => {
     riverState.channel = event.target.value;
     renderHeatmap();
@@ -83,6 +99,8 @@ function bindControls() {
 function populateSelectors() {
   const months = (riverState.manifest.topologies || []).map(item => item.month);
   document.querySelector("#month-select").innerHTML = months.map(month => `<option value="${escapeHtml(month)}">${escapeHtml(month)}</option>`).join("");
+  const forecasts = riverState.manifest.forecasts || [];
+  document.querySelector("#forecast-select").innerHTML = forecasts.map(item => `<option value="${Number(item.index)}">${escapeHtml(String(item.signal_time).slice(0, 10))}</option>`).join("");
 }
 
 function syncSessionOptions() {
@@ -108,6 +126,70 @@ async function loadSlice(session) {
 async function loadMigration() {
   riverState.migration = await api(endpoint("migration"));
   renderMigration(riverState.migration);
+}
+
+async function loadForecast(index) {
+  riverState.forecast = await api(endpoint(`forecast/${encodeURIComponent(index)}`));
+  renderForecast(riverState.forecast);
+}
+
+function renderForecast(forecast) {
+  const canvas = document.querySelector("#forecast-canvas");
+  const context = canvas.getContext("2d");
+  const channels = forecast?.mean || [];
+  if (!channels.length || !channels[0]?.length || !channels[0][0]?.length) {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    document.querySelector("#forecast-summary").textContent = "暂无次日状态图预测";
+    return;
+  }
+  const rows = channels[0].length;
+  const columns = channels[0][0].length;
+  const labels = ["价格速度", "剩余速度", "成交密度", "有效区域"];
+  const cellWidth = Math.max(4, Math.floor(720 / columns));
+  const cellHeight = Math.max(4, Math.floor(150 / rows));
+  const labelWidth = 72;
+  const channelGap = 24;
+  const width = labelWidth + columns * cellWidth;
+  const channelHeight = rows * cellHeight;
+  const height = channels.length * channelHeight + (channels.length - 1) * channelGap;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = width * ratio;
+  canvas.height = height * ratio;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.fillStyle = "#eef1f2";
+  context.fillRect(0, 0, width, height);
+  context.font = '10px "Segoe UI", "Microsoft YaHei", sans-serif';
+  context.textBaseline = "top";
+  channels.forEach((matrix, channel) => {
+    const top = channel * (channelHeight + channelGap);
+    const scale = robustScale(matrix, matrix.map(row => row.map(() => true)));
+    context.fillStyle = "#344249";
+    context.fillText(labels[channel] || `通道 ${channel + 1}`, 4, top + 4);
+    matrix.forEach((row, rowIndex) => row.forEach((value, column) => {
+      context.fillStyle = channel === 3
+        ? maskColor(value)
+        : cellColor(value, scale, true, channel === 2 ? "activity" : "velocity", null);
+      context.fillRect(
+        labelWidth + column * cellWidth,
+        top + rowIndex * cellHeight,
+        cellWidth,
+        cellHeight,
+      );
+    }));
+  });
+  const variance = (forecast.variance || []).flat(3).filter(Number.isFinite);
+  const meanVariance = variance.length
+    ? variance.reduce((sum, value) => sum + Number(value), 0) / variance.length
+    : 0;
+  document.querySelector("#forecast-summary").innerHTML = `<span>信号 ${escapeHtml(formatTime(forecast.signal_time))}</span><span>可用 ${escapeHtml(formatTime(forecast.available_at))}</span><span>平均方差 ${formatNumber(meanVariance, 4)}</span>`;
+}
+
+function maskColor(value) {
+  const level = Math.max(0, Math.min(1, Number(value)));
+  const shade = Math.round(238 - 150 * level);
+  return `rgb(${shade}, ${shade}, ${shade})`;
 }
 
 function renderHeatmap() {

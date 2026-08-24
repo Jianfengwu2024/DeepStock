@@ -22,6 +22,22 @@ def bars(symbol: str, times: list[str], closes: list[float], volumes: list[float
 
 
 class SectorMinutePanelTests(unittest.TestCase):
+    def test_preserves_bar_open_for_next_session_execution(self) -> None:
+        batch = BarBatch(
+            symbol="000001",
+            timestamp=np.asarray(["2025-01-02T09:31"], dtype="datetime64[ns]"),
+            open=np.asarray([9.8]),
+            high=np.asarray([10.1]),
+            low=np.asarray([9.7]),
+            close=np.asarray([10.0]),
+            volume=np.asarray([100.0]),
+        )
+
+        panel = SectorMinutePanelBuilder().build({batch.symbol: batch})
+
+        self.assertEqual(panel.open[0, 0], 9.8)
+        self.assertEqual(panel.close[0, 0], 10.0)
+
     def test_aligns_symbols_on_canonical_minutes_and_masks_missing_bars(self) -> None:
         first = bars(
             "000001",

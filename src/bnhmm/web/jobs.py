@@ -82,8 +82,10 @@ class WalkForwardJobRequest(BaseModel):
     maximum_lag_minutes: int = Field(30, ge=0, le=120)
     minimum_attribution_rows: int = Field(120, ge=20, le=100_000)
     factor_process_variance: float | None = Field(None, gt=0.0, le=100.0)
-    sector_flow_protocol: Literal["legacy-v1", "river-topology-v2"] = (
-        "river-topology-v2"
+    sector_flow_protocol: Literal[
+        "legacy-v1", "river-topology-v2", "river-regime-v3"
+    ] = (
+        "river-regime-v3"
     )
     topology_lookback_sessions: Literal[60] = 60
     sector_flow_path_windows: tuple[int, ...] = (5, 15, 30, 60)
@@ -91,6 +93,21 @@ class WalkForwardJobRequest(BaseModel):
     sector_flow_evaluation_horizon_minutes: int = Field(30, ge=1, le=120)
     sector_flow_top_k: int = Field(10, ge=1, le=100)
     sector_flow_monte_carlo_samples: int = Field(1000, ge=100, le=100_000)
+    sector_index_symbol: str = Field("881121", pattern=r"^[A-Za-z0-9._-]{1,24}$")
+    regime_context_sessions: int = Field(5, ge=2, le=20)
+    regime_hidden_channels: int = Field(16, ge=4, le=256)
+    regime_latent_states: int = Field(12, ge=3, le=256)
+    regime_neutral_sigma: float = Field(0.35, gt=0.0, le=5.0)
+    regime_volatility_lookback_sessions: int = Field(20, ge=2, le=252)
+    regime_volatility_minimum_observations: int = Field(10, ge=2, le=252)
+    regime_confidence_threshold: float = Field(0.6, gt=1.0 / 3.0, le=1.0)
+    regime_maximum_bull_variance: float = Field(0.02, ge=0.0, le=1.0)
+    regime_epochs: int = Field(20, ge=1, le=1000)
+    regime_batch_size: int = Field(8, ge=1, le=512)
+    regime_learning_rate: float = Field(3e-4, gt=0.0, le=1.0)
+    regime_kl_weight: float = Field(1e-4, ge=0.0, le=1.0)
+    regime_state_loss_weight: float = Field(0.25, ge=0.0, le=10.0)
+    regime_mc_samples: int = Field(16, ge=2, le=256)
     velocity_bins: int = Field(3, ge=3, le=31)
     velocity_aggregation_minutes: int = Field(10, ge=2, le=60)
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
@@ -217,6 +234,13 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("sector flow path windows must be unique minute counts")
         if self.sector_flow_ranking_window not in self.sector_flow_path_windows:
             raise ValueError("sector flow ranking window must be a path window")
+        if (
+            self.regime_volatility_minimum_observations
+            > self.regime_volatility_lookback_sessions
+        ):
+            raise ValueError(
+                "sector regime volatility observations cannot exceed lookback"
+            )
         if self.minimum_sequence_length > self.sequence_length:
             raise ValueError("minimum_sequence_length cannot exceed sequence_length")
         if self.return_standardization_min_observations > self.return_standardization_lookback:
@@ -548,6 +572,38 @@ def _build_sector_flow_command(
         str(request.sector_flow_monte_carlo_samples),
         "--seed",
         str(request.seed),
+        "--sector-index-symbol",
+        request.sector_index_symbol,
+        "--regime-context-sessions",
+        str(request.regime_context_sessions),
+        "--regime-hidden-channels",
+        str(request.regime_hidden_channels),
+        "--regime-latent-states",
+        str(request.regime_latent_states),
+        "--regime-neutral-sigma",
+        str(request.regime_neutral_sigma),
+        "--regime-volatility-lookback-sessions",
+        str(request.regime_volatility_lookback_sessions),
+        "--regime-volatility-minimum-observations",
+        str(request.regime_volatility_minimum_observations),
+        "--regime-confidence-threshold",
+        str(request.regime_confidence_threshold),
+        "--regime-maximum-bull-variance",
+        str(request.regime_maximum_bull_variance),
+        "--regime-epochs",
+        str(request.regime_epochs),
+        "--regime-batch-size",
+        str(request.regime_batch_size),
+        "--regime-learning-rate",
+        str(request.regime_learning_rate),
+        "--regime-kl-weight",
+        str(request.regime_kl_weight),
+        "--regime-state-loss-weight",
+        str(request.regime_state_loss_weight),
+        "--regime-mc-samples",
+        str(request.regime_mc_samples),
+        "--device",
+        request.device,
     ]
     if request.dataset_id:
         command.extend(("--dataset-id", request.dataset_id))

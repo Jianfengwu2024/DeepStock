@@ -336,13 +336,21 @@ class WebJobTests(unittest.TestCase):
             sector_flow_path_windows=(5, 15, 30, 60),
             sector_flow_ranking_window=60,
             sector_flow_top_k=10,
+            sector_index_symbol="881121",
+            regime_context_sessions=5,
+            regime_hidden_channels=16,
+            regime_latent_states=12,
+            regime_neutral_sigma=0.35,
+            regime_confidence_threshold=0.6,
+            regime_epochs=20,
+            regime_mc_samples=16,
         )
 
         command = build_command(request, Path("/tmp/sector-flow"))
 
         self.assertIn("sector-flow-walk-forward", command)
         self.assertEqual(
-            command[command.index("--protocol") + 1], "river-topology-v2"
+            command[command.index("--protocol") + 1], "river-regime-v3"
         )
         self.assertEqual(
             command[command.index("--topology-lookback-sessions") + 1], "60"
@@ -350,8 +358,20 @@ class WebJobTests(unittest.TestCase):
         self.assertIn("--maximum-lag-minutes", command)
         self.assertIn("--factor-process-variance", command)
         self.assertIn("--top-k", command)
-        self.assertNotIn("--epochs", command)
-        self.assertNotIn("--device", command)
+        self.assertEqual(
+            command[command.index("--sector-index-symbol") + 1], "881121"
+        )
+        self.assertEqual(
+            command[command.index("--regime-context-sessions") + 1], "5"
+        )
+        self.assertEqual(
+            command[command.index("--regime-latent-states") + 1], "12"
+        )
+        self.assertEqual(command[command.index("--regime-epochs") + 1], "20")
+        self.assertEqual(
+            command[command.index("--regime-mc-samples") + 1], "16"
+        )
+        self.assertIn("--device", command)
         self.assertNotIn("--d-model", command)
         self.assertNotIn("--latent-states", command)
         with self.assertRaises(ValidationError):

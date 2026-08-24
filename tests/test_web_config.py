@@ -31,6 +31,13 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         self.assertEqual(defaults["normalization_lookback_sessions"], 20)
         self.assertEqual(defaults["maximum_lag_minutes"], 30)
         self.assertEqual(defaults["sector_flow_path_windows"], [5, 15, 30, 60])
+        self.assertEqual(defaults["sector_flow_protocol"], "river-regime-v3")
+        self.assertEqual(defaults["sector_index_symbol"], "881121")
+        self.assertEqual(defaults["regime_context_sessions"], 5)
+        self.assertEqual(defaults["regime_hidden_channels"], 16)
+        self.assertEqual(defaults["regime_latent_states"], 12)
+        self.assertEqual(defaults["regime_neutral_sigma"], 0.35)
+        self.assertEqual(defaults["regime_confidence_threshold"], 0.6)
 
     def test_job_payload_discovers_sector_flow_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -45,6 +52,11 @@ class WebSectorFlowConfigTests(unittest.TestCase):
                 "ranking.csv",
                 "evaluation.json",
                 "predictions.json",
+                "sector-regime-report.md",
+                "sector-regime-predictions.json",
+                "sector-regime-evaluation.json",
+                "sector-policy-evaluation.json",
+                "sector-state-forecasts.npz",
             ):
                 (output / name).write_text("test", encoding="utf-8")
             request = WalkForwardJobRequest(
@@ -70,6 +82,9 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         self.assertIn("sector-flow-v2-report.md", payload["artifacts"])
         self.assertIn("structure-evaluation.json", payload["artifacts"])
         self.assertIn("ranking.csv", payload["artifacts"])
+        self.assertIn("sector-regime-report.md", payload["artifacts"])
+        self.assertIn("sector-regime-evaluation.json", payload["artifacts"])
+        self.assertIn("sector-policy-evaluation.json", payload["artifacts"])
 
 
 if __name__ == "__main__":

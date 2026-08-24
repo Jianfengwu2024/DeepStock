@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>板块河道 · DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/river.css?v=0.19.0">
+  <link rel="stylesheet" href="/static/river.css?v=0.20.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/river.js?v=0.19.0" defer></script>
+  <script src="/static/river.js?v=0.20.0" defer></script>
 </head>
 <body>
   <div class="river-shell">
@@ -37,6 +37,9 @@
       </button>
       <button class="river-tab" data-view="structure-panel" type="button" title="结构诊断">
         <i data-lucide="scan-search"></i><span>结构诊断</span>
+      </button>
+      <button class="river-tab" data-view="forecast-view" type="button" title="次日预测">
+        <i data-lucide="scan-eye"></i><span>次日预测</span>
       </button>
     </nav>
 
@@ -84,6 +87,15 @@
             <table><thead><tr><th>股票</th><th>流带</th><th>凝聚度</th><th>中心性</th><th>已分配</th></tr></thead><tbody id="structure-table"></tbody></table>
           </div>
         </div>
+      </section>
+
+      <section class="river-panel hidden" id="forecast-view">
+        <div class="view-heading">
+          <div><h1>次日状态图</h1><p>模型在当日收盘后给出的下一交易日板块状态预测。</p></div>
+          <label>信号日<select id="forecast-select"></select></label>
+        </div>
+        <div class="forecast-summary" id="forecast-summary"></div>
+        <div class="forecast-stage"><canvas id="forecast-canvas" aria-label="下一交易日板块状态预测图"></canvas></div>
       </section>
     </main>
   </div>

@@ -165,6 +165,22 @@ def config(request: Request) -> dict[str, Any]:
         "sector_flow_evaluation_horizon_minutes": 30,
         "sector_flow_top_k": 10,
         "sector_flow_monte_carlo_samples": 1000,
+        "sector_flow_protocol": "river-regime-v3",
+        "sector_index_symbol": "881121",
+        "regime_context_sessions": 5,
+        "regime_hidden_channels": 16,
+        "regime_latent_states": 12,
+        "regime_neutral_sigma": 0.35,
+        "regime_volatility_lookback_sessions": 20,
+        "regime_volatility_minimum_observations": 10,
+        "regime_confidence_threshold": 0.6,
+        "regime_maximum_bull_variance": 0.02,
+        "regime_epochs": 20,
+        "regime_batch_size": 8,
+        "regime_learning_rate": 3e-4,
+        "regime_kl_weight": 1e-4,
+        "regime_state_loss_weight": 0.25,
+        "regime_mc_samples": 16,
         "device": "cpu",
     }
     return {
@@ -364,6 +380,40 @@ def river_slice(
     return _npz_payload(path)
 
 
+@app.get("/api/jobs/{identifier}/river/forecast/{index}")
+def river_forecast(
+    identifier: str, index: int, request: Request
+) -> dict[str, Any]:
+    manifest = manager(request).river_manifest(identifier)
+    path = manager(request).artifact_path(
+        identifier, "sector-state-forecasts.npz"
+    )
+    forecasts = manifest.get("forecasts") if isinstance(manifest, dict) else None
+    if (
+        path is None
+        or not isinstance(forecasts, list)
+        or not 0 <= index < len(forecasts)
+    ):
+        raise HTTPException(status_code=404, detail="sector forecast not found")
+    with np.load(path, allow_pickle=False) as archive:
+        required = {"signal_time", "available_at", "mean", "variance"}
+        if not required.issubset(archive.files):
+            raise HTTPException(status_code=422, detail="sector forecast is invalid")
+        if index >= len(archive["signal_time"]):
+            raise HTTPException(status_code=404, detail="sector forecast not found")
+        mean = archive["mean"][index]
+        variance = archive["variance"][index]
+        if mean.size + variance.size > 100_000:
+            raise HTTPException(status_code=413, detail="sector forecast is too large")
+        return {
+            "index": index,
+            "signal_time": _array_json(archive["signal_time"][index]),
+            "available_at": _array_json(archive["available_at"][index]),
+            "mean": _array_json(mean),
+            "variance": _array_json(variance),
+        }
+
+
 @app.get("/api/jobs/{identifier}/river/migration")
 def river_migration(identifier: str, request: Request) -> dict[str, Any]:
     manifest = manager(request).river_manifest(identifier)
@@ -483,6 +533,11 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "sector-flow-report.md",
             "sector-flow-v2-report.md",
             "structure-evaluation.json",
+            "sector-regime-report.md",
+            "sector-regime-predictions.json",
+            "sector-regime-evaluation.json",
+            "sector-policy-evaluation.json",
+            "sector-state-forecasts.npz",
             "ranking.csv",
             "predictions.csv",
         )

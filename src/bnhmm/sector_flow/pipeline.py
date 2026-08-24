@@ -30,6 +30,20 @@ from .normalization import CausalSectorNormalizer, SectorNormalizationConfig
 from .panel import SectorMinutePanelBuilder
 from .ranking import PathEfficiencyAnalyzer, RankingConfig, SourceProximityRanker
 from .river import DailyRiverSliceBuilder
+from .regime_data import SectorRegimeDataConfig, SectorRegimeDatasetBuilder
+from .regime_evaluation import (
+    SectorRegimePredictionRecord,
+    evaluate_sector_regimes,
+)
+from .regime_model import SectorRegimeModelConfig
+from .regime_policy import (
+    SectorPolicyObservation,
+    SectorRegimePolicyConfig,
+    StockSelectionSnapshot,
+    apply_sector_regime_policy,
+    evaluate_sector_regime_policy,
+)
+from .regime_training import SectorRegimeTrainer, SectorRegimeTrainerConfig
 from .structure_evaluation import evaluate_topology_structure, migration_rate
 from .topology import RiverTopologyBuilder, TopologyConfig
 from .types import (
@@ -56,6 +70,8 @@ class SectorFlowConfig:
     start: str
     end: str
     protocol: str = "legacy-v1"
+    dataset_id: str | None = None
+    sector_index_symbol: str = "881121"
     topology_lookback_sessions: int = 60
     normalization_lookback_sessions: int = 20
     normalization_minimum_observations: int = 10
@@ -71,13 +87,34 @@ class SectorFlowConfig:
     monte_carlo_samples: int = 1_000
     random_seed: int = 20260820
     max_folds: int | None = None
+    regime_context_sessions: int = 5
+    regime_hidden_channels: int = 16
+    regime_latent_states: int = 12
+    regime_neutral_sigma: float = 0.35
+    regime_volatility_lookback_sessions: int = 20
+    regime_volatility_minimum_observations: int = 10
+    regime_confidence_threshold: float = 0.6
+    regime_maximum_bull_variance: float = 0.02
+    regime_epochs: int = 20
+    regime_batch_size: int = 8
+    regime_learning_rate: float = 3e-4
+    regime_kl_weight: float = 1e-4
+    regime_state_loss_weight: float = 0.25
+    regime_mc_samples: int = 16
+    regime_coarse_height: int = 12
+    regime_coarse_minutes: int = 30
+    device: str = "cpu"
 
     def __post_init__(self) -> None:
         if len(self.symbols) < 3 or len(set(self.symbols)) != len(self.symbols):
             raise ValueError("sector flow requires at least three unique symbols")
         if not self.start or not self.end or self.start >= self.end:
             raise ValueError("sector flow date range is invalid")
-        if self.protocol not in {"legacy-v1", "river-topology-v2"}:
+        if self.protocol not in {
+            "legacy-v1",
+            "river-topology-v2",
+            "river-regime-v3",
+        }:
             raise ValueError("unsupported sector flow protocol")
         if self.topology_lookback_sessions < 2:
             raise ValueError("topology lookback must contain at least two sessions")
@@ -91,6 +128,28 @@ class SectorFlowConfig:
             raise ValueError("transaction cost cannot be negative")
         if self.monte_carlo_samples < 100:
             raise ValueError("at least 100 posterior draws are required")
+        if self.regime_context_sessions < 2:
+            raise ValueError("sector regime context must contain at least two sessions")
+        if self.regime_hidden_channels < 4 or self.regime_latent_states < 3:
+            raise ValueError("sector regime model dimensions are too small")
+        if self.regime_neutral_sigma <= 0.0:
+            raise ValueError("sector regime neutral scale must be positive")
+        if not (
+            2
+            <= self.regime_volatility_minimum_observations
+            <= self.regime_volatility_lookback_sessions
+        ):
+            raise ValueError("sector regime volatility history is invalid")
+        if not 1.0 / 3.0 < self.regime_confidence_threshold <= 1.0:
+            raise ValueError("sector regime confidence must exceed random probability")
+        if self.regime_maximum_bull_variance < 0.0:
+            raise ValueError("sector regime uncertainty limit cannot be negative")
+        if self.regime_epochs < 1 or self.regime_batch_size < 1:
+            raise ValueError("sector regime training dimensions must be positive")
+        if self.regime_learning_rate <= 0.0 or self.regime_mc_samples < 2:
+            raise ValueError("sector regime optimizer or posterior settings are invalid")
+        if self.regime_coarse_height < 2 or self.regime_coarse_minutes < 2:
+            raise ValueError("sector regime forecast dimensions are too small")
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +163,10 @@ class SectorFlowRunResult:
     excluded_symbols: tuple[str, ...]
     graph_predictions: tuple[GraphPredictionObservation, ...] = ()
     topologies: tuple[MonthlyRiverTopology, ...] = ()
+    regime_predictions: tuple[SectorRegimePredictionRecord, ...] = ()
+    policy_observations: tuple[SectorPolicyObservation, ...] = ()
+    regime_metrics: dict[str, object] | None = None
+    policy_metrics: dict[str, float | int] | None = None
 
 
 class SectorFlowPipeline:
@@ -146,6 +209,32 @@ class SectorFlowPipeline:
         )
         if not folds:
             raise ValueError("date range does not produce a monthly sample-out fold")
+        if self.config.protocol == "river-regime-v3":
+            if not self.config.dataset_id or not self.config.sector_index_symbol:
+                raise ValueError(
+                    "river-regime-v3 requires a dataset id and sector index symbol"
+                )
+            fetch_sector_index = getattr(source, "fetch_sector_index", None)
+            if fetch_sector_index is None:
+                raise ValueError("bar source does not provide real sector index data")
+            index_bars = fetch_sector_index(
+                self.config.dataset_id,
+                self.config.sector_index_symbol,
+                self.config.start,
+                self.config.end,
+            )
+            if not len(index_bars):
+                raise ValueError(
+                    "real sector index has no rows in the requested period"
+                )
+            return self._run_regime(
+                panel,
+                normalized,
+                folds,
+                index_bars,
+                destination,
+                excluded_symbols,
+            )
         if self.config.protocol == "river-topology-v2":
             return self._run_river(
                 panel,
@@ -439,6 +528,314 @@ class SectorFlowPipeline:
             topologies=tuple(published_topologies),
         )
 
+    def _run_regime(
+        self,
+        panel: SectorMinutePanel,
+        normalized: NormalizedSectorPanel,
+        folds: tuple[SectorFlowFold, ...],
+        index_bars: BarBatch,
+        destination: Path,
+        excluded_symbols: tuple[str, ...],
+    ) -> SectorFlowRunResult:
+        minimum_topology_sessions = max(
+            2,
+            min(
+                40,
+                self.config.topology_lookback_sessions
+                - self.config.normalization_lookback_sessions,
+            ),
+        )
+        topology_builder = RiverTopologyBuilder(
+            TopologyConfig(
+                lookback_sessions=self.config.topology_lookback_sessions,
+                minimum_sessions=minimum_topology_sessions,
+                minimum_pair_sessions=minimum_topology_sessions,
+            )
+        )
+        factor_model = BayesianSectorFactor(
+            SectorFactorConfig(
+                process_variance=self.config.factor_process_variance,
+                minimum_symbols=min(5, len(panel.symbols)),
+            )
+        )
+        graph_model = SectorGraphStateModel()
+        slice_builder = DailyRiverSliceBuilder()
+        sessions = np.unique(panel.timestamps.astype("datetime64[D]"))
+        session_rows = {
+            session: np.flatnonzero(
+                panel.timestamps.astype("datetime64[D]") == session
+            ).astype(np.int64)
+            for session in sessions
+        }
+        topology_by_month = self._river_topologies_through(
+            normalized,
+            topology_builder,
+            folds[-1].test_start.astype("datetime64[M]"),
+        )
+        regime_records: list[SectorRegimePredictionRecord] = []
+        graph_observations: list[GraphPredictionObservation] = []
+        snapshots: list[StockSelectionSnapshot] = []
+        published_topologies: dict[np.datetime64, MonthlyRiverTopology] = {}
+        published_slices: dict[np.datetime64, DailyRiverSlice] = {}
+        fold_summaries: list[dict[str, object]] = []
+        prior_counts = np.zeros(3, dtype=np.float64)
+
+        data_config = SectorRegimeDataConfig(
+            context_sessions=self.config.regime_context_sessions,
+            image_height=max(8, len(panel.symbols)),
+            image_minutes=240,
+            volatility_lookback_sessions=(
+                self.config.regime_volatility_lookback_sessions
+            ),
+            volatility_minimum_observations=(
+                self.config.regime_volatility_minimum_observations
+            ),
+            neutral_sigma=self.config.regime_neutral_sigma,
+        )
+        model_config = SectorRegimeModelConfig(
+            hidden_channels=self.config.regime_hidden_channels,
+            latent_states=self.config.regime_latent_states,
+            coarse_height=self.config.regime_coarse_height,
+            coarse_minutes=self.config.regime_coarse_minutes,
+        )
+
+        for fold in folds:
+            training_cutoff = panel.timestamps[fold.training_rows[-1]]
+            parameters = factor_model.fit(normalized, fold.training_rows)
+            flow = factor_model.filter(normalized, parameters)
+            test_month = fold.test_start.astype("datetime64[M]")
+            topology = topology_by_month.get(test_month)
+            if topology is None:
+                raise ValueError(
+                    "insufficient completed history for sample-out topology"
+                )
+
+            fold_slice_by_session: dict[np.datetime64, DailyRiverSlice] = {}
+            final_test_session = np.max(
+                panel.timestamps[fold.test_rows].astype("datetime64[D]")
+            )
+            for session in sessions[sessions <= final_test_session]:
+                session_topology = topology_by_month.get(
+                    session.astype("datetime64[M]")
+                )
+                if session_topology is None:
+                    continue
+                fold_slice_by_session[session] = slice_builder.build(
+                    normalized,
+                    parameters,
+                    flow,
+                    session_topology,
+                    session,
+                )
+            samples = SectorRegimeDatasetBuilder(data_config).build(
+                tuple(fold_slice_by_session.values()), index_bars
+            )
+            trainer = SectorRegimeTrainer(
+                SectorRegimeTrainerConfig(
+                    epochs=self.config.regime_epochs,
+                    batch_size=self.config.regime_batch_size,
+                    learning_rate=self.config.regime_learning_rate,
+                    kl_weight=self.config.regime_kl_weight,
+                    state_loss_weight=self.config.regime_state_loss_weight,
+                    mc_samples=self.config.regime_mc_samples,
+                    device=self.config.device,
+                    seed=self.config.random_seed + fold.index,
+                )
+            )
+            training_result = trainer.fit(
+                samples,
+                model_config,
+                training_cutoff=training_cutoff,
+            )
+            prior_counts += (
+                training_result.class_prior * training_result.training_count
+            )
+            test_samples = tuple(
+                item
+                for item in samples
+                if fold.test_start <= item.signal_time < fold.test_end
+            )
+            fold_regimes = trainer.predict(training_result, test_samples)
+            regime_records.extend(fold_regimes)
+
+            graph_training_samples: list[
+                tuple[MonthlyRiverTopology, DailyRiverSlice, np.ndarray]
+            ] = []
+            training_sessions = np.unique(
+                panel.timestamps[fold.training_rows].astype("datetime64[D]")
+            )
+            for session in training_sessions[:-1]:
+                river_slice = fold_slice_by_session.get(session)
+                next_session = self._next_session(sessions, session)
+                if river_slice is None or next_session is None:
+                    continue
+                target = self._next_session_open_close_return(
+                    panel,
+                    session_rows,
+                    next_session,
+                    river_slice.symbols,
+                    relative=True,
+                )
+                graph_training_samples.append(
+                    (
+                        topology_by_month[session.astype("datetime64[M]")],
+                        river_slice,
+                        target,
+                    )
+                )
+            if not graph_training_samples:
+                raise ValueError(
+                    "sector regime fold has no causal stock-selection samples"
+                )
+            graph_parameters = graph_model.fit(
+                graph_training_samples,
+                training_cutoff=training_cutoff,
+            )
+
+            fold_graph_count = 0
+            for regime in fold_regimes:
+                session = regime.signal_time.astype("datetime64[D]")
+                next_session = self._next_session(sessions, session)
+                river_slice = fold_slice_by_session.get(session)
+                if river_slice is None or next_session is None:
+                    continue
+                prediction = graph_model.predict(
+                    graph_parameters,
+                    topology,
+                    river_slice,
+                    available_at=regime.available_at,
+                )
+                raw_returns = self._next_session_open_close_return(
+                    panel,
+                    session_rows,
+                    next_session,
+                    prediction.symbols,
+                    relative=False,
+                )
+                relative_returns = raw_returns.copy()
+                finite = np.isfinite(relative_returns)
+                if finite.any():
+                    relative_returns[finite] -= float(
+                        np.mean(relative_returns[finite])
+                    )
+                if not finite.all():
+                    continue
+                snapshots.append(
+                    StockSelectionSnapshot(
+                        signal_time=regime.signal_time,
+                        symbols=prediction.symbols,
+                        relative_scores=np.asarray(
+                            prediction.expected_relative_return,
+                            dtype=np.float64,
+                        ),
+                        next_open_close_returns=raw_returns,
+                    )
+                )
+                for row, symbol in enumerate(prediction.symbols):
+                    graph_observations.append(
+                        GraphPredictionObservation(
+                            symbol=symbol,
+                            signal_time=prediction.signal_time,
+                            available_at=prediction.available_at,
+                            training_cutoff=prediction.training_cutoff,
+                            model_version=prediction.model_version,
+                            fold=fold.index,
+                            expected_relative_return=float(
+                                prediction.expected_relative_return[row]
+                            ),
+                            predictive_variance=float(
+                                prediction.predictive_variance[row]
+                            ),
+                            realized_relative_return=float(
+                                relative_returns[row]
+                            ),
+                        )
+                    )
+                    fold_graph_count += 1
+                published_slices[session] = river_slice
+
+            published_topologies[test_month] = topology
+            fold_summaries.append(
+                {
+                    "fold": fold.index,
+                    "training_cutoff": str(training_cutoff),
+                    "test_start": str(fold.test_start),
+                    "test_end": str(fold.test_end),
+                    "training_samples": training_result.training_count,
+                    "regime_predictions": len(fold_regimes),
+                    "stock_predictions": fold_graph_count,
+                    "topology_month": str(topology.month),
+                    "loss_history": list(training_result.loss_history),
+                }
+            )
+
+        if not regime_records:
+            raise ValueError(
+                "sector regime walk-forward folds produced no predictions"
+            )
+        ordered_regimes = tuple(
+            sorted(regime_records, key=lambda item: item.signal_time)
+        )
+        ordered_graph = tuple(
+            sorted(
+                graph_observations,
+                key=lambda item: (item.signal_time, item.symbol),
+            )
+        )
+        class_prior = prior_counts / prior_counts.sum()
+        regime_metrics = evaluate_sector_regimes(
+            ordered_regimes,
+            training_class_prior=class_prior,
+        )
+        policy_observations = apply_sector_regime_policy(
+            ordered_regimes,
+            snapshots,
+            SectorRegimePolicyConfig(
+                top_k=self.config.top_k,
+                bull_probability_threshold=(
+                    self.config.regime_confidence_threshold
+                ),
+                maximum_bull_variance=(
+                    self.config.regime_maximum_bull_variance
+                ),
+                transaction_cost_bps=self.config.transaction_cost_bps,
+            ),
+        )
+        policy_metrics = evaluate_sector_regime_policy(policy_observations)
+        graph_metrics = evaluate_graph_predictions(
+            ordered_graph,
+            top_k=self.config.top_k,
+            transaction_cost_bps=self.config.transaction_cost_bps,
+        )
+        self._write_regime_artifacts(
+            destination,
+            ordered_regimes,
+            ordered_graph,
+            policy_observations,
+            regime_metrics,
+            policy_metrics,
+            graph_metrics,
+            tuple(fold_summaries),
+            tuple(published_topologies.values()),
+            tuple(published_slices.values()),
+            excluded_symbols,
+        )
+        return SectorFlowRunResult(
+            folds=tuple(fold_summaries),
+            predictions=(),
+            metrics=policy_metrics,
+            baselines={},
+            latest_ranking=(),
+            latest_water_state={},
+            excluded_symbols=excluded_symbols,
+            graph_predictions=ordered_graph,
+            topologies=tuple(published_topologies.values()),
+            regime_predictions=ordered_regimes,
+            policy_observations=policy_observations,
+            regime_metrics=regime_metrics,
+            policy_metrics=policy_metrics,
+        )
+
     def _river_topologies_through(
         self,
         normalized: NormalizedSectorPanel,
@@ -504,6 +901,32 @@ class SectorFlowPipeline:
             )
         finite = np.isfinite(result)
         if finite.any():
+            result[finite] -= float(np.mean(result[finite]))
+        return result
+
+    @staticmethod
+    def _next_session_open_close_return(
+        panel: SectorMinutePanel,
+        session_rows: dict[np.datetime64, np.ndarray],
+        next_session: np.datetime64,
+        symbols: tuple[str, ...],
+        *,
+        relative: bool,
+    ) -> np.ndarray:
+        future_rows = session_rows[next_session]
+        panel_index = {symbol: index for index, symbol in enumerate(panel.symbols)}
+        result = np.full(len(symbols), np.nan, dtype=np.float64)
+        for row, symbol in enumerate(symbols):
+            column = panel_index[symbol]
+            future_valid = future_rows[panel.valid[future_rows, column]]
+            if not len(future_valid):
+                continue
+            result[row] = np.log(
+                panel.close[future_valid[-1], column]
+                / panel.open[future_valid[0], column]
+            )
+        finite = np.isfinite(result)
+        if relative and finite.any():
             result[finite] -= float(np.mean(result[finite]))
         return result
 
@@ -685,6 +1108,140 @@ class SectorFlowPipeline:
             "\n".join(report) + "\n", encoding="utf-8"
         )
 
+    def _write_regime_artifacts(
+        self,
+        destination: Path,
+        regimes: tuple[SectorRegimePredictionRecord, ...],
+        stock_predictions: tuple[GraphPredictionObservation, ...],
+        policy: tuple[SectorPolicyObservation, ...],
+        regime_metrics: dict[str, object],
+        policy_metrics: dict[str, float | int],
+        stock_metrics: dict[str, float | int],
+        folds: tuple[dict[str, object], ...],
+        topologies: tuple[MonthlyRiverTopology, ...],
+        slices: tuple[DailyRiverSlice, ...],
+        excluded_symbols: tuple[str, ...],
+    ) -> None:
+        self._write_river_artifacts(
+            destination,
+            stock_predictions,
+            stock_metrics,
+            folds,
+            topologies,
+            slices,
+            excluded_symbols,
+        )
+        prediction_payload = [item.as_json() for item in regimes]
+        policy_payload = [item.as_json() for item in policy]
+        (destination / "sector-regime-predictions.json").write_text(
+            json.dumps(prediction_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (destination / "sector-regime-evaluation.json").write_text(
+            json.dumps(
+                {
+                    "model_version": "sector-regime-bnhmm-v1",
+                    "config": asdict(self.config),
+                    "folds": list(folds),
+                    "metrics": regime_metrics,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (destination / "sector-policy-evaluation.json").write_text(
+            json.dumps(
+                {
+                    "model_version": "sector-regime-bnhmm-v1",
+                    "metrics": policy_metrics,
+                    "stock_selection_metrics": stock_metrics,
+                    "observations": policy_payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        np.savez_compressed(
+            destination / "sector-state-forecasts.npz",
+            signal_time=np.asarray(
+                [item.signal_time for item in regimes], dtype="datetime64[ns]"
+            ),
+            available_at=np.asarray(
+                [item.available_at for item in regimes], dtype="datetime64[ns]"
+            ),
+            mean=np.stack([item.next_image_mean for item in regimes]),
+            variance=np.stack([item.next_image_variance for item in regimes]),
+        )
+
+        manifest_path = destination / "river" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.update(
+            {
+                "protocol": "river-regime-v3",
+                "model_version": "sector-regime-bnhmm-v1",
+                "forecasts": [
+                    {
+                        "signal_time": str(item.signal_time),
+                        "available_at": str(item.available_at),
+                        "file": "../sector-state-forecasts.npz",
+                        "index": index,
+                    }
+                    for index, item in enumerate(regimes)
+                ],
+            }
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        summary = {
+            "model_scope": "sector-regime-and-stock-selection",
+            "model_version": "sector-regime-bnhmm-v1",
+            "protocol": "river-regime-v3",
+            "oos_regime_predictions": len(regimes),
+            "oos_stock_predictions": len(stock_predictions),
+            "regime_metrics": regime_metrics,
+            "policy_metrics": policy_metrics,
+            "stock_selection_metrics": stock_metrics,
+            "latest_regime": regimes[-1].as_json(),
+            "latest_policy": policy[-1].as_json(),
+            "folds": list(folds),
+        }
+        (destination / "run-summary.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        report = [
+            "# 板块状态预测与选股回测报告",
+            "",
+            "这套策略先判断下一交易日板块是涨、平还是跌。只有模型明确看涨且不确定性不高时，才从板块内买入相对更强的股票。其余时间空仓。",
+            "",
+            "## 板块预测",
+            "",
+            f"- 样本外预测次数：{regime_metrics['prediction_count']}",
+            f"- 准确率：{float(regime_metrics['accuracy']):.2%}",
+            f"- 平衡准确率：{float(regime_metrics['balanced_accuracy']):.2%}",
+            f"- 多数类基线：{float(regime_metrics['majority_baseline_accuracy']):.2%}",
+            f"- 昨日状态延续基线：{float(regime_metrics['persistence_baseline_accuracy']):.2%}",
+            f"- Macro F1：{float(regime_metrics['macro_f1']):.4f}",
+            f"- Brier 分数：{float(regime_metrics['brier_score']):.4f}",
+            f"- Log Loss：{float(regime_metrics['log_loss']):.4f}",
+            "",
+            "## 门控选股",
+            "",
+            f"- 实际开仓天数：{policy_metrics['exposed_sessions']}",
+            f"- 开仓比例：{float(policy_metrics['exposure_rate']):.2%}",
+            f"- 策略总收益：{float(policy_metrics['total_return']):.2%}",
+            f"- 最大回撤：{float(policy_metrics['maximum_drawdown']):.2%}",
+            f"- 开仓日胜率：{float(policy_metrics['win_rate']):.2%}",
+            f"- 板块内条件 Rank IC：{float(policy_metrics['conditional_rank_ic']):.4f}",
+            "",
+            "所有数字都来自逐月向前滚动的样本外预测。板块指数只用于生成下一日标签，没有进入模型输入。",
+        ]
+        (destination / "sector-regime-report.md").write_text(
+            "\n".join(report) + "\n", encoding="utf-8"
+        )
+
     def _first_fold_eligible_columns(
         self,
         panel: NormalizedSectorPanel,
@@ -723,6 +1280,7 @@ class SectorFlowPipeline:
         selected_panel = SectorMinutePanel(
             symbols=symbols,
             timestamps=panel.timestamps,
+            open=panel.open[:, columns],
             close=panel.close[:, columns],
             volume=panel.volume[:, columns],
             valid=panel.valid[:, columns],

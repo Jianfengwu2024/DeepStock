@@ -31,6 +31,12 @@ const numberFields = new Set([
   "minimum_attribution_rows", "factor_process_variance",
   "sector_flow_ranking_window", "sector_flow_evaluation_horizon_minutes",
   "sector_flow_top_k", "sector_flow_monte_carlo_samples",
+  "regime_context_sessions", "regime_hidden_channels", "regime_latent_states",
+  "regime_neutral_sigma", "regime_volatility_lookback_sessions",
+  "regime_volatility_minimum_observations", "regime_confidence_threshold",
+  "regime_maximum_bull_variance", "regime_epochs", "regime_batch_size",
+  "regime_learning_rate", "regime_kl_weight", "regime_state_loss_weight",
+  "regime_mc_samples",
 ]);
 
 const strategyParameterFields = {
@@ -70,11 +76,13 @@ const strategyParameterFields = {
   "fk-stock": [],
   "sector-flow-bayes": [
     "minimum_train_sessions", "normalization_lookback_sessions",
-    "normalization_minimum_observations", "maximum_lag_minutes",
-    "minimum_attribution_rows", "factor_process_variance",
-    "sector_flow_path_windows", "sector_flow_ranking_window",
-    "sector_flow_evaluation_horizon_minutes", "sector_flow_top_k",
-    "sector_flow_monte_carlo_samples",
+    "sector_flow_path_windows", "sector_flow_top_k", "sector_index_symbol",
+    "regime_context_sessions", "regime_hidden_channels", "regime_latent_states",
+    "regime_neutral_sigma", "regime_volatility_lookback_sessions",
+    "regime_volatility_minimum_observations", "regime_confidence_threshold",
+    "regime_maximum_bull_variance", "regime_epochs", "regime_batch_size",
+    "regime_learning_rate", "regime_kl_weight", "regime_state_loss_weight",
+    "regime_mc_samples", "device",
   ],
 };
 
@@ -218,6 +226,7 @@ function syncStrategySelection() {
   document.querySelectorAll(".non-sector-flow-only").forEach(element => element.classList.toggle("hidden", sectorFlow));
   document.querySelectorAll(".legacy-walk-only").forEach(element => element.classList.toggle("hidden", sectorFlow));
   document.querySelectorAll(".neural-only").forEach(element => element.classList.toggle("hidden", !neural));
+  document.querySelectorAll(".compute-only").forEach(element => element.classList.toggle("hidden", fk));
   const scope = document.querySelector("#training-scope");
   const perSymbol = scope.querySelector('option[value="per-symbol"]');
   perSymbol.disabled = stock || fk || holo || sectorFlow;
@@ -805,11 +814,19 @@ function renderSelectedResult(job) {
 
 function renderSectorFlowResult(job) {
   const summary = job.summary || {};
+  const regimeMode = summary.protocol === "river-regime-v3";
+  const container = document.querySelector("#sector-flow-results");
+  container.classList.toggle("regime-mode", regimeMode);
+  document.querySelector("#sector-regime-results").classList.toggle("hidden", !regimeMode);
+  if (regimeMode) {
+    renderSectorRegimeResult(job);
+    return;
+  }
   const metrics = summary.metrics || {};
   const water = summary.latest_water_state || {};
   const status = document.querySelector("#sector-flow-result-status");
   const riverButton = document.querySelector("#open-river-view");
-  const riverAvailable = job.status === "completed" && summary.protocol === "river-topology-v2";
+  const riverAvailable = job.status === "completed" && ["river-topology-v2", "river-regime-v3"].includes(summary.protocol);
   riverButton.classList.toggle("hidden", !riverAvailable);
   riverButton.href = riverAvailable ? `/jobs/${encodeURIComponent(job.id)}/river` : "#";
   status.textContent = job.status === "completed"
@@ -877,6 +894,70 @@ function renderSectorFlowResult(job) {
     ["后验覆盖率", formatPercent(metrics.posterior_coverage)],
     ["换手率", formatPercent(metrics.turnover)],
   ].map(([label, value]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong></div>`).join("");
+}
+
+function renderSectorRegimeResult(job) {
+  const summary = job.summary || {};
+  const regime = summary.regime_metrics || {};
+  const policy = summary.policy_metrics || {};
+  const latest = summary.latest_regime || {};
+  const latestPolicy = summary.latest_policy || {};
+  const probabilities = latest.probability_mean || [0, 0, 0];
+  const labels = ["看跌", "平稳", "看涨"];
+  const tones = ["bear", "flat", "bull"];
+  const predicted = Number.isInteger(latest.predicted_state) ? latest.predicted_state : -1;
+  const status = document.querySelector("#sector-flow-result-status");
+  status.textContent = job.status === "completed"
+    ? `${formatInteger(summary.oos_regime_predictions)} 次板块样本外预测`
+    : job.status === "failed" ? "运行失败，请查看日志" : "正在训练板块状态模型";
+  const riverButton = document.querySelector("#open-river-view");
+  const riverAvailable = job.status === "completed";
+  riverButton.classList.toggle("hidden", !riverAvailable);
+  riverButton.href = riverAvailable ? `/jobs/${encodeURIComponent(job.id)}/river` : "#";
+
+  document.querySelector("#sector-regime-probabilities").innerHTML = probabilities.map((value, index) => `
+    <div class="regime-probability ${tones[index]}${predicted === index ? " active" : ""}">
+      <div><span>${labels[index]}</span><strong>${formatPercent(value)}</strong></div>
+      <div class="probability-track"><span style="width:${Math.max(0, Math.min(100, Number(value) * 100))}%"></span></div>
+    </div>
+  `).join("");
+
+  document.querySelector("#sector-regime-baselines").innerHTML = [
+    ["模型准确率", formatPercent(regime.accuracy)],
+    ["平衡准确率", formatPercent(regime.balanced_accuracy)],
+    ["多数类基线", formatPercent(regime.majority_baseline_accuracy)],
+    ["昨日状态延续", formatPercent(regime.persistence_baseline_accuracy)],
+    ["Macro F1", formatNumber(regime.macro_f1, 4)],
+  ].map(([label, value]) => `<div class="regime-stat"><span>${label}</span><strong>${value}</strong></div>`).join("");
+
+  document.querySelector("#sector-regime-policy").innerHTML = [
+    ["当前动作", latestPolicy.selected_symbols?.length ? `买入 ${latestPolicy.selected_symbols.join("、")}` : "空仓"],
+    ["开仓比例", formatPercent(policy.exposure_rate)],
+    ["策略总收益", formatPercent(policy.total_return)],
+    ["最大回撤", formatPercent(policy.maximum_drawdown)],
+    ["开仓日胜率", formatPercent(policy.win_rate)],
+  ].map(([label, value]) => `<div class="regime-stat"><span>${label}</span><strong>${escapeHtml(String(value))}</strong></div>`).join("");
+
+  document.querySelector("#metrics-grid").innerHTML = [
+    ["平衡准确率", formatPercent(regime.balanced_accuracy)],
+    ["多数类基线", formatPercent(regime.majority_baseline_accuracy)],
+    ["Brier", formatNumber(regime.brier_score, 4)],
+    ["Log Loss", formatNumber(regime.log_loss, 4)],
+    ["策略收益", formatPercent(policy.total_return)],
+    ["实际开仓", formatInteger(policy.exposed_sessions)],
+  ].map(([label, value]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong></div>`).join("");
+
+  const downloads = {
+    "sector-regime-report.md": "中文报告",
+    "sector-regime-predictions.json": "板块预测",
+    "sector-regime-evaluation.json": "板块评估",
+    "sector-policy-evaluation.json": "策略评估",
+    "sector-state-forecasts.npz": "状态图预测",
+  };
+  document.querySelector("#sector-flow-downloads").innerHTML = Object.entries(downloads)
+    .filter(([name]) => job.artifacts?.[name])
+    .map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`)
+    .join("");
 }
 
 function renderSymbolResult(job, symbol, summary) {

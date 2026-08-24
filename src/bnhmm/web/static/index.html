@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.18.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.20.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.18.0" defer></script>
+  <script src="/static/app.js?v=0.20.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -52,8 +52,8 @@
             <label>开始日期<input name="start" type="date" required></label>
             <label>结束日期<input name="end" type="date" required></label>
           </div>
-          <label class="neural-only">计算设备<select name="device" id="device-select"></select></label>
-          <div id="device-note" class="device-note neural-only"></div>
+          <label class="compute-only">计算设备<select name="device" id="device-select"></select></label>
+          <div id="device-note" class="device-note compute-only"></div>
         </section>
 
         <details class="form-section neural-only" open>
@@ -187,8 +187,28 @@
         </details>
 
         <details class="form-section sector-flow-only hidden" open>
-          <summary>板块水势与传播</summary>
+          <summary>板块状态预测</summary>
           <input type="hidden" name="sector_flow_path_windows" value="5,15,30,60">
+          <div class="two-columns">
+            <label>板块指数代码<input name="sector_index_symbol" maxlength="24"></label>
+            <label>近期记忆（日）<input name="regime_context_sessions" type="number" min="2" max="20"></label>
+            <label>卷积通道<input name="regime_hidden_channels" type="number" min="4" max="256"></label>
+            <label>黑盒隐藏态<input name="regime_latent_states" type="number" min="3" max="256"></label>
+            <label>平稳区间（波动率倍数）<input name="regime_neutral_sigma" type="number" min="0.01" max="5" step="0.01"></label>
+            <label>波动率回看（日）<input name="regime_volatility_lookback_sessions" type="number" min="2" max="252"></label>
+            <label>波动率最少样本<input name="regime_volatility_minimum_observations" type="number" min="2" max="252"></label>
+            <label>看涨最低概率<input name="regime_confidence_threshold" type="number" min="0.34" max="1" step="0.01"></label>
+            <label>看涨方差上限<input name="regime_maximum_bull_variance" type="number" min="0" max="1" step="0.001"></label>
+            <label>训练轮数<input name="regime_epochs" type="number" min="1" max="1000"></label>
+            <label>批量<input name="regime_batch_size" type="number" min="1" max="512"></label>
+            <label>学习率<input name="regime_learning_rate" type="number" min="0.000001" max="1" step="0.00001"></label>
+            <label>KL 权重<input name="regime_kl_weight" type="number" min="0" max="1" step="0.0001"></label>
+            <label>状态图辅助损失<input name="regime_state_loss_weight" type="number" min="0" max="10" step="0.01"></label>
+            <label>后验抽样<input name="regime_mc_samples" type="number" min="2" max="256"></label>
+            <label>看涨时精选数量<input name="sector_flow_top_k" type="number" min="1" max="100"></label>
+          </div>
+          <div class="isolation-note"><i data-lucide="shield-check"></i><span>板块指数只生成下一日标签，不进入模型输入；只有板块可信看涨时才开仓。</span></div>
+          <div class="sector-flow-v2-only hidden">
           <div class="two-columns">
             <label>归一化最少样本<input name="normalization_minimum_observations" type="number" min="2" max="120"></label>
             <label>最大传播滞后（分钟）<input name="maximum_lag_minutes" type="number" min="0" max="120"></label>
@@ -210,8 +230,8 @@
                 <option value="60">60 分钟</option>
               </select>
             </label>
-            <label>精选数量<input name="sector_flow_top_k" type="number" min="1" max="100"></label>
             <label>后验抽样<input name="sector_flow_monte_carlo_samples" type="number" min="100" max="100000"></label>
+          </div>
           </div>
         </details>
 
@@ -342,6 +362,13 @@
               <div class="sector-flow-head">
                 <div><h3>板块水势</h3><span id="sector-flow-result-status" role="status" aria-live="polite"></span></div>
                 <div class="sector-flow-head-actions"><span class="scope-badge">分钟同步</span><a class="secondary-button hidden" id="open-river-view" href="#"><i data-lucide="waves"></i>河道视图</a></div>
+              </div>
+              <div class="sector-regime-results hidden" id="sector-regime-results">
+                <div class="sector-regime-probabilities" id="sector-regime-probabilities"></div>
+                <div class="sector-regime-summary-grid">
+                  <div><h3>板块预测与基线</h3><div id="sector-regime-baselines"></div></div>
+                  <div><h3>门控选股</h3><div id="sector-regime-policy"></div></div>
+                </div>
               </div>
               <div class="water-state-grid" id="sector-flow-water-state"></div>
               <div class="report-image-wrap"><img id="sector-flow-image" alt="板块水势后验曲线"></div>

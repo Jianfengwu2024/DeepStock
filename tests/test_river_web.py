@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from bnhmm.web.app import (
     river_manifest,
+    river_forecast,
     river_migration,
     river_slice,
     river_symbol,
@@ -64,9 +65,24 @@ class RiverWebTests(unittest.TestCase):
                             "file": "slices/2025-04-08.npz",
                         }
                     ],
+                    "forecasts": [
+                        {
+                            "signal_time": "2025-04-08T15:00:00",
+                            "available_at": "2025-04-09T09:31:00",
+                            "file": "../sector-state-forecasts.npz",
+                            "index": 0,
+                        }
+                    ],
                 }
             ),
             encoding="utf-8",
+        )
+        np.savez_compressed(
+            self.output / "sector-state-forecasts.npz",
+            signal_time=np.asarray(["2025-04-08T15:00"], dtype="datetime64[m]"),
+            available_at=np.asarray(["2025-04-09T09:31"], dtype="datetime64[m]"),
+            mean=np.ones((1, 4, 2, 3), dtype=np.float64),
+            variance=np.full((1, 4, 2, 3), 0.25, dtype=np.float64),
         )
         (self.output / "evaluation.json").write_text(
             json.dumps(
@@ -146,6 +162,17 @@ class RiverWebTests(unittest.TestCase):
         self.assertEqual(migration["transitions"], [])
         self.assertEqual(len(history["predictions"]), 1)
         self.assertEqual(history["predictions"][0]["symbol"], "A")
+
+    def test_next_session_forecast_is_served_one_bounded_record_at_a_time(self) -> None:
+        forecast = river_forecast(self.record.id, 0, self.request)
+
+        self.assertEqual(forecast["signal_time"], "2025-04-08T15:00")
+        self.assertEqual(forecast["available_at"], "2025-04-09T09:31")
+        self.assertEqual(len(forecast["mean"]), 4)
+        self.assertEqual(forecast["mean"][0][0], [1.0, 1.0, 1.0])
+        with self.assertRaises(HTTPException) as raised:
+            river_forecast(self.record.id, 99, self.request)
+        self.assertEqual(raised.exception.status_code, 404)
 
 
 if __name__ == "__main__":

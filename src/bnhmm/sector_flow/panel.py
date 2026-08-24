@@ -42,6 +42,7 @@ class SectorMinutePanelBuilder:
             dtype="datetime64[ns]",
         )
         shape = (len(timestamps), len(symbols))
+        open_ = np.full(shape, np.nan, dtype=np.float64)
         close = np.full(shape, np.nan, dtype=np.float64)
         volume = np.full(shape, np.nan, dtype=np.float64)
         valid = np.zeros(shape, dtype=np.bool_)
@@ -61,6 +62,7 @@ class SectorMinutePanelBuilder:
                 if key in seen:
                     raise ValueError(f"duplicate minute bar for {symbol}: {timestamp}")
                 seen.add(key)
+                open_[destination, column] = float(batch.open[index])
                 close[destination, column] = float(batch.close[index])
                 volume[destination, column] = float(batch.volume[index])
                 valid[destination, column] = True
@@ -68,9 +70,9 @@ class SectorMinutePanelBuilder:
         return SectorMinutePanel(
             symbols=symbols,
             timestamps=timestamps,
+            open=open_,
             close=close,
             volume=volume,
             valid=valid,
         )
-
 

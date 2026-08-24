@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 class SectorMinutePanel:
     symbols: tuple[str, ...]
     timestamps: NDArray[np.datetime64]
+    open: NDArray[np.float64]
     close: NDArray[np.float64]
     volume: NDArray[np.float64]
     valid: NDArray[np.bool_]
@@ -20,13 +21,32 @@ class SectorMinutePanel:
         shape = (len(self.timestamps), len(self.symbols))
         if not self.symbols or len(set(self.symbols)) != len(self.symbols):
             raise ValueError("sector symbols must be unique and non-empty")
-        if self.close.shape != shape or self.volume.shape != shape or self.valid.shape != shape:
+        if (
+            self.open.shape != shape
+            or self.close.shape != shape
+            or self.volume.shape != shape
+            or self.valid.shape != shape
+        ):
             raise ValueError("sector panel arrays must align with timestamps and symbols")
         if len(self.timestamps) > 1 and np.any(self.timestamps[1:] <= self.timestamps[:-1]):
             raise ValueError("sector panel timestamps must be strictly increasing")
-        if np.any(self.valid & (~np.isfinite(self.close) | ~np.isfinite(self.volume))):
+        if np.any(
+            self.valid
+            & (
+                ~np.isfinite(self.open)
+                | ~np.isfinite(self.close)
+                | ~np.isfinite(self.volume)
+            )
+        ):
             raise ValueError("valid sector panel cells must contain finite values")
-        if np.any(self.valid & ((self.close <= 0.0) | (self.volume < 0.0))):
+        if np.any(
+            self.valid
+            & (
+                (self.open <= 0.0)
+                | (self.close <= 0.0)
+                | (self.volume < 0.0)
+            )
+        ):
             raise ValueError("valid sector panel prices and volumes are invalid")
 
     def log_returns(self) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:

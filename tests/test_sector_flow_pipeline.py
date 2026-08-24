@@ -18,8 +18,14 @@ from bnhmm.types import BarBatch
 
 
 class MemoryBarSource:
-    def __init__(self, batches: dict[str, BarBatch]) -> None:
+    def __init__(
+        self,
+        batches: dict[str, BarBatch],
+        sector_index: BarBatch | None = None,
+    ) -> None:
         self.batches = batches
+        self.sector_index = sector_index
+        self.sector_index_requests: list[tuple[str, str, str, str]] = []
 
     def fetch(
         self, symbol: str, timeframe: str, start: str, end: str
@@ -31,6 +37,17 @@ class MemoryBarSource:
             batch.timestamp < np.datetime64(end)
         )
         return batch.take(np.flatnonzero(mask))
+
+    def fetch_sector_index(
+        self, dataset_id: str, symbol: str, start: str, end: str
+    ) -> BarBatch:
+        self.sector_index_requests.append((dataset_id, symbol, start, end))
+        if self.sector_index is None:
+            return BarBatch.empty(symbol)
+        mask = (self.sector_index.timestamp >= np.datetime64(start)) & (
+            self.sector_index.timestamp < np.datetime64(end)
+        )
+        return self.sector_index.take(np.flatnonzero(mask))
 
 
 def synthetic_sector() -> dict[str, BarBatch]:
@@ -105,7 +122,106 @@ def synthetic_river_sector(session_count: int = 55) -> dict[str, BarBatch]:
     return batches
 
 
+def synthetic_sector_index(batches: dict[str, BarBatch]) -> BarBatch:
+    first = next(iter(batches.values()))
+    sessions = np.unique(first.timestamp.astype("datetime64[D]"))
+    positions = np.arange(len(sessions), dtype=np.float64)
+    returns = 0.007 * np.sin(positions * 1.7)
+    open_ = 100.0 * np.exp(np.cumsum(np.concatenate(([0.0], returns[:-1]))))
+    close = open_ * np.exp(returns)
+    return BarBatch(
+        symbol="881121",
+        timestamp=(sessions + np.timedelta64(15, "h")).astype("datetime64[ns]"),
+        open=open_,
+        high=np.maximum(open_, close) * 1.001,
+        low=np.minimum(open_, close) * 0.999,
+        close=close,
+        volume=np.full(len(sessions), 1_000_000.0),
+    )
+
+
 class SectorFlowPipelineTests(unittest.TestCase):
+    def test_regime_protocol_predicts_sector_then_gates_stock_selection(self) -> None:
+        batches = synthetic_river_sector(80)
+        source = MemoryBarSource(batches, synthetic_sector_index(batches))
+        config = SectorFlowConfig(
+            symbols=tuple(source.batches),
+            start="2025-01-01",
+            end="2025-05-01",
+            protocol="river-regime-v3",
+            dataset_id="semiconductor",
+            sector_index_symbol="881121",
+            topology_lookback_sessions=20,
+            normalization_lookback_sessions=5,
+            normalization_minimum_observations=2,
+            minimum_train_sessions=35,
+            top_k=1,
+            max_folds=1,
+            regime_context_sessions=3,
+            regime_hidden_channels=4,
+            regime_latent_states=4,
+            regime_volatility_lookback_sessions=4,
+            regime_volatility_minimum_observations=2,
+            regime_epochs=1,
+            regime_batch_size=4,
+            regime_mc_samples=2,
+            regime_coarse_height=2,
+            regime_coarse_minutes=4,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = SectorFlowPipeline(config).run(source, directory)
+            root = Path(directory)
+            manifest = json.loads(
+                (root / "river" / "manifest.json").read_text(encoding="utf-8")
+            )
+
+            self.assertTrue(result.regime_predictions)
+            self.assertEqual(
+                len(result.policy_observations), len(result.regime_predictions)
+            )
+            self.assertTrue(
+                all(
+                    item.training_cutoff < item.signal_time < item.available_at
+                    for item in result.regime_predictions
+                )
+            )
+            self.assertEqual(
+                source.sector_index_requests,
+                [("semiconductor", "881121", "2025-01-01", "2025-05-01")],
+            )
+            self.assertEqual(manifest["protocol"], "river-regime-v3")
+            self.assertTrue(manifest["forecasts"])
+            for name in (
+                "sector-regime-predictions.json",
+                "sector-regime-evaluation.json",
+                "sector-policy-evaluation.json",
+                "sector-state-forecasts.npz",
+                "sector-regime-report.md",
+            ):
+                self.assertTrue((root / name).is_file(), name)
+
+    def test_regime_protocol_requires_real_sector_index_rows(self) -> None:
+        batches = synthetic_river_sector(55)
+        source = MemoryBarSource(batches)
+        config = SectorFlowConfig(
+            symbols=tuple(source.batches),
+            start="2025-01-01",
+            end="2025-04-01",
+            protocol="river-regime-v3",
+            dataset_id="semiconductor",
+            sector_index_symbol="881121",
+            topology_lookback_sessions=20,
+            normalization_lookback_sessions=5,
+            normalization_minimum_observations=2,
+            minimum_train_sessions=35,
+            max_folds=1,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "sector index"):
+                SectorFlowPipeline(config).run(source, directory)
+
     def test_river_protocol_builds_each_monthly_topology_only_once(self) -> None:
         source = MemoryBarSource(synthetic_river_sector(80))
         config = SectorFlowConfig(
