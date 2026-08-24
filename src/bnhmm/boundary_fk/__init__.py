@@ -11,6 +11,10 @@ from typing import Any
 
 
 _EXPORT_MODULES = {
+    "BayesianBoundaryPosterior": "bayesian_state",
+    "BayesianBoundaryStateConfig": "bayesian_state",
+    "BayesianBoundaryStateModel": "bayesian_state",
+    "BoundaryStateLabels": "bayesian_state",
     "BoundaryDailyStateBuilder": "daily_state",
     "BoundaryDailyStateConfig": "daily_state",
     "BoundaryTopologyBuilder": "daily_state",
