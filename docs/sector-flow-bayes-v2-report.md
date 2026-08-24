@@ -1,175 +1,173 @@
-# SectorFlowBayes v2: Causal Sector River Topology
+# SectorFlowBayes v2：板块河流模型实验报告
 
-## 1. Objective
+## 先说结论
 
-SectorFlowBayes v2 models a sector as one synchronized flow rather than treating
-each stock as an isolated path. A completed trading day is a stock-by-minute
-slice:
+这个模型已经能从半导体板块的分钟行情中学到一点东西，但信号还不够强，暂时不能直接用于实盘。
 
-- the horizontal axis is the real 240-minute exchange clock;
-- the vertical axis is a monthly frozen stock topology;
-- signed normalized price velocity is the primary flow channel;
-- relative volume is density and observation reliability, never volume speed;
-- missing bars remain masked and never bridge the lunch break or another gap.
+好的部分：模型对股票第二天在板块内的强弱排序有一点判断力，扣除交易成本后，买强卖弱的测试收益仍然为正。
 
-The prediction target is each stock's next-session close-to-close log return
-minus the sector cross-sectional mean. The model therefore asks which stocks
-will advance or lag relative to the same sector flow, not whether the whole
-market will rise.
+不足的部分：这个优势很小。模型判断上涨概率的能力只比随机猜测好一点，自动分出来的股票群也没有形成很明显的差异。因此，它目前只能算研究模型，不能算成熟策略。
 
-## 2. Causal Monthly Topology
+## 1. 模型到底在做什么
 
-For month `M`, the topology uses only completed bars through the last session of
-`M-1`. It reads the preceding 60 sessions and remains frozen for every day in
-`M`.
+我们把一个板块看成一条河，把板块里的股票看成同时流动的支流。
 
-Two synchronization matrices are estimated with activity-weighted Spearman
-correlation:
+每天的分钟行情会被整理成一张二维切片：
 
-1. common synchronization from normalized one-minute price velocity;
-2. residual synchronization after removing the Bayesian sector factor.
+- 横轴是当天真实的 240 个交易分钟；
+- 纵轴是板块里的股票；
+- 颜色表示每只股票当时上涨或下跌的速度；
+- 成交量表示这个信号是否可信，成交越活跃，观察结果越可靠；
+- 停牌、缺失分钟和午休都保留为空，不会把不连续的数据硬连起来。
 
-Effective-session shrinkage pulls weakly observed pairs toward zero. Uniformly
-rescaling volume does not change the graph because activity is normalized to a
-per-stock reliability scale. The fused similarity matrix is clustered by
-average linkage. Candidate band counts are selected by silhouette score, stable
-band identifiers are aligned to the prior month by maximum member overlap, and
-optimal leaf ordering produces the visual row projection. The full graph, not
-the row order, enters inference.
+模型不直接猜整个板块明天涨不涨，而是判断：在同一个板块里，哪些股票明天可能比板块平均表现更强，哪些可能更弱。
 
-## 3. Daily Graph State and Prediction
+## 2. 股票在纵轴上怎么排列
 
-Each completed daily slice produces six stock-level statistics:
+股票不能每天重新排序，否则图像每天都在变，模型看到的结构就失去了连续性。
 
-- normalized displacement;
-- band displacement;
-- stock-minus-band displacement;
-- path efficiency;
-- residual energy;
-- median relative-volume density.
+因此，本模型每个月只调整一次股票顺序：
 
-A graph-Laplacian Gaussian posterior smooths stock state only along positive
-monthly graph edges. Relative volume changes observation precision, so active
-evidence reduces uncertainty without becoming a directional feature. A small
-Bayesian ridge head then combines the six statistics, graph posterior mean and
-variance, cohesion, and centrality. It outputs next-session relative-return mean
-and predictive variance. This is deliberately a small graph model: no
-Transformer, CNN, PyTorch runtime, or loading-time training is involved.
+1. 进入新月份前，只读取之前已经结束的 60 个交易日；
+2. 比较股票分钟价格变化是否经常同步；
+3. 把走势更同步的股票放得更近；
+4. 整个月固定这个顺序，不再变化；
+5. 到下个月再使用新的历史数据重新排列。
 
-## 4. Walk-Forward and Leakage Controls
+这里同时观察两种同步关系：
 
-- Monthly folds use expanding history.
-- Factor parameters and the return head are fitted only on fold training rows.
-- A training daily slice is paired only with its already matured next-session
-  target.
-- The sample-out monthly topology is fitted through the prior month and frozen.
-- `training_cutoff < signal_time < available_at` is enforced by data contracts.
-- A signal formed at the completed session close becomes available at the next
-  session's first observed minute.
-- Each monthly topology is built once per run and reused across folds.
-- Backtests evaluate policy and transaction costs separately from model fitting.
+- **共同运动**：两只股票是否经常一起涨跌；
+- **个股剩余运动**：扣掉整个板块的共同涨跌后，两只股票是否仍然同步。
 
-Artifacts are compact and job-scoped: one compressed topology per month, one
-compressed slice per predicted day, a manifest, evaluation JSON, structural
-diagnostics, and Markdown reports. The browser API serves only manifest-listed
-files and never returns every daily slice in one response.
+成交量只用于判断同步关系是否可靠，不把“成交量变化速度”当成价格方向。这样避免重新引入此前定义不清楚的成交量速度。
 
-## 5. DeepStock Lab Workspace
+## 3. 每天提取哪些信息
 
-The dedicated river workspace contains four views:
+每天收盘后，每只股票会得到几项简单统计：
 
-- **Daily river:** Canvas heatmap with price velocity, residual velocity, and
-  density channels; monthly band separators remain fixed.
-- **Synchronization topology:** bounded SVG graph with band color, centrality,
-  and selectable stock nodes.
-- **Monthly migration:** stable row and band movement between monthly freezes.
-- **Structure diagnostics:** coverage, band count, cohesion, centrality, and the
-  ordered stock table.
+- 当天总体向上还是向下；
+- 所属股票群总体向上还是向下；
+- 个股比所在股票群更强还是更弱；
+- 分钟走势是否顺畅，还是频繁来回波动；
+- 扣掉板块共同走势后，还剩多少个股波动；
+- 当天成交是否活跃。
 
-Selecting a heatmap row or topology node opens a stock inspector with daily
-displacement, residual energy, graph statistics, and bounded recent predictions.
-Desktop `1440x900` and mobile `390x844` were verified. The mobile heatmap scrolls
-inside its own region, the inspector moves below it, and there is no page-level
-horizontal overflow.
+随后，模型利用月度同步关系，对相互联系较强的股票做适度的信息共享，再估计每只股票下一交易日相对板块平均收益的均值和不确定性。
 
-## 6. Semiconductor Experiment
+模型规模有意保持较小。这里没有使用 Transformer 或 CNN，也不会在打开页面或运行回测时临时训练大型神经网络。
 
-The server experiment used:
+## 4. 如何防止偷看未来数据
 
-| Setting | Value |
+这是本实验最重要的约束：
+
+- 每个月的股票排列只能使用上个月及更早的数据；
+- 当月排列一旦生成，整个月不再调整；
+- 训练数据必须等下一交易日收益已经发生后才能使用；
+- 当天收盘形成的信号，最早只能在下一交易日开盘时使用；
+- 每次样本外测试都只用当时已经知道的数据；
+- 模型训练和交易成本计算分开进行。
+
+也就是说，报告中的样本外结果没有使用未来行情帮助当前预测。
+
+## 5. DeepStock Lab 中能看到什么
+
+可视化页面提供四个视图：
+
+- **每日河道**：观察所有股票一天内的分钟价格速度、剩余速度和成交密度；
+- **同步拓扑**：查看哪些股票联系较强，以及它们所属的股票群；
+- **月度迁移**：查看股票每个月在排列和分组上的变化；
+- **结构诊断**：查看数据覆盖率、分组数量、同步强度和股票排序。
+
+点击热图中的一行或拓扑中的一个节点，可以查看单只股票的当日状态和近期预测。
+
+页面已经检查过桌面端 `1440×900` 和手机端 `390×844`。手机上热图在自己的区域内滚动，不会把整个页面撑宽。
+
+## 6. 半导体板块实验
+
+### 实验设置
+
+| 项目 | 设置 |
 | --- | ---: |
-| Dataset | `/home/share/data/sectors/semiconductor.duckdb` |
-| Stocks | 96 |
-| Input interval | 2024-01-01 to 2025-12-31 |
-| Initial training history | 120 sessions |
-| Topology lookback | 60 sessions |
-| Normalization lookback | 20 sessions |
-| Sample-out months | 17 |
-| Sample-out predictions | 29,095 |
-| Daily river slices | 344 |
-| Transaction cost | 10 BP |
+| 数据集 | `/home/share/data/sectors/semiconductor.duckdb` |
+| 股票数量 | 96 只 |
+| 数据范围 | 2024-01-01 至 2025-12-31 |
+| 开始样本外测试前的训练历史 | 120 个交易日 |
+| 月度排序参考历史 | 60 个交易日 |
+| 数据归一化参考历史 | 20 个交易日 |
+| 样本外月份 | 17 个月 |
+| 样本外预测数量 | 29,095 条 |
+| 每日河流切片 | 344 张 |
+| 交易成本 | 10 BP，即成交金额的 0.1% |
 
-### Prediction Results
+### 预测结果
 
-| Metric | Result | Reference |
-| --- | ---: | ---: |
-| Rank IC | 0.066223 | 0 for random ranks |
-| Gross Top-K minus Bottom-K | 0.332636% | 0 |
-| Turnover | 158.488372% | - |
-| Transaction cost | 0.158488% | 10 BP policy |
-| Net Top-K minus Bottom-K | 0.174148% | 0 |
-| Brier score | 0.249875 | 0.25 binary uninformed |
-| Log loss | 0.692947 | 0.693147 binary uninformed |
-| 95% posterior coverage | 94.755113% | 95% nominal |
+| 指标 | 结果 | 直白解释 |
+| --- | ---: | --- |
+| Rank IC | 0.066223 | 对第二天个股强弱排序有一点预测力；随机排序约为 0 |
+| 买强卖弱毛收益 | 0.332636% | 还没有扣交易成本 |
+| 换手率 | 158.488372% | 调仓很频繁，成本影响较大 |
+| 交易成本 | 0.158488% | 按 10 BP 计算 |
+| 买强卖弱净收益 | 0.174148% | 扣除成本后仍为正，但优势较小 |
+| Brier 分数 | 0.249875 | 随机猜测约为 0.25，只好了一点点；越低越好 |
+| Log Loss | 0.692947 | 随机猜测约为 0.693147，也只好了一点点；越低越好 |
+| 95% 预测区间覆盖率 | 94.755113% | 模型对自身不确定性的估计基本正常 |
 
-The positive Rank IC and net cross-sectional spread indicate that the river
-state contains some ranking information. Calibration coverage is close to its
-nominal level. Probability discrimination is nevertheless only marginally
-better than an uninformed binary forecast.
+这些数字说明：模型确实捕捉到了一点板块内的相对强弱信息，但主要体现在排序上。它对“上涨概率”的判断几乎仍在随机猜测附近。
 
-### Structural Results
+### 板块结构结果
 
-| Metric | Result |
-| --- | ---: |
-| Mean synchronization lift over random equal-size groups | 0.001798 |
-| Minimum monthly synchronization lift | 0.001197 |
-| Mean unassigned rate | 8.209438% |
-| Mean band count | 2.0 |
-| Mean monthly migration rate | 0.828835% |
+| 指标 | 结果 | 直白解释 |
+| --- | ---: | --- |
+| 股票群同步提升 | 0.001798 | 自动分组只比随机分组好一点 |
+| 最弱月份同步提升 | 0.001197 | 每个月都是正值，但提升仍很小 |
+| 平均未分组比例 | 8.209438% | 少量股票没有稳定归入某一组 |
+| 平均分组数量 | 2 组 | 模型基本只把板块分成两大群 |
+| 平均月度迁移率 | 0.828835% | 股票分组非常稳定，很少换组 |
 
-Every tested month has positive synchronization lift, and monthly membership is
-very stable. However, the lift is small and the model consistently selects only
-two bands. The topology is therefore stable but weakly separated. Stability
-alone is not evidence of a strong economic partition.
+分组很稳定不等于分组很有用。目前的问题是：模型虽然能稳定地把股票分成两组，但两组之间的同步差异太小。这种结构还不足以证明板块内部存在很强的、可以用于交易的“河道”。
 
-## 7. Decision and Next Experiments
+## 7. 目前能不能用于实盘
 
-SectorFlowBayes v2 passes the engineering and causality gates but remains a
-research candidate, not a published trading model. Promotion should require:
+不能。
 
-1. positive Rank IC and net Top-Bottom spread across multiple non-overlapping
-   sectors and market regimes;
-2. materially positive topology lift over matched random groups;
-3. probability scores that beat the uninformed Brier and log-loss baselines by
-   more than the current marginal difference;
-4. stable results under common-only, residual-only, random-topology, unstable
-   daily-order, and no-graph ablations on identical sample-out dates;
-5. turnover-aware portfolio tests with realistic limit-up, suspension, and
-   liquidity eligibility rules.
+目前可以确认的是：
 
-The most important next change is not to enlarge the model. It is to test
-whether stronger target-independent sector geometry can be extracted without
-using future returns. If topology lift remains near zero, the graph prior should
-be removed even if the ranking head remains useful.
+- 工程流程已经跑通；
+- 没有明显的未来数据泄漏；
+- 模型包含少量正向排序信息；
+- 扣除简单交易成本后，测试结果仍为正。
 
-## 8. Verification
+目前不能确认的是：
 
-- Local complete suite: 182 tests passed.
-- Server complete suite in the production `rheos` environment: 182 tests passed.
-- SectorFlow-focused suite after monthly topology caching: 57 tests passed.
-- JavaScript syntax checks passed for the main Lab and river workspace.
-- TriadMind topology verification passed with 54 nodes, no ghost nodes, no
-  completeness violations, and no high-fanout cycles. The separate governance
-  command could not evaluate rendered-edge consistency because this repository
-  has no `runtime-map.json` or `runtime-diagnostics.json` instrumentation output.
+- 信号能否在其他板块和其他市场阶段继续有效；
+- 这么小的优势能否覆盖真实滑点、涨跌停、停牌和流动性限制；
+- 月度股票分组是否真的提供了额外信息；
+- 概率预测能否稳定超过随机猜测。
 
+因此，SectorFlowBayes v2 的定位是**研究候选模型**，不是已发布的交易策略。
+
+## 8. 下一步最值得做什么
+
+下一步不应该继续盲目扩大模型，也不应该先增加更多参数。
+
+更重要的是做几组对照实验：
+
+1. 只使用板块共同运动；
+2. 只使用扣除板块后的个股运动；
+3. 使用随机股票分组；
+4. 完全取消股票关系图；
+5. 在相同样本外日期比较上述结果；
+6. 再换几个互不重叠的板块和市场阶段重复测试。
+
+如果随机分组和当前分组的结果差不多，说明月度拓扑没有真正贡献，应该删掉它，保留更简单的相对强弱模型。
+
+如果当前分组能在多个板块稳定胜出，再考虑改进板块结构，而不是先扩大预测模型。
+
+## 9. 验证情况
+
+- 本地完整测试：183 项通过；
+- 145 服务器生产环境完整测试：183 项通过；
+- 145 服务健康检查：正常；
+- 桌面端和手机端页面：已检查；
+- TriadMind 拓扑检查：54 个节点，无幽灵节点、无完整性错误、无高扇出循环；
+- TriadMind 治理检查缺少 `runtime-map.json` 和 `runtime-diagnostics.json`，因此无法检查运行时调用关系。这是运行观测数据未配置，不是本次模型测试失败。
