@@ -304,7 +304,7 @@ Commit: `git commit -m "feat: forecast and evaluate BoundaryFlowFK"`
 - Modify: `src/bnhmm/boundary_fk/__init__.py`
 - Test: `tests/test_boundary_fk_pipeline.py`
 
-- [ ] **Step 1: Write failing end-to-end artifact and stop-gate tests**
+- [x] **Step 1: Write failing end-to-end artifact and stop-gate tests**
 
 ```python
 def test_pipeline_writes_all_named_ablation_reports(tmp_path):
@@ -320,7 +320,7 @@ def test_failed_stage_prevents_later_stage_promotion(tmp_path):
     assert all(stage.status == "skipped" for stage in result.stages[2:])
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `PYTHONPATH=src python -m pytest tests/test_boundary_fk_pipeline.py -q`
 
