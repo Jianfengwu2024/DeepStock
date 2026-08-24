@@ -1,4 +1,4 @@
-"""Causal boundary-flow Feynman-Kac model components.
+"""Causal two-branch Feynman-Kac model components.
 
 Exports are lazy so the synthetic-index and normalization layers remain usable
 without importing the optional clustering stack.
@@ -18,6 +18,12 @@ _EXPORT_MODULES = {
     "BoundaryFeynmanKacConfig": "feynman_kac",
     "BoundaryFeynmanKacForecast": "feynman_kac",
     "BoundaryFeynmanKacForecaster": "feynman_kac",
+    "BranchFeynmanKacForecaster": "feynman_kac",
+    "BayesianBranchModel": "branch_model",
+    "BayesianBranchModelConfig": "branch_model",
+    "BayesianBranchPosterior": "branch_model",
+    "TwoBranchDailyStateBuilder": "branch_state",
+    "TwoBranchDailyStateConfig": "branch_state",
     "BoundaryPolicy": "policy",
     "BoundaryPolicyConfig": "policy",
     "BoundaryPolicyDecision": "policy",
@@ -46,6 +52,10 @@ _EXPORT_MODULES = {
     "MonthlyIndexWeights": "types",
     "NormalizedBoundaryPanel": "types",
     "SyntheticSectorIndex": "types",
+    "MonthlyBranchMembership": "types",
+    "TwoBranchDailyStates": "types",
+    "TwoBranchDataset": "types",
+    "TwoBranchLabels": "types",
 }
 
 __all__ = sorted(_EXPORT_MODULES)

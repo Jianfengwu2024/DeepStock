@@ -13,17 +13,17 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('value="boundary-flow-fk"', html)
+        self.assertIn('name="boundary_fk_paths"', html)
         for field in (
             "boundary_branch_count",
             "boundary_viscosity_window",
-            "boundary_fk_paths",
             "boundary_min_raw_bullish_probability",
             "boundary_min_survival_bullish_probability",
             "boundary_min_trend_survival_probability",
             "boundary_max_bullish_probability_std",
             "boundary_max_thickness_risk_quantile",
         ):
-            self.assertIn(f'name="{field}"', html)
+            self.assertNotIn(f'name="{field}"', html)
         for identifier in (
             "boundary-flow-results",
             "boundary-stage-table",
@@ -34,21 +34,19 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn("renderBoundaryFlowResult", script)
         self.assertIn('"boundary-flow-fk"', script)
-        self.assertIn("晋级链", html)
-        self.assertIn("promotion_eligible", script)
+        self.assertIn("两支流 FK", html)
         for artifact in (
             "boundary-policy-evaluation.json",
             "feynman-kac-predictions.json",
         ):
             self.assertIn(artifact, script)
         for field in (
-            "raw_state_probabilities",
-            "survival_joint_probabilities",
-            "trend_survival_probability",
+            "branches",
+            "state_probabilities",
+            "expected_drift",
             "expected_effective_potential",
-            "epistemic_return_variance",
-            "aleatoric_return_variance",
-            "gate_reason",
+            "selected_symbols",
+            "held_branches",
         ):
             self.assertIn(field, script)
 

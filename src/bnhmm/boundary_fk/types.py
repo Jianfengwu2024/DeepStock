@@ -207,3 +207,100 @@ class SyntheticSectorIndex:
 
     def weights_at(self, timestamp: str | np.datetime64) -> NDArray[np.float64]:
         return self.weights_for(np.datetime64(timestamp, "M")).weights.copy()
+
+
+@dataclass(frozen=True, slots=True)
+class MonthlyBranchMembership:
+    month: np.datetime64
+    training_cutoff: np.datetime64
+    branches: tuple[tuple[str, ...], tuple[str, ...]]
+
+    def __post_init__(self) -> None:
+        if self.month != self.month.astype("datetime64[M]"):
+            raise ValueError("branch membership month must use monthly precision")
+        if not self.training_cutoff < self.month.astype("datetime64[ns]"):
+            raise ValueError("branch membership must be fixed before its month")
+        flattened = self.branches[0] + self.branches[1]
+        if not self.branches[0] or not self.branches[1]:
+            raise ValueError("both frozen branches must contain symbols")
+        if len(flattened) != len(set(flattened)):
+            raise ValueError("a symbol cannot belong to both branches")
+
+
+@dataclass(frozen=True, slots=True)
+class TwoBranchDailyStates:
+    sessions: NDArray[np.datetime64]
+    topology_months: NDArray[np.datetime64]
+    feature_names: tuple[str, ...]
+    values: NDArray[np.float64]
+    valid: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        expected = (len(self.sessions), 2, len(self.feature_names))
+        if not self.feature_names or len(set(self.feature_names)) != len(self.feature_names):
+            raise ValueError("two-branch feature names must be unique and non-empty")
+        if self.values.shape != expected or self.valid.shape != expected[:2]:
+            raise ValueError("two-branch states must use session, branch, feature axes")
+        if self.topology_months.shape != (len(self.sessions),):
+            raise ValueError("two-branch topology months must align with sessions")
+        if np.any(self.valid & ~np.all(np.isfinite(self.values), axis=2)):
+            raise ValueError("valid two-branch states must be finite")
+
+    def feature(self, name: str) -> NDArray[np.float64]:
+        try:
+            column = self.feature_names.index(name)
+        except ValueError as exc:
+            raise KeyError(name) from exc
+        return self.values[:, :, column]
+
+
+@dataclass(frozen=True, slots=True)
+class TwoBranchLabels:
+    signal_sessions: NDArray[np.datetime64]
+    target_time: NDArray[np.datetime64]
+    next_return: NDArray[np.float64]
+    historical_volatility: NDArray[np.float64]
+    valid: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        rows = len(self.signal_sessions)
+        if self.target_time.shape != (rows,):
+            raise ValueError("two-branch target times must align with sessions")
+        expected = (rows, 2)
+        arrays = (self.next_return, self.historical_volatility, self.valid)
+        if any(item.shape != expected for item in arrays):
+            raise ValueError("two-branch labels must align with both branches")
+        if np.any(self.valid & ~np.isfinite(self.next_return)):
+            raise ValueError("valid branch returns must be finite")
+        if np.any(
+            self.valid
+            & (~np.isfinite(self.historical_volatility) | (self.historical_volatility <= 0.0))
+        ):
+            raise ValueError("valid branch volatility must be finite and positive")
+
+
+@dataclass(frozen=True, slots=True)
+class TwoBranchDataset:
+    states: TwoBranchDailyStates
+    labels: TwoBranchLabels
+    memberships: tuple[MonthlyBranchMembership, ...]
+    symbols: tuple[str, ...]
+    member_next_returns: NDArray[np.float64]
+    member_next_valid: NDArray[np.bool_]
+    evaluation_start: np.datetime64 | None = None
+    evaluation_end: np.datetime64 | None = None
+
+    def __post_init__(self) -> None:
+        rows = len(self.states.sessions)
+        expected = (rows, len(self.symbols))
+        if self.member_next_returns.shape != expected or self.member_next_valid.shape != expected:
+            raise ValueError("member next returns must align with sessions and symbols")
+        if not np.array_equal(self.states.sessions, self.labels.signal_sessions):
+            raise ValueError("two-branch states and labels must align")
+        if np.any(self.member_next_valid & ~np.isfinite(self.member_next_returns)):
+            raise ValueError("valid member next returns must be finite")
+        if self.evaluation_start is not None and self.evaluation_end is not None:
+            if np.datetime64(self.evaluation_end, "D") < np.datetime64(
+                self.evaluation_start, "D"
+            ):
+                raise ValueError("evaluation end cannot precede evaluation start")

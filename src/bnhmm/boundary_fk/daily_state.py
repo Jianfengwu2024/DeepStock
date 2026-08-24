@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -51,7 +51,8 @@ class BoundaryTopologyBuilder:
     """Adapt BoundaryFlowFK normalization to the frozen sector topology."""
 
     def __init__(self, config: TopologyConfig | None = None) -> None:
-        self.builder = RiverTopologyBuilder(config or TopologyConfig())
+        requested = config or TopologyConfig()
+        self.builder = RiverTopologyBuilder(replace(requested, maximum_bands=2))
 
     def build(
         self,
@@ -93,13 +94,13 @@ class BoundaryTopologyBuilder:
 
 @dataclass(frozen=True, slots=True)
 class BoundaryDailyStateConfig:
-    branch_count: int = 4
+    branch_count: int = 2
     high_coherence_threshold: float = 0.8
     minimum_valid_minutes: int = 30
 
     def __post_init__(self) -> None:
-        if not 3 <= self.branch_count <= 4:
-            raise ValueError("branch_count must be three or four to keep at most 36 features")
+        if self.branch_count != 2:
+            raise ValueError("branch_count must be exactly two")
         if not 0.0 < self.high_coherence_threshold < 1.0:
             raise ValueError("high coherence threshold must lie in (0, 1)")
         if self.minimum_valid_minutes < 1:
@@ -109,7 +110,7 @@ class BoundaryDailyStateConfig:
 class BoundaryDailyStateBuilder:
     def __init__(
         self,
-        branch_count: int = 4,
+        branch_count: int = 2,
         *,
         high_coherence_threshold: float = 0.8,
         minimum_valid_minutes: int = 1,

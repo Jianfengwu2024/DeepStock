@@ -1,45 +1,31 @@
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 
-from bnhmm.boundary_fk.experiment import _build_labels_and_side_data
-from test_boundary_fk_bayesian_state import _dataset
+from bnhmm.boundary_fk.pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
+from test_boundary_fk_pipeline import _walk_forward_data
 
 
-def test_future_returns_cannot_change_earlier_labels_or_risk_quantiles() -> None:
-    states, _ = _dataset(90)
-    rng = np.random.default_rng(31)
-    daily_returns = rng.normal(0.0, 0.01, len(states.sessions))
-    valid = np.ones(len(states.sessions), dtype=np.bool_)
-
-    base = _build_labels_and_side_data(
-        states, states.sessions, daily_returns, valid
-    )
-    changed_returns = daily_returns.copy()
-    changed_returns[70:] = 10.0
-    changed = _build_labels_and_side_data(
-        states, states.sessions, changed_returns, valid
-    )
-
-    np.testing.assert_allclose(
-        base.labels.historical_volatility[:60],
-        changed.labels.historical_volatility[:60],
-        equal_nan=True,
-    )
-    np.testing.assert_allclose(
-        base.labels.next_return[:60], changed.labels.next_return[:60], equal_nan=True
-    )
-    np.testing.assert_allclose(
-        base.thickness_risk_quantile[:60], changed.thickness_risk_quantile[:60]
+def test_requested_evaluation_range_limits_sample_out_months(tmp_path) -> None:
+    data = _walk_forward_data(220)
+    start = np.datetime64("2024-07-01")
+    end = np.datetime64("2024-09-30")
+    ranged = type(data)(
+        states=data.states,
+        labels=data.labels,
+        memberships=data.memberships,
+        symbols=data.symbols,
+        member_next_returns=data.member_next_returns,
+        member_next_valid=data.member_next_valid,
+        evaluation_start=start,
+        evaluation_end=end,
     )
 
+    result = BoundaryFlowPipeline(
+        BoundaryFlowPipelineConfig(minimum_train_sessions=60, max_folds=None, fk_paths=1000)
+    ).run(ranged, tmp_path)
 
-def test_labels_point_to_the_next_available_trading_session() -> None:
-    states, _ = _dataset(40)
-    returns = np.linspace(-0.01, 0.01, len(states.sessions))
-    side = _build_labels_and_side_data(
-        states, states.sessions, returns, np.ones(len(returns), dtype=np.bool_)
-    )
-
-    assert side.labels.target_time[25] == states.sessions[26].astype("datetime64[ns]")
-    assert side.labels.next_return[25] == returns[26]
+    assert result.stages[0].test_months
+    assert all("2024-07" <= month <= "2024-09" for month in result.stages[0].test_months)

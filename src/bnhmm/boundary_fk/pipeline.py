@@ -1,62 +1,27 @@
-"""Fixed five-stage monthly walk-forward orchestration for BoundaryFlowFK."""
+"""Monthly walk-forward orchestration for the two-branch FK strategy."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
-from .bayesian_state import (
-    BayesianBoundaryStateConfig,
-    BayesianBoundaryStateModel,
-    BoundaryStateLabels,
-)
+from .branch_model import BayesianBranchModel, BayesianBranchModelConfig
 from .evaluation import (
     BoundaryEvaluationConfig,
     BoundaryEvaluationMetrics,
-    BoundaryForecastObservation,
-    evaluate_boundary_forecasts,
+    TwoBranchForecastObservation,
+    evaluate_two_branch_forecasts,
 )
-from .feynman_kac import BoundaryFeynmanKacConfig, BoundaryFeynmanKacForecaster
-from .policy import BoundaryPolicyDecision
+from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
+from .policy import BoundaryPolicy
 from .reporting import write_ablation_report, write_json
-from .types import BoundaryDailyStates
+from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
-BOUNDARY_MODEL_NAMES = (
-    "BFK-GBM",
-    "BFK-Global",
-    "BFK-Boundary",
-    "BFK-Branches",
-    "BoundaryFlowFK",
-)
-_PROFILES = ("gbm", "global", "boundary", "branches", "full")
-
-
-@dataclass(frozen=True, slots=True)
-class BoundaryWalkForwardData:
-    states: BoundaryDailyStates
-    labels: BoundaryStateLabels
-    thickness_risk_quantile: np.ndarray
-    gross_strategy_returns: np.ndarray
-
-    def __post_init__(self) -> None:
-        rows = len(self.states.sessions)
-        arrays = (
-            self.thickness_risk_quantile,
-            self.gross_strategy_returns,
-        )
-        if any(item.shape != (rows,) for item in arrays):
-            raise ValueError("walk-forward side data must align with daily states")
-        if not np.array_equal(self.states.sessions, self.labels.signal_sessions):
-            raise ValueError("walk-forward states and labels must align")
-        if np.any(~np.isfinite(self.thickness_risk_quantile)) or np.any(
-            (self.thickness_risk_quantile < 0.0)
-            | (self.thickness_risk_quantile > 1.0)
-        ):
-            raise ValueError("thickness risk quantiles must lie in [0, 1]")
+BOUNDARY_MODEL_NAMES = ("TwoBranchFK",)
+BoundaryWalkForwardData = TwoBranchDataset
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,31 +33,18 @@ class BoundaryFlowPipelineConfig:
     neutral_sigma: float = 0.35
     minimum_neutral_threshold: float = 0.002
     transaction_cost_bps: float = 10.0
-    metric_tolerance: float = 0.0
-    minimum_raw_bullish_probability: float = 0.55
-    minimum_survival_bullish_probability: float = 0.55
-    minimum_trend_survival_probability: float = 0.60
-    maximum_bullish_probability_std: float = 0.15
-    maximum_thickness_risk_quantile: float = 0.90
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
-            raise ValueError("BoundaryFlowFK requires at least 30 training sessions")
+            raise ValueError("TwoBranchFK requires at least 30 training sessions")
         if self.max_folds is not None and self.max_folds < 1:
             raise ValueError("maximum folds must be positive")
         if self.neutral_sigma <= 0.0 or self.minimum_neutral_threshold <= 0.0:
             raise ValueError("neutral threshold settings must be positive")
-        if self.metric_tolerance < 0.0:
-            raise ValueError("metric tolerance cannot be negative")
-        gates = (
-            self.minimum_raw_bullish_probability,
-            self.minimum_survival_bullish_probability,
-            self.minimum_trend_survival_probability,
-            self.maximum_bullish_probability_std,
-            self.maximum_thickness_risk_quantile,
-        )
-        if any(not 0.0 <= value <= 1.0 for value in gates):
-            raise ValueError("BoundaryFlowFK gates must lie in [0, 1]")
+        if self.fk_paths < 1_000:
+            raise ValueError("TwoBranchFK requires at least 1000 FK paths")
+        if self.transaction_cost_bps < 0.0:
+            raise ValueError("transaction cost cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,9 +53,9 @@ class BoundaryStageResult:
     status: str
     passed: bool
     test_months: tuple[str, ...]
-    promotion_eligible: bool = False
+    promotion_eligible: bool = True
     drift_feature_names: tuple[str, ...] = ()
-    diffusion_feature_names: tuple[str, ...] = ()
+    diffusion_feature_names: tuple[str, ...] = ("constant_residual_variance",)
     minimum_fit_rows: int = 0
     metrics: BoundaryEvaluationMetrics | None = None
     failure_reason: str = ""
@@ -115,263 +67,246 @@ class BoundaryFlowRunResult:
     stages: tuple[BoundaryStageResult, ...]
 
 
-StageGate = Callable[
-    [BoundaryEvaluationMetrics, BoundaryEvaluationMetrics, str], bool
-]
-
-
 class BoundaryFlowPipeline:
-    def __init__(
-        self,
-        config: BoundaryFlowPipelineConfig | None = None,
-        *,
-        stage_gate: StageGate | None = None,
-    ) -> None:
+    def __init__(self, config: BoundaryFlowPipelineConfig | None = None) -> None:
         self.config = config or BoundaryFlowPipelineConfig()
-        self.stage_gate = stage_gate or self._default_stage_gate
 
     def run(
         self,
-        data: BoundaryWalkForwardData,
+        data: TwoBranchDataset,
         output_directory: str | Path,
     ) -> BoundaryFlowRunResult:
         root = Path(output_directory)
         root.mkdir(parents=True, exist_ok=True)
         folds = self._mature_monthly_folds(data)
         if not folds:
-            raise ValueError("no monthly fold has enough mature BoundaryFlowFK history")
-        test_months = tuple(str(test_start.astype("datetime64[M]")) for _, test_start, _, _ in folds)
+            raise ValueError("no monthly fold has enough mature TwoBranchFK history")
 
-        stages: list[BoundaryStageResult] = []
-        all_predictions: list[dict[str, object]] = []
-        posterior_artifacts: list[dict[str, object]] = []
-        previous_metrics: BoundaryEvaluationMetrics | None = None
-        promotion_chain = True
-        for model_name, profile in zip(BOUNDARY_MODEL_NAMES, _PROFILES, strict=True):
-            observations: list[BoundaryForecastObservation] = []
-            stage_drift: tuple[str, ...] = ()
-            stage_diffusion: tuple[str, ...] = ()
-            fit_rows: list[int] = []
-            for fold_index, test_start, training_rows, test_rows in folds:
-                cutoff = test_start - np.timedelta64(1, "ns")
-                training_selected = np.zeros(len(data.states.sessions), dtype=np.bool_)
-                training_selected[training_rows] = True
-                matured = data.labels.target_time <= cutoff
-                bounded_labels = replace(
+        membership_by_month = {item.month: item for item in data.memberships}
+        observations: list[TwoBranchForecastObservation] = []
+        prediction_payloads: list[dict[str, object]] = []
+        posterior_payloads: list[dict[str, object]] = []
+        fit_rows: list[int] = []
+        held_branches = (False, False)
+        previous_weights: dict[str, float] = {}
+        policy = BoundaryPolicy()
+        drift_names: tuple[str, ...] = ()
+
+        for fold_index, test_start, training_rows, test_rows in folds:
+            cutoff = test_start - np.timedelta64(1, "ns")
+            posteriors = []
+            for branch in range(2):
+                posterior = BayesianBranchModel(
+                    BayesianBranchModelConfig(
+                        minimum_rows=self.config.minimum_train_sessions,
+                        neutral_sigma=self.config.neutral_sigma,
+                    )
+                ).fit(
+                    data.states,
                     data.labels,
-                    return_valid=data.labels.return_valid & training_selected & matured,
-                    survival_valid=data.labels.survival_valid & training_selected & matured,
+                    branch=branch,
+                    training_cutoff=cutoff,
                 )
-                posterior = BayesianBoundaryStateModel(
-                    BayesianBoundaryStateConfig(feature_profile=profile)
-                ).fit(data.states, bounded_labels, training_cutoff=cutoff)
-                stage_drift = posterior.drift_feature_names
-                stage_diffusion = posterior.diffusion_feature_names
+                posteriors.append(posterior)
                 fit_rows.append(posterior.fit_rows)
-                posterior_artifacts.append(
+                drift_names = posterior.drift_feature_names
+                posterior_payloads.append(
                     {
-                        "model_name": model_name,
+                        "model_name": BOUNDARY_MODEL_NAMES[0],
                         "fold": fold_index,
+                        "branch": branch + 1,
                         "training_cutoff": str(cutoff),
-                        "drift_feature_names": list(stage_drift),
-                        "diffusion_feature_names": list(stage_diffusion),
+                        "drift_feature_names": list(posterior.drift_feature_names),
+                        "potential_feature_names": list(posterior.potential_feature_names),
                         "drift_mean": posterior.drift_mean.tolist(),
-                        "diffusion_mean": posterior.diffusion_mean.tolist(),
+                        "diffusion_variance": posterior.diffusion_variance,
                         "potential_mean": posterior.potential_mean.tolist(),
                     }
                 )
-                forecaster = BoundaryFeynmanKacForecaster(
-                    BoundaryFeynmanKacConfig(
-                        paths=self.config.fk_paths,
-                        seed=self.config.seed + fold_index,
-                        use_effective_potential=model_name == "BoundaryFlowFK",
-                    )
-                )
-                for row in test_rows:
-                    if not data.labels.return_valid[row]:
-                        continue
-                    threshold = max(
+
+            for row in test_rows:
+                membership = membership_by_month.get(data.states.topology_months[row])
+                if membership is None or not data.labels.valid[row].all():
+                    continue
+                thresholds = tuple(
+                    max(
                         self.config.minimum_neutral_threshold,
-                        self.config.neutral_sigma * data.labels.historical_volatility[row],
+                        self.config.neutral_sigma
+                        * data.labels.historical_volatility[row, branch],
                     )
-                    forecast = forecaster.predict(
-                        posterior,
+                    for branch in range(2)
+                )
+                forecasts = tuple(
+                    BranchFeynmanKacForecaster(
+                        BoundaryFeynmanKacConfig(
+                            paths=self.config.fk_paths,
+                            seed=self.config.seed + fold_index * 2 + branch,
+                        )
+                    ).predict(
+                        posteriors[branch],
                         data.states,
                         int(row),
-                        data.labels,
-                        neutral_threshold=float(threshold),
+                        neutral_threshold=float(thresholds[branch]),
                     )
-                    decision = self._first_layer_decision(
-                        forecast,
-                        float(data.thickness_risk_quantile[row]),
-                        use_effective_potential=model_name == "BoundaryFlowFK",
-                    )
-                    signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
-                    available = signal + np.timedelta64(1, "ns")
-                    observation = BoundaryForecastObservation(
-                        signal_time=signal,
-                        available_at=available,
-                        target_time=data.labels.target_time[row],
-                        training_cutoff=cutoff,
-                        model_version=model_name,
-                        forecast=forecast,
-                        actual_return=float(data.labels.next_return[row]),
-                        neutral_threshold=float(threshold),
-                        decision=decision,
-                        gross_strategy_return=float(data.gross_strategy_returns[row]),
-                    )
-                    observations.append(observation)
-                    all_predictions.append(self._prediction_payload(observation, fold_index))
-            if not observations:
-                raise ValueError(f"{model_name} produced no sample-out predictions")
-            metrics = evaluate_boundary_forecasts(
-                tuple(observations),
-                BoundaryEvaluationConfig(
-                    transaction_cost_bps=self.config.transaction_cost_bps
-                ),
-            )
-            passed = previous_metrics is None or self.stage_gate(
-                previous_metrics, metrics, model_name
-            )
-            promotion_chain = promotion_chain and passed
-            stage = BoundaryStageResult(
-                model_name=model_name,
-                status="passed" if passed else "failed",
-                passed=passed,
-                test_months=test_months,
-                promotion_eligible=promotion_chain,
-                drift_feature_names=stage_drift,
-                diffusion_feature_names=stage_diffusion,
-                minimum_fit_rows=min(fit_rows),
-                metrics=metrics,
-                failure_reason="" if passed else "sample_out_metrics_did_not_improve",
-            )
-            stages.append(stage)
-            previous_metrics = metrics
+                    for branch in range(2)
+                )
+                decision = policy.decide(
+                    (forecasts[0], forecasts[1]),
+                    branches=membership.branches,
+                    held_branches=held_branches,
+                )
+                current_weights = dict(
+                    zip(decision.selected_symbols, decision.target_weights, strict=True)
+                )
+                turnover = self._turnover(previous_weights, current_weights)
+                gross_return = self._portfolio_return(data, int(row), current_weights)
+                signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
+                observation = TwoBranchForecastObservation(
+                    signal_time=signal,
+                    available_at=signal + np.timedelta64(1, "ns"),
+                    target_time=data.labels.target_time[row],
+                    training_cutoff=cutoff,
+                    model_version=BOUNDARY_MODEL_NAMES[0],
+                    forecasts=(forecasts[0], forecasts[1]),
+                    actual_returns=(
+                        float(data.labels.next_return[row, 0]),
+                        float(data.labels.next_return[row, 1]),
+                    ),
+                    neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
+                    decision=decision,
+                    gross_strategy_return=gross_return,
+                    turnover=turnover,
+                )
+                observations.append(observation)
+                prediction_payloads.append(
+                    self._prediction_payload(observation, fold_index)
+                )
+                held_branches = decision.held_branches
+                previous_weights = current_weights
 
-        stage_payload = [self._stage_payload(stage) for stage in stages]
-        write_json(root / "boundary-model-posterior.json", posterior_artifacts)
-        write_json(root / "feynman-kac-predictions.json", all_predictions)
+        if not observations:
+            raise ValueError("TwoBranchFK produced no sample-out predictions")
+        metrics = evaluate_two_branch_forecasts(
+            tuple(observations),
+            BoundaryEvaluationConfig(
+                transaction_cost_bps=self.config.transaction_cost_bps
+            ),
+        )
+        test_months = tuple(
+            str(test_start.astype("datetime64[M]")) for _, test_start, _, _ in folds
+        )
+        stage = BoundaryStageResult(
+            model_name=BOUNDARY_MODEL_NAMES[0],
+            status="completed",
+            passed=True,
+            test_months=test_months,
+            drift_feature_names=drift_names,
+            minimum_fit_rows=min(fit_rows),
+            metrics=metrics,
+        )
+        stage_payload = [self._stage_payload(stage)]
+        write_json(root / "boundary-model-posterior.json", posterior_payloads)
+        write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
         write_json(
             root / "boundary-residual-analysis.json",
-            [
-                {
-                    "model_name": stage.model_name,
-                    "probability_residual_autocorrelation": (
-                        stage.metrics.probability_residual_autocorrelation
-                        if stage.metrics is not None
-                        else None
-                    ),
-                }
-                for stage in stages
-            ],
+            {
+                "model_name": stage.model_name,
+                "probability_residual_autocorrelation": metrics.probability_residual_autocorrelation,
+            },
         )
         write_json(
             root / "boundary-daily-states.json",
             {
                 "sessions": [str(item) for item in data.states.sessions],
                 "feature_names": list(data.states.feature_names),
-                "units": list(data.states.units),
                 "valid": data.states.valid.tolist(),
             },
         )
         write_ablation_report(root / "boundary-ablation-report.md", stage_payload)
-        return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, tuple(stages))
+        return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, (stage,))
 
     def _mature_monthly_folds(
-        self, data: BoundaryWalkForwardData
+        self, data: TwoBranchDataset
     ) -> tuple[tuple[int, np.datetime64, np.ndarray, np.ndarray], ...]:
         sessions = data.states.sessions.astype("datetime64[ns]")
-        eligible = data.states.valid & data.labels.return_valid
+        eligible = np.all(data.states.valid & data.labels.valid, axis=1)
+        if data.evaluation_start is not None:
+            eligible &= sessions >= np.datetime64(data.evaluation_start, "ns")
+        if data.evaluation_end is not None:
+            eligible &= sessions < (
+                np.datetime64(data.evaluation_end, "D") + np.timedelta64(1, "D")
+            ).astype("datetime64[ns]")
         months = np.unique(sessions[eligible].astype("datetime64[M]"))
         folds: list[tuple[int, np.datetime64, np.ndarray, np.ndarray]] = []
         for month in months:
             test_start = month.astype("datetime64[ns]")
             test_end = (month + np.timedelta64(1, "M")).astype("datetime64[ns]")
             cutoff = test_start - np.timedelta64(1, "ns")
+            matured = np.all(data.states.valid & data.labels.valid, axis=1)
             training_rows = np.flatnonzero(
-                eligible & (sessions < test_start) & (data.labels.target_time <= cutoff)
+                matured & (sessions < test_start) & (data.labels.target_time <= cutoff)
             )
             test_rows = np.flatnonzero(
                 eligible & (sessions >= test_start) & (sessions < test_end)
             )
-            mature_sessions = np.unique(sessions[training_rows].astype("datetime64[D]"))
-            if len(mature_sessions) < self.config.minimum_train_sessions or not len(test_rows):
+            if len(training_rows) < self.config.minimum_train_sessions or not len(test_rows):
                 continue
             folds.append((len(folds), test_start, training_rows, test_rows))
             if self.config.max_folds is not None and len(folds) >= self.config.max_folds:
                 break
         return tuple(folds)
 
-    def _default_stage_gate(
-        self,
-        previous: BoundaryEvaluationMetrics,
-        current: BoundaryEvaluationMetrics,
-        model_name: str,
-    ) -> bool:
-        tolerance = self.config.metric_tolerance
-        return (
-            current.brier_score <= previous.brier_score + tolerance
-            and current.log_loss <= previous.log_loss + tolerance
-            and current.ece <= previous.ece + tolerance
+    @staticmethod
+    def _turnover(previous: dict[str, float], current: dict[str, float]) -> float:
+        return float(
+            sum(
+                abs(current.get(symbol, 0.0) - previous.get(symbol, 0.0))
+                for symbol in set(previous) | set(current)
+            )
         )
 
-    def _first_layer_decision(
-        self,
-        forecast,
-        thickness_risk_quantile: float,
-        *,
-        use_effective_potential: bool,
-    ) -> BoundaryPolicyDecision:
-        conditional = (
-            forecast.survival_joint_probabilities[2]
-            / forecast.trend_survival_probability
-            if forecast.trend_survival_probability > 0.0
-            else 0.0
-        )
-        opened = (
-            forecast.raw_state_probabilities[2]
-            >= self.config.minimum_raw_bullish_probability
-        )
-        reason = "raw_bullish_probability"
-        if opened and use_effective_potential:
-            gates = (
-                (
-                    conditional
-                    >= self.config.minimum_survival_bullish_probability,
-                    "survival_bullish_probability",
-                ),
-                (
-                    forecast.trend_survival_probability
-                    >= self.config.minimum_trend_survival_probability,
-                    "trend_survival_probability",
-                ),
-                (
-                    forecast.bullish_probability_std
-                    <= self.config.maximum_bullish_probability_std,
-                    "bullish_probability_uncertainty",
-                ),
-                (
-                    thickness_risk_quantile
-                    < self.config.maximum_thickness_risk_quantile,
-                    "boundary_thickening_risk",
-                ),
-            )
-            for passed, failed_reason in gates:
-                if not passed:
-                    opened = False
-                    reason = failed_reason
-                    break
-        if opened:
-            reason = "first_layer_passed"
-        return BoundaryPolicyDecision(opened, reason, conditional)
+    @staticmethod
+    def _portfolio_return(
+        data: TwoBranchDataset, row: int, weights: dict[str, float]
+    ) -> float:
+        if not weights:
+            return 0.0
+        symbol_index = {symbol: index for index, symbol in enumerate(data.symbols)}
+        result = 0.0
+        for symbol, weight in weights.items():
+            column = symbol_index[symbol]
+            if not data.member_next_valid[row, column]:
+                raise ValueError(f"missing next-session return for held symbol {symbol}")
+            result += weight * float(data.member_next_returns[row, column])
+        return float(result)
 
     @staticmethod
     def _prediction_payload(
-        observation: BoundaryForecastObservation, fold: int
+        observation: TwoBranchForecastObservation, fold: int
     ) -> dict[str, object]:
-        forecast = observation.forecast
+        branches = []
+        for branch, (forecast, actual, threshold, direction) in enumerate(
+            zip(
+                observation.forecasts,
+                observation.actual_returns,
+                observation.neutral_thresholds,
+                observation.decision.branch_directions,
+                strict=True,
+            )
+        ):
+            branches.append(
+                {
+                    "branch": branch + 1,
+                    "direction": direction,
+                    "state_probabilities": list(forecast.raw_state_probabilities),
+                    "expected_drift": forecast.expected_drift,
+                    "expected_effective_potential": forecast.expected_effective_potential,
+                    "expected_diffusion_variance": forecast.expected_diffusion_variance,
+                    "actual_return": actual,
+                    "neutral_threshold": threshold,
+                }
+            )
         return {
             "signal_time": str(observation.signal_time),
             "available_at": str(observation.available_at),
@@ -379,16 +314,12 @@ class BoundaryFlowPipeline:
             "training_cutoff": str(observation.training_cutoff),
             "model_version": observation.model_version,
             "fold": fold,
-            "raw_state_probabilities": list(forecast.raw_state_probabilities),
-            "survival_joint_probabilities": list(forecast.survival_joint_probabilities),
-            "trend_survival_probability": forecast.trend_survival_probability,
-            "expected_drift": forecast.expected_drift,
-            "expected_diffusion_variance": forecast.expected_diffusion_variance,
-            "expected_effective_potential": forecast.expected_effective_potential,
-            "epistemic_return_variance": forecast.epistemic_return_variance,
-            "aleatoric_return_variance": forecast.aleatoric_return_variance,
-            "gate_reason": observation.decision.gate_reason,
-            "actual_return": observation.actual_return,
+            "branches": branches,
+            "held_branches": list(observation.decision.held_branches),
+            "selected_symbols": list(observation.decision.selected_symbols),
+            "target_weights": list(observation.decision.target_weights),
+            "gross_strategy_return": observation.gross_strategy_return,
+            "turnover": observation.turnover,
         }
 
     @staticmethod

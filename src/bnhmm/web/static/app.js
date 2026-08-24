@@ -38,10 +38,7 @@ const numberFields = new Set([
   "regime_maximum_bull_variance", "regime_epochs", "regime_batch_size",
   "regime_learning_rate", "regime_kl_weight", "regime_state_loss_weight",
   "regime_mc_samples",
-  "boundary_branch_count", "topology_lookback_sessions", "boundary_viscosity_window",
-  "boundary_fk_paths", "boundary_min_raw_bullish_probability",
-  "boundary_min_survival_bullish_probability", "boundary_min_trend_survival_probability",
-  "boundary_max_bullish_probability_std", "boundary_max_thickness_risk_quantile",
+  "topology_lookback_sessions", "boundary_fk_paths",
 ]);
 
 const strategyParameterFields = {
@@ -90,12 +87,8 @@ const strategyParameterFields = {
     "regime_mc_samples", "device",
   ],
   "boundary-flow-fk": [
-    "minimum_train_sessions", "max_folds", "boundary_branch_count",
-    "topology_lookback_sessions", "boundary_viscosity_window", "regime_neutral_sigma",
-    "boundary_fk_paths", "boundary_min_raw_bullish_probability",
-    "boundary_min_survival_bullish_probability", "boundary_min_trend_survival_probability",
-    "boundary_max_bullish_probability_std", "boundary_max_thickness_risk_quantile",
-    "sector_flow_top_k", "transaction_cost_bps", "seed",
+    "minimum_train_sessions", "max_folds", "topology_lookback_sessions",
+    "regime_neutral_sigma", "boundary_fk_paths", "transaction_cost_bps", "seed",
   ],
 };
 
@@ -107,7 +100,7 @@ const strategyNamePrefixes = {
   "stock-transformer": "StockTransformer",
   "fk-stock": "FKStock",
   "sector-flow-bayes": "SectorFlow",
-  "boundary-flow-fk": "BoundaryFlowFK",
+  "boundary-flow-fk": "TwoBranchFK",
 };
 
 const statusText = {
@@ -254,7 +247,7 @@ function syncStrategySelection() {
       : "price-volume-holographic-flow-v1")
     : "phase-space-10m-local-flow-v8";
   document.querySelector("#brand-subtitle").textContent = boundaryFlow
-    ? "BoundaryFlowFK · Bayesian boundary dynamics"
+    ? "TwoBranchFK · Bayesian drift and potential"
     : sectorFlow
     ? "SectorFlow · Bayesian sector dynamics"
     : fk
@@ -279,7 +272,7 @@ function syncStrategySelection() {
   const noDataset = (stock || fk || holo || sectorFlow || boundaryFlow) && state.datasets.length === 0;
   document.querySelector("#run-button").disabled = noDataset;
   document.querySelector("#form-error").textContent = noDataset
-    ? `${boundaryFlow ? "BoundaryFlowFK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
+    ? `${boundaryFlow ? "两支流 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
     : "";
 }
 
@@ -562,7 +555,7 @@ function renderJobList() {
   list.replaceChildren(...state.jobs.map(job => {
     const strategy = job.request.strategy === "holo-repair"
       ? job.request.repair_variant
-      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow", "boundary-flow-fk": "BoundaryFlowFK" })[job.request.strategy] || job.request.strategy;
+      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow", "boundary-flow-fk": "两支流 FK" })[job.request.strategy] || job.request.strategy;
     const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
     if (state.historyEditing) {
       const label = document.createElement("label");
@@ -634,7 +627,7 @@ function renderJob(job) {
     item => item.dataset_id === job.request.dataset_id,
   );
   if (boundaryFlow) {
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 自制市值指数 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 两支流月度冻结 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
   } else if (sectorFlow) {
     const water = job.summary?.latest_water_state || {};
     document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 1分钟同步 · 最大滞后 ${job.request.maximum_lag_minutes} 分钟 · 水势 ${formatNumber(water.flow_strength, 3)} · ${job.request.normalization_lookback_sessions}日因果归一化`;
@@ -716,8 +709,8 @@ function renderJob(job) {
   document.querySelector("#delete-button").classList.toggle("hidden", active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
-    ? (sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
-    : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
+    ? (boundaryFlow ? "等待两支流 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
+    : boundaryFlow ? "两支流 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -845,12 +838,13 @@ function renderBoundaryFlowResult(job) {
   const evaluationUrl = job.artifacts?.["boundary-policy-evaluation.json"];
   const predictionsUrl = job.artifacts?.["feynman-kac-predictions.json"];
   const downloads = {
-    "boundary-ablation-report.md": "中文消融报告",
-    "boundary-policy-evaluation.json": "五级评估",
+    "boundary-ablation-report.md": "中文报告",
+    "boundary-policy-evaluation.json": "策略评估",
     "feynman-kac-predictions.json": "样本外预测",
     "boundary-model-posterior.json": "模型后验",
     "boundary-residual-analysis.json": "残差分析",
-    "boundary-daily-states.json": "每日边界状态",
+    "boundary-daily-states.json": "每日支流状态",
+    "branch-memberships.json": "月度支流成分",
     "run-summary.json": "运行摘要",
   };
   document.querySelector("#boundary-flow-downloads").innerHTML = Object.entries(downloads)
@@ -870,7 +864,7 @@ function renderBoundaryFlowResult(job) {
   if (!evaluationUrl || !predictionsUrl) {
     status.textContent = job.status === "failed"
       ? "运行失败，请查看日志"
-      : ["queued", "running"].includes(job.status) ? "边界层样本外计算中" : "暂无可读取的结果制品";
+      : ["queued", "running"].includes(job.status) ? "两支流样本外计算中" : "暂无可读取的结果制品";
     document.querySelector("#boundary-stage-table").replaceChildren();
     document.querySelector("#boundary-probabilities").replaceChildren();
     document.querySelector("#boundary-dynamics").replaceChildren();
@@ -898,70 +892,57 @@ function renderBoundaryFlowResult(job) {
 }
 
 function paintBoundaryFlowResult(job, stages, predictions) {
-  const statusLabels = { passed: "通过", failed: "未通过", skipped: "未运行" };
+  const statusLabels = { completed: "完成", failed: "失败" };
   document.querySelector("#boundary-stage-table").innerHTML = stages.map(stage => {
     const metrics = stage.metrics || {};
     return `<tr>
       <td><strong>${escapeHtml(stage.model_name || "—")}</strong></td>
-      <td><span class="status-badge ${stage.status === "passed" ? "completed" : stage.status === "failed" ? "failed" : "neutral"}">${statusLabels[stage.status] || escapeHtml(stage.status || "未知")}</span></td>
-      <td><span class="status-badge ${stage.promotion_eligible ? "completed" : "neutral"}">${stage.promotion_eligible ? "可晋级" : "仅诊断"}</span></td>
+      <td><span class="status-badge ${stage.status === "completed" ? "completed" : "failed"}">${statusLabels[stage.status] || escapeHtml(stage.status || "未知")}</span></td>
       <td>${formatInteger(stage.minimum_fit_rows)}</td>
       <td>${formatNumber(metrics.brier_score, 4)}</td>
       <td>${formatNumber(metrics.log_loss, 4)}</td>
       <td>${formatNumber(metrics.ece, 4)}</td>
       <td>${formatPercent(metrics.open_rate)}</td>
+      <td>${formatPercent(metrics.average_turnover)}</td>
     </tr>`;
   }).join("");
 
   const latest = predictions.at(-1);
-  const totalPredictions = predictions.length;
-  const failedStages = stages.filter(stage => stage.status === "failed");
-  document.querySelector("#boundary-flow-result-status").textContent = failedStages.length
-    ? `${formatInteger(totalPredictions)} 条样本外预测 · 五级均已运行 · ${failedStages.length} 级增量未通过`
-    : `${formatInteger(totalPredictions)} 条样本外预测 · 五级均已运行并保持晋级链`;
+  document.querySelector("#boundary-flow-result-status").textContent =
+    `${formatInteger(predictions.length)} 个样本外交易日 · 两条支流独立预测`;
 
   if (!latest) {
     document.querySelector("#boundary-probabilities").innerHTML = '<p class="boundary-empty">没有样本外预测。</p>';
     document.querySelector("#boundary-dynamics").replaceChildren();
-    document.querySelector("#boundary-gate-reason").textContent = "五级消融没有产生可展示的预测。";
+    document.querySelector("#boundary-gate-reason").textContent = "没有产生可展示的支流预测。";
     return;
   }
 
   const states = ["空", "平", "多"];
-  const raw = latest.raw_state_probabilities || [];
-  const joint = latest.survival_joint_probabilities || [];
-  document.querySelector("#boundary-probabilities").innerHTML = states.map((label, index) => `<div class="boundary-probability ${index === 0 ? "bear" : index === 2 ? "bull" : "neutral"}">
-    <strong>${label}</strong>
-    <span>原始 ${formatPercent(raw[index])}</span>
-    <span>存活联合 ${formatPercent(joint[index])}</span>
-  </div>`).join("");
+  const branches = latest.branches || [];
+  document.querySelector("#boundary-probabilities").innerHTML = branches.map(branch => {
+    const probabilities = branch.state_probabilities || [];
+    return `<div class="boundary-probability ${branch.direction === "bear" ? "bear" : branch.direction === "bull" ? "bull" : "neutral"}">
+      <strong>支流 ${branch.branch} · ${{ bear: "空", flat: "平", bull: "多" }[branch.direction] || "—"}</strong>
+      ${states.map((label, index) => `<span>${label} ${formatPercent(probabilities[index])}</span>`).join("")}
+    </div>`;
+  }).join("");
 
-  const dynamics = [
-    ["信号时间", latest.signal_time || "—"],
-    ["目标时间", latest.target_time || "—"],
-    ["趋势存活概率", formatPercent(latest.trend_survival_probability)],
-    ["漂移均值", formatNumber(latest.expected_drift, 6)],
-    ["扩散方差", formatNumber(latest.expected_diffusion_variance, 6)],
-    ["有效势", formatNumber(latest.expected_effective_potential, 6)],
-    ["认知方差", formatNumber(latest.epistemic_return_variance, 6)],
-    ["偶然方差", formatNumber(latest.aleatoric_return_variance, 6)],
-  ];
+  const dynamics = branches.flatMap(branch => [
+    [`支流 ${branch.branch} 漂移`, formatNumber(branch.expected_drift, 6)],
+    [`支流 ${branch.branch} 有效势`, formatNumber(branch.expected_effective_potential, 6)],
+    [`支流 ${branch.branch} 扩散`, formatNumber(branch.expected_diffusion_variance, 6)],
+  ]);
   document.querySelector("#boundary-dynamics").innerHTML = dynamics
     .map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`)
     .join("");
 
-  const gateLabels = {
-    first_layer_passed: "五道门全部通过，可进入第二层个股排序",
-    raw_bullish_probability: "原始看涨概率不足",
-    survival_bullish_probability: "存活条件下的看涨概率不足",
-    trend_survival_probability: "趋势存活概率不足",
-    bullish_probability_uncertainty: "看涨概率的不确定性过高",
-    boundary_thickening_risk: "边界层增厚风险过高",
-  };
-  const gateReason = latest.gate_reason || "unknown";
-  const gateText = gateLabels[gateReason] || `未识别的门控原因：${gateReason}`;
-  const trace = `模型 ${latest.model_version || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一可交易时点 ${latest.available_at || "—"}`;
-  document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(gateText)}</strong><span>${escapeHtml(trace)}</span>`;
+  const heldBranches = latest.held_branches || [false, false];
+  const holdings = latest.selected_symbols?.length
+    ? `持有支流 ${heldBranches.map((held, index) => held ? index + 1 : null).filter(Boolean).join("、")} · ${latest.selected_symbols.join("、")} · 全组合等权`
+    : "当前空仓";
+  const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
+  document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span>`;
 }
 
 function renderSectorFlowResult(job) {

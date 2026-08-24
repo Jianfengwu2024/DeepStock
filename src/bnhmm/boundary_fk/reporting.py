@@ -1,4 +1,4 @@
-"""Chinese artifacts for BoundaryFlowFK walk-forward experiments."""
+"""Chinese artifacts for TwoBranchFK walk-forward experiments."""
 
 from __future__ import annotations
 
@@ -16,31 +16,35 @@ def write_json(path: Path, payload: Any) -> None:
 
 def write_ablation_report(path: Path, stages: list[dict[str, Any]]) -> None:
     lines = [
-        "# BoundaryFlowFK 固定五级消融报告",
+        "# 两支流 FK 样本外报告",
         "",
-        "五个模型使用相同样本外月份和随机种子。某一级失败后，后续级别仍继续运行，",
-        "但严格晋级链从失败处断开，后续结果只用于诊断，不能自动发布。",
+        "模型把板块股票按过去 60 个交易日的分钟同步性分成两组，并在每月内固定。",
+        "两组分别估计漂移和有效势；预测多时买入整组，预测平时保持，预测空时清仓。",
+        "全部实际持股统一等权，收益来自这些股票的下一交易日真实收益。",
         "",
-        "| 模型 | 增量比较 | 晋级链 | Brier | Log Loss | ECE | 样本数 |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+        "| 模型 | 状态 | Brier | Log Loss | ECE | 样本数 | 开仓率 | 换手 | 净收益 | 最大回撤 |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for stage in stages:
         metrics = stage.get("metrics") or {}
         lines.append(
-            "| {model} | {status} | {promotion} | {brier} | {log_loss} | {ece} | {count} |".format(
+            "| {model} | {status} | {brier} | {log_loss} | {ece} | {count} | {open_rate} | {turnover} | {net_return} | {drawdown} |".format(
                 model=stage["model_name"],
                 status=stage["status"],
-                promotion="可晋级" if stage.get("promotion_eligible") else "仅诊断",
                 brier=_number(metrics.get("brier_score")),
                 log_loss=_number(metrics.get("log_loss")),
                 ece=_number(metrics.get("ece")),
                 count=metrics.get("observations", "-"),
+                open_rate=_percent(metrics.get("open_rate")),
+                turnover=_percent(metrics.get("average_turnover")),
+                net_return=_percent(metrics.get("net_total_return")),
+                drawdown=_percent(metrics.get("maximum_drawdown")),
             )
         )
     lines.extend(
         (
             "",
-            "`passed` 只表示通过当前工程门槛，不表示策略已经具有交易价值。",
+            "该报告只说明样本外结果，不代表策略已经具有稳定交易价值。",
             "",
         )
     )
@@ -49,3 +53,7 @@ def write_ablation_report(path: Path, stages: list[dict[str, Any]]) -> None:
 
 def _number(value: Any) -> str:
     return "-" if value is None else f"{float(value):.6f}"
+
+
+def _percent(value: Any) -> str:
+    return "-" if value is None else f"{float(value) * 100.0:.2f}%"

@@ -184,23 +184,25 @@ def config(request: Request) -> dict[str, Any]:
         "device": "cpu",
     }
     boundary_flow_defaults = {
-        **defaults,
+        key: value
+        for key, value in defaults.items()
+        if key
+        not in {
+            "sector_flow_top_k",
+            "sector_flow_ranking_window",
+            "sector_flow_evaluation_horizon_minutes",
+            "sector_flow_monte_carlo_samples",
+        }
+    }
+    boundary_flow_defaults.update({
         "strategy": "boundary-flow-fk",
         "training_scope": "sector-pooled",
         "device": "cpu",
         "topology_lookback_sessions": 60,
-        "boundary_branch_count": 4,
-        "boundary_viscosity_window": 60,
         "minimum_train_sessions": 120,
         "regime_neutral_sigma": 0.35,
         "boundary_fk_paths": 10_000,
-        "boundary_min_raw_bullish_probability": 0.55,
-        "boundary_min_survival_bullish_probability": 0.55,
-        "boundary_min_trend_survival_probability": 0.60,
-        "boundary_max_bullish_probability_std": 0.15,
-        "boundary_max_thickness_risk_quantile": 0.90,
-        "sector_flow_top_k": 10,
-    }
+    })
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),

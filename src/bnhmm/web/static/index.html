@@ -34,7 +34,7 @@
             <label><input type="radio" name="strategy" value="stock-transformer"><span>StockTransformer</span></label>
             <label><input type="radio" name="strategy" value="fk-stock"><span>FKStock</span></label>
             <label><input type="radio" name="strategy" value="sector-flow-bayes"><span>SectorFlow</span></label>
-            <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>BoundaryFlowFK</span></label>
+            <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>两支流 FK</span></label>
           </div>
           <label>训练范围
             <select name="training_scope" id="training-scope">
@@ -129,29 +129,19 @@
         </details>
 
         <details class="form-section boundary-flow-only hidden" open>
-          <summary>边界流与 Feynman-Kac</summary>
+          <summary>两支流 FK</summary>
           <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>指数</span><strong>上月末流通市值冻结的自制指数</strong></div>
-            <div class="fixed-spec"><span>后验</span><strong>漂移 / 扩散 / 有效势独立估计</strong></div>
-            <div class="fixed-spec"><span>消融</span><strong>GBM → 主流 → 边界 → 支流 → FK</strong></div>
-            <div class="fixed-spec"><span>信号</span><strong>下一交易日空 / 平 / 多概率</strong></div>
+            <div class="fixed-spec"><span>支流</span><strong>60日同步聚类，每月固定两组</strong></div>
+            <div class="fixed-spec"><span>后验</span><strong>每组独立估计漂移与有效势</strong></div>
+            <div class="fixed-spec"><span>信号</span><strong>下一交易日空 / 平 / 多</strong></div>
+            <div class="fixed-spec"><span>持仓</span><strong>看多支流全成分股统一等权</strong></div>
           </div>
           <div class="two-columns">
-            <label>支流数<select name="boundary_branch_count"><option value="3">3</option><option value="4">4</option></select></label>
             <label>支流历史（日）<input name="topology_lookback_sessions" type="number" value="60" readonly></label>
-            <label>黏性窗口（分钟）<input name="boundary_viscosity_window" type="number" min="10" max="240"></label>
             <label>平稳阈值（波动率倍数）<input name="regime_neutral_sigma" type="number" min="0.01" max="5" step="0.01"></label>
             <label>Feynman-Kac 路径<input name="boundary_fk_paths" type="number" min="1000" max="100000" step="1000"></label>
+            <label>交易成本（BP）<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
-          </div>
-          <div class="parameter-group-title">可信看涨五道门</div>
-          <div class="two-columns">
-            <label>原始看涨概率<input name="boundary_min_raw_bullish_probability" type="number" min="0" max="1" step="0.01"></label>
-            <label>存活条件看涨概率<input name="boundary_min_survival_bullish_probability" type="number" min="0" max="1" step="0.01"></label>
-            <label>趋势存活概率<input name="boundary_min_trend_survival_probability" type="number" min="0" max="1" step="0.01"></label>
-            <label>看涨后验标准差上限<input name="boundary_max_bullish_probability_std" type="number" min="0" max="1" step="0.01"></label>
-            <label>边界增厚风险分位上限<input name="boundary_max_thickness_risk_quantile" type="number" min="0" max="1" step="0.01"></label>
-            <label>看涨时精选数量<input name="sector_flow_top_k" type="number" min="1" max="100"></label>
           </div>
         </details>
 
@@ -409,13 +399,13 @@
 
             <section class="boundary-flow-results hidden" id="boundary-flow-results">
               <div class="sector-flow-head">
-                <div><h3>BoundaryFlowFK 五级消融</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
+                <div><h3>两支流 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
                 <span class="scope-badge">月度样本外</span>
               </div>
-              <div class="table-scroll"><table><thead><tr><th>模型</th><th>增量比较</th><th>晋级链</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>开仓率</th></tr></thead><tbody id="boundary-stage-table"></tbody></table></div>
+              <div class="table-scroll"><table><thead><tr><th>模型</th><th>状态</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>开仓率</th><th>换手</th></tr></thead><tbody id="boundary-stage-table"></tbody></table></div>
               <div class="boundary-result-grid">
-                <section><h3>最后一条样本外概率</h3><div class="boundary-probabilities" id="boundary-probabilities"></div></section>
-                <section><h3>动力学后验</h3><div class="boundary-dynamics" id="boundary-dynamics"></div></section>
+                <section><h3>两支流方向概率</h3><div class="boundary-probabilities" id="boundary-probabilities"></div></section>
+                <section><h3>漂移与有效势</h3><div class="boundary-dynamics" id="boundary-dynamics"></div></section>
               </div>
               <div class="boundary-gate" id="boundary-gate-reason"></div>
               <div class="download-row" id="boundary-flow-downloads"></div>

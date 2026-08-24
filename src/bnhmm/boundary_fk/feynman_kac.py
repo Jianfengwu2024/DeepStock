@@ -8,7 +8,9 @@ import numpy as np
 from scipy.special import ndtr
 
 from .bayesian_state import BayesianBoundaryPosterior, BoundaryStateLabels
+from .branch_model import BayesianBranchPosterior
 from .types import BoundaryDailyStates
+from .types import TwoBranchDailyStates
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,5 +118,75 @@ class BoundaryFeynmanKacForecaster:
             expected_drift=float(np.mean(drift)),
             expected_diffusion_variance=aleatoric,
             expected_effective_potential=float(np.mean(effective_potential)),
+            bullish_probability_std=float(np.std(conditional_bullish)),
+        )
+
+
+class BranchFeynmanKacForecaster:
+    """Forecast one branch with potential acting directly on its drift."""
+
+    def __init__(self, config: BoundaryFeynmanKacConfig | None = None) -> None:
+        self.config = config or BoundaryFeynmanKacConfig()
+
+    def predict(
+        self,
+        posterior: BayesianBranchPosterior,
+        states: TwoBranchDailyStates,
+        row: int,
+        *,
+        neutral_threshold: float,
+    ) -> BoundaryFeynmanKacForecast:
+        if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
+            raise ValueError("neutral threshold must be finite and non-negative")
+        resolved_row = row if row >= 0 else len(states.sessions) + row
+        if resolved_row < 0 or resolved_row >= len(states.sessions):
+            raise IndexError("branch forecast row is out of range")
+        if not states.valid[resolved_row, posterior.branch]:
+            raise ValueError("cannot forecast an invalid branch state")
+
+        rng = np.random.default_rng(self.config.seed)
+        drift_coefficients = rng.multivariate_normal(
+            posterior.drift_mean,
+            posterior.drift_covariance,
+            size=self.config.paths,
+        )
+        potential_coefficients = rng.multivariate_normal(
+            posterior.potential_mean,
+            posterior.potential_covariance,
+            size=self.config.paths,
+        )
+        drift = drift_coefficients @ posterior.drift_design(states, resolved_row)
+        potential = np.logaddexp(
+            0.0,
+            potential_coefficients @ posterior.potential_design(states, resolved_row),
+        )
+        survival = np.exp(-potential)
+        effective_drift = drift * survival
+        diffusion = posterior.diffusion_variance
+        returns = effective_drift + np.sqrt(diffusion) * rng.standard_normal(
+            self.config.paths
+        )
+        classes = (
+            returns < -neutral_threshold,
+            np.abs(returns) <= neutral_threshold,
+            returns > neutral_threshold,
+        )
+        probabilities = tuple(float(np.mean(mask)) for mask in classes)
+        survival_joint = tuple(float(np.mean(survival * mask)) for mask in classes)
+        conditional_bullish = ndtr(
+            (effective_drift - neutral_threshold) / np.sqrt(diffusion)
+        )
+
+        return BoundaryFeynmanKacForecast(
+            raw_state_probabilities=probabilities,
+            survival_joint_probabilities=survival_joint,
+            trend_survival_probability=float(np.mean(survival)),
+            expected_return=float(np.mean(returns)),
+            epistemic_return_variance=float(np.var(effective_drift)),
+            aleatoric_return_variance=float(diffusion),
+            total_return_variance=float(np.var(effective_drift) + diffusion),
+            expected_drift=float(np.mean(drift)),
+            expected_diffusion_variance=float(diffusion),
+            expected_effective_potential=float(np.mean(potential)),
             bullish_probability_std=float(np.std(conditional_bullish)),
         )

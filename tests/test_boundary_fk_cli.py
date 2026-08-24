@@ -23,11 +23,20 @@ def test_boundary_flow_cli_exposes_only_current_model_parameters() -> None:
         ]
     )
 
-    assert args.branch_count == 4
     assert args.topology_lookback_sessions == 60
-    assert args.viscosity_window == 60
     assert args.minimum_train_sessions == 120
     assert args.neutral_sigma == 0.35
     assert args.fk_paths == 10_000
+    for obsolete in (
+        "branch_count",
+        "viscosity_window",
+        "minimum_raw_bullish_probability",
+        "minimum_survival_bullish_probability",
+        "minimum_trend_survival_probability",
+        "maximum_bullish_probability_std",
+        "maximum_thickness_risk_quantile",
+        "top_k",
+    ):
+        assert not hasattr(args, obsolete)
     assert not hasattr(args, "epochs")
     assert not hasattr(args, "layers")

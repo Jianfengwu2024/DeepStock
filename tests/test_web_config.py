@@ -28,13 +28,22 @@ class WebSectorFlowConfigTests(unittest.TestCase):
 
         defaults = payload["strategy_defaults"]["boundary-flow-fk"]
         self.assertEqual(defaults["strategy"], "boundary-flow-fk")
-        self.assertEqual(defaults["boundary_branch_count"], 4)
         self.assertEqual(defaults["topology_lookback_sessions"], 60)
-        self.assertEqual(defaults["boundary_viscosity_window"], 60)
         self.assertEqual(defaults["minimum_train_sessions"], 120)
         self.assertEqual(defaults["regime_neutral_sigma"], 0.35)
         self.assertEqual(defaults["boundary_fk_paths"], 10_000)
         self.assertEqual(defaults["device"], "cpu")
+        for obsolete in (
+            "boundary_branch_count",
+            "boundary_viscosity_window",
+            "boundary_min_raw_bullish_probability",
+            "boundary_min_survival_bullish_probability",
+            "boundary_min_trend_survival_probability",
+            "boundary_max_bullish_probability_std",
+            "boundary_max_thickness_risk_quantile",
+            "sector_flow_top_k",
+        ):
+            self.assertNotIn(obsolete, defaults)
 
     def test_config_exposes_sector_flow_specific_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

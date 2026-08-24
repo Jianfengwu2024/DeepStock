@@ -42,6 +42,21 @@ class BoundaryForecastObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class TwoBranchForecastObservation:
+    signal_time: np.datetime64
+    available_at: np.datetime64
+    target_time: np.datetime64
+    training_cutoff: np.datetime64
+    model_version: str
+    forecasts: tuple[BoundaryFeynmanKacForecast, BoundaryFeynmanKacForecast]
+    actual_returns: tuple[float, float]
+    neutral_thresholds: tuple[float, float]
+    decision: BoundaryPolicyDecision
+    gross_strategy_return: float
+    turnover: float
+
+
+@dataclass(frozen=True, slots=True)
 class BoundaryEvaluationMetrics:
     observations: int
     log_loss: float
@@ -135,6 +150,92 @@ def evaluate_boundary_forecasts(
     )
 
 
+def evaluate_two_branch_forecasts(
+    observations: tuple[TwoBranchForecastObservation, ...],
+    config: BoundaryEvaluationConfig | None = None,
+) -> BoundaryEvaluationMetrics:
+    settings = config or BoundaryEvaluationConfig()
+    if not observations:
+        raise ValueError("two-branch evaluation requires observations")
+    for item in observations:
+        _validate_two_branch_observation(item)
+
+    probabilities = np.asarray(
+        [forecast.raw_state_probabilities for item in observations for forecast in item.forecasts],
+        dtype=np.float64,
+    )
+    actual_returns = np.asarray(
+        [value for item in observations for value in item.actual_returns],
+        dtype=np.float64,
+    )
+    thresholds = np.asarray(
+        [value for item in observations for value in item.neutral_thresholds],
+        dtype=np.float64,
+    )
+    actual_classes = np.asarray(
+        [_return_class(value, threshold) for value, threshold in zip(actual_returns, thresholds, strict=True)]
+    )
+    predicted_classes = np.argmax(probabilities, axis=1)
+    one_hot = np.eye(3, dtype=np.float64)[actual_classes]
+    selected_probability = probabilities[np.arange(len(probabilities)), actual_classes]
+    log_loss = -float(np.mean(np.log(np.clip(selected_probability, 1e-12, 1.0))))
+    brier = float(np.mean(np.sum(np.square(probabilities - one_hot), axis=1)))
+    confidence = probabilities.max(axis=1)
+    correct = predicted_classes == actual_classes
+    ece = _expected_calibration_error(confidence, correct, settings.calibration_bins)
+
+    flattened = [
+        (forecast, actual, threshold)
+        for item in observations
+        for forecast, actual, threshold in zip(
+            item.forecasts, item.actual_returns, item.neutral_thresholds, strict=True
+        )
+    ]
+    crps = float(
+        np.mean(
+            [
+                _normal_crps(
+                    forecast.expected_return,
+                    sqrt(max(forecast.total_return_variance, 1e-16)),
+                    actual,
+                )
+                for forecast, actual, _ in flattened
+            ]
+        )
+    )
+    interval_z = _normal_quantile((1.0 + settings.coverage_probability) * 0.5)
+    covered = [
+        abs(actual - forecast.expected_return)
+        <= interval_z * sqrt(max(forecast.total_return_variance, 0.0))
+        for forecast, actual, _ in flattened
+    ]
+    gross_returns = np.asarray([item.gross_strategy_return for item in observations])
+    turnover = np.asarray([item.turnover for item in observations])
+    net_returns = gross_returns - turnover * settings.transaction_cost_bps / 10_000.0
+    gross_equity = np.cumprod(1.0 + gross_returns)
+    net_equity = np.cumprod(1.0 + net_returns)
+    opened = np.asarray([item.decision.open_position for item in observations])
+    probability_residual = one_hot[:, 2] - probabilities[:, 2]
+
+    return BoundaryEvaluationMetrics(
+        observations=len(observations),
+        log_loss=log_loss,
+        brier_score=brier,
+        ece=ece,
+        crps=crps,
+        interval_coverage=float(np.mean(covered)),
+        balanced_accuracy=_balanced_accuracy(actual_classes, predicted_classes),
+        macro_f1=_macro_f1(actual_classes, predicted_classes),
+        probability_residual_autocorrelation=_lag_one_autocorrelation(probability_residual),
+        gross_total_return=float(gross_equity[-1] - 1.0),
+        net_total_return=float(net_equity[-1] - 1.0),
+        maximum_drawdown=_maximum_drawdown(net_equity),
+        average_turnover=float(np.mean(turnover)),
+        open_rate=float(np.mean(opened)),
+        profit_concentration=_profit_concentration(net_returns[opened]),
+    )
+
+
 def _validate_observation(item: BoundaryForecastObservation) -> None:
     signal = np.datetime64(item.signal_time, "ns")
     available = np.datetime64(item.available_at, "ns")
@@ -154,6 +255,24 @@ def _validate_observation(item: BoundaryForecastObservation) -> None:
     probabilities = np.asarray(item.forecast.raw_state_probabilities)
     if np.any(probabilities < 0.0) or not np.isclose(probabilities.sum(), 1.0, atol=1e-8):
         raise ValueError("raw state probabilities must form a distribution")
+
+
+def _validate_two_branch_observation(item: TwoBranchForecastObservation) -> None:
+    signal = np.datetime64(item.signal_time, "ns")
+    available = np.datetime64(item.available_at, "ns")
+    target = np.datetime64(item.target_time, "ns")
+    cutoff = np.datetime64(item.training_cutoff, "ns")
+    if cutoff > signal or available < signal or available >= target or target <= signal:
+        raise ValueError("two-branch forecast timing is not causal")
+    if len(item.forecasts) != 2 or len(item.actual_returns) != 2:
+        raise ValueError("two-branch observation requires two forecasts and returns")
+    values = (*item.actual_returns, *item.neutral_thresholds, item.gross_strategy_return, item.turnover)
+    if any(not np.isfinite(value) for value in values) or item.turnover < 0.0:
+        raise ValueError("two-branch evaluation values must be finite")
+    for forecast in item.forecasts:
+        probabilities = np.asarray(forecast.raw_state_probabilities)
+        if np.any(probabilities < 0.0) or not np.isclose(probabilities.sum(), 1.0, atol=1e-8):
+            raise ValueError("branch state probabilities must form a distribution")
 
 
 def _return_class(value: float, threshold: float) -> int:
