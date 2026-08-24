@@ -36,6 +36,13 @@ from .regime_training import (
     SectorRegimeTrainingResult,
     state_reconstruction_loss,
 )
+from .regime_policy import (
+    SectorPolicyObservation,
+    SectorRegimePolicyConfig,
+    StockSelectionSnapshot,
+    apply_sector_regime_policy,
+    evaluate_sector_regime_policy,
+)
 from .topology import RiverTopologyBuilder, TopologyConfig
 from .types import (
     DailyGraphState,
@@ -102,6 +109,11 @@ __all__ = [
     "SectorRegimeTrainerConfig",
     "SectorRegimeTrainingResult",
     "state_reconstruction_loss",
+    "SectorPolicyObservation",
+    "SectorRegimePolicyConfig",
+    "StockSelectionSnapshot",
+    "apply_sector_regime_policy",
+    "evaluate_sector_regime_policy",
     "StockFlowAttribution",
     "StockPathMetrics",
     "TopologyConfig",
