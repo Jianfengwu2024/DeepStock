@@ -46,6 +46,59 @@ class NormalizedBoundaryPanel:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundaryMinuteMoments:
+    timestamps: NDArray[np.datetime64]
+    water: NDArray[np.float64]
+    momentum: NDArray[np.float64]
+    velocity: NDArray[np.float64]
+    mean_standardized_velocity: NDArray[np.float64]
+    coherence: NDArray[np.float64]
+    turbulence: NDArray[np.float64]
+    breadth: NDArray[np.float64]
+    concentration: NDArray[np.float64]
+    effective_constituents: NDArray[np.float64]
+    decoupling: NDArray[np.float64]
+    thickness: NDArray[np.float64]
+    thickness_slope: NDArray[np.float64]
+    viscosity: NDArray[np.float64]
+    active_weight: NDArray[np.float64]
+    active_fraction: NDArray[np.float64]
+    valid: NDArray[np.bool_]
+
+    def __post_init__(self) -> None:
+        shape = (len(self.timestamps),)
+        arrays = (
+            self.water,
+            self.momentum,
+            self.velocity,
+            self.mean_standardized_velocity,
+            self.coherence,
+            self.turbulence,
+            self.breadth,
+            self.concentration,
+            self.effective_constituents,
+            self.decoupling,
+            self.thickness,
+            self.thickness_slope,
+            self.viscosity,
+            self.active_weight,
+            self.active_fraction,
+            self.valid,
+        )
+        if any(item.shape != shape for item in arrays):
+            raise ValueError("boundary moment vectors must align with timestamps")
+        economic = arrays[:-3]
+        if any(np.any(self.valid & ~np.isfinite(item)) for item in economic):
+            raise ValueError("valid boundary moments must be finite")
+        if np.any(self.valid & ((self.coherence < 0.0) | (self.coherence > 1.0))):
+            raise ValueError("coherence must lie in [0, 1]")
+        if np.any(self.valid & ((self.concentration <= 0.0) | (self.concentration > 1.0))):
+            raise ValueError("concentration must lie in (0, 1]")
+        if np.any(self.valid & ((self.viscosity < 0.0) | (self.viscosity > 2.0))):
+            raise ValueError("viscosity must lie in [0, 2]")
+
+
+@dataclass(frozen=True, slots=True)
 class MonthlyIndexWeights:
     month: np.datetime64
     weight_date: np.datetime64
