@@ -207,6 +207,14 @@ def config(request: Request) -> dict[str, Any]:
         "boundary_minimum_signal_to_noise": 0.10,
         "boundary_minimum_survival_probability": 0.35,
     })
+    direct_path_defaults = {
+        **defaults,
+        "strategy": "path-efficiency-direct",
+        "training_scope": "sector-pooled",
+        "device": "cpu",
+        "topology_lookback_sessions": 60,
+        "transaction_cost_bps": 10.0,
+    }
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
@@ -221,6 +229,7 @@ def config(request: Request) -> dict[str, Any]:
             "fk-stock": fk_defaults,
             "sector-flow-bayes": sector_flow_defaults,
             "boundary-flow-fk": boundary_flow_defaults,
+            "path-efficiency-direct": direct_path_defaults,
         },
         "datasets": [item.as_json() for item in datasets],
         "repair_variants": [
@@ -570,6 +579,9 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "boundary-policy-ablation.json",
             "boundary-ablation-report.md",
             "boundary-residual-analysis.json",
+            "path-efficiency-predictions.json",
+            "path-efficiency-evaluation.json",
+            "path-efficiency-report.md",
             "ranking.csv",
             "predictions.csv",
         )

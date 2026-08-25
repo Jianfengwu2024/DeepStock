@@ -6,7 +6,7 @@
   <title>DeepStock Lab</title>
   <link rel="stylesheet" href="/static/styles.css?v=0.24.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.24.5" defer></script>
+  <script src="/static/app.js?v=0.24.6" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -35,6 +35,7 @@
             <label><input type="radio" name="strategy" value="fk-stock"><span>FKStock</span></label>
             <label><input type="radio" name="strategy" value="sector-flow-bayes"><span>SectorFlow</span></label>
             <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>两支流 FK</span></label>
+            <label><input type="radio" name="strategy" value="path-efficiency-direct"><span>路径效率</span></label>
           </div>
           <label>训练范围
             <select name="training_scope" id="training-scope">
@@ -76,7 +77,7 @@
           <label class="stock-only hidden">守恒辅助损失权重<input name="conservation_weight" type="number" min="0" max="10" step="0.05"></label>
         </details>
 
-        <details class="form-section" open>
+        <details class="form-section non-direct-path-only" open>
           <summary>滚动样本外验证</summary>
           <div class="two-columns">
             <label>最少训练日<input name="minimum_train_sessions" type="number"></label>
@@ -146,6 +147,20 @@
             <label>Feynman-Kac 路径<input name="boundary_fk_paths" type="number" min="1000" max="100000" step="1000"></label>
             <label>交易成本（BP）<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
+          </div>
+        </details>
+
+        <details class="form-section direct-path-only hidden" open>
+          <summary>路径效率基准</summary>
+          <div class="fixed-spec-grid">
+            <div class="fixed-spec"><span>支流</span><strong>60日同步聚类，每月固定两组</strong></div>
+            <div class="fixed-spec"><span>看多</span><strong>路径效率正值买入 50%</strong></div>
+            <div class="fixed-spec"><span>看空</span><strong>路径效率负值清仓</strong></div>
+            <div class="fixed-spec"><span>零值</span><strong>零值不动，保持原仓位</strong></div>
+          </div>
+          <div class="two-columns">
+            <label>支流历史（日）<input name="topology_lookback_sessions" type="number" value="60" readonly></label>
+            <label>交易成本（BP）<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
           </div>
         </details>
 
@@ -403,13 +418,13 @@
 
             <section class="boundary-flow-results hidden" id="boundary-flow-results">
               <div class="sector-flow-head">
-                <div><h3>两支流 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
+                <div><h3 id="boundary-result-title">两支流 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
                 <span class="scope-badge">月度样本外</span>
               </div>
-              <div class="table-scroll"><table><thead><tr><th>模型</th><th>状态</th><th>漂移输入</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>平均仓位</th><th>开仓率</th><th>换手</th></tr></thead><tbody id="boundary-stage-table"></tbody></table></div>
+              <div class="table-scroll"><table><thead><tr id="boundary-table-head"><th>模型</th><th>状态</th><th>漂移输入</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>平均仓位</th><th>开仓率</th><th>换手</th></tr></thead><tbody id="boundary-stage-table"></tbody></table></div>
               <div class="boundary-result-grid">
-                <section><h3>两支流方向概率</h3><div class="boundary-probabilities" id="boundary-probabilities"></div></section>
-                <section><h3>漂移与有效势</h3><div class="boundary-dynamics" id="boundary-dynamics"></div></section>
+                <section><h3 id="boundary-direction-title">两支流方向概率</h3><div class="boundary-probabilities" id="boundary-probabilities"></div></section>
+                <section><h3 id="boundary-dynamics-title">漂移与有效势</h3><div class="boundary-dynamics" id="boundary-dynamics"></div></section>
               </div>
               <div class="boundary-gate" id="boundary-gate-reason"></div>
               <div class="download-row" id="boundary-flow-downloads"></div>

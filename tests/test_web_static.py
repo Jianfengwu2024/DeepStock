@@ -29,7 +29,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.24.5', html)
+        self.assertIn('/static/app.js?v=0.24.6', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         for field in (
@@ -88,6 +88,28 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         ):
             self.assertIn(field, script)
         self.assertNotIn("旧衰减漂移", script)
+
+    def test_direct_path_workspace_reads_direct_sign_artifacts(self) -> None:
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('value="path-efficiency-direct"', html)
+        self.assertIn("路径效率基准", html)
+        self.assertIn("正值买入 50%", html)
+        self.assertIn("负值清仓", html)
+        self.assertIn("零值不动", html)
+        self.assertIn('"path-efficiency-direct"', script)
+        self.assertIn("PathEfficiency", script)
+        self.assertIn("path-efficiency-evaluation.json", script)
+        self.assertIn("path-efficiency-predictions.json", script)
+        self.assertIn("path_efficiency", script)
+        self.assertIn("signal_rank_ic", script)
+        self.assertIn("benchmark.net_total_return", script)
+        self.assertRegex(
+            script,
+            r'"path-efficiency-direct": \[\s*'
+            r'"topology_lookback_sessions", "transaction_cost_bps", "device",\s*\]',
+        )
 
     def test_river_workspace_has_four_views_and_stock_inspector(self) -> None:
         html = (ROOT / "river.html").read_text(encoding="utf-8")

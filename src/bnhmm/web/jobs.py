@@ -44,6 +44,7 @@ class WalkForwardJobRequest(BaseModel):
         "fk-stock",
         "sector-flow-bayes",
         "boundary-flow-fk",
+        "path-efficiency-direct",
     ] = "bnhmm"
     repair_variant: str | None = None
     name: str = "experiment"
@@ -219,7 +220,12 @@ class WalkForwardJobRequest(BaseModel):
         if self.end <= self.start:
             raise ValueError("end must be later than start")
         if (
-            self.strategy not in {"sector-flow-bayes", "boundary-flow-fk"}
+            self.strategy
+            not in {
+                "sector-flow-bayes",
+                "boundary-flow-fk",
+                "path-efficiency-direct",
+            }
             and self.minimum_train_sessions <= self.tuning_sessions
         ):
             raise ValueError("minimum_train_sessions must exceed tuning_sessions")
@@ -271,6 +277,7 @@ class WalkForwardJobRequest(BaseModel):
                 "fk-stock",
                 "sector-flow-bayes",
                 "boundary-flow-fk",
+                "path-efficiency-direct",
             }
             if self.strategy in sector_only and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
@@ -393,6 +400,8 @@ def gpu_memory_for_pid(process_id: int) -> int:
 
 
 def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]:
+    if request.strategy == "path-efficiency-direct":
+        return _build_direct_path_command(request, output_dir)
     if request.strategy == "boundary-flow-fk":
         return _build_boundary_flow_command(request, output_dir)
     if request.strategy == "sector-flow-bayes":
@@ -533,6 +542,33 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
     if request.deterministic_training:
         command.append("--deterministic-training")
     return command
+
+
+def _build_direct_path_command(
+    request: WalkForwardJobRequest, output_dir: Path
+) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "bnhmm.cli",
+        "path-efficiency-walk-forward",
+        "--duckdb-path",
+        request.database_path,
+        "--symbols",
+        ",".join(request.symbols),
+        "--dataset-id",
+        request.dataset_id or "",
+        "--start",
+        request.start.isoformat(),
+        "--end",
+        request.end.isoformat(),
+        "--output-dir",
+        str(output_dir),
+        "--topology-lookback-sessions",
+        str(request.topology_lookback_sessions),
+        "--transaction-cost-bps",
+        str(request.transaction_cost_bps),
+    ]
 
 
 def _build_boundary_flow_command(

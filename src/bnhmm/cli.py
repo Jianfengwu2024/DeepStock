@@ -174,6 +174,13 @@ def _boundary_flow_walk_forward(args: argparse.Namespace) -> int:
     return 0
 
 
+def _direct_path_walk_forward(args: argparse.Namespace) -> int:
+    from .boundary_fk.direct_experiment import run_direct_path_experiment
+
+    run_direct_path_experiment(args)
+    return 0
+
+
 def _train(args: argparse.Namespace) -> int:
     import torch
 
@@ -1419,6 +1426,19 @@ def build_parser() -> argparse.ArgumentParser:
     boundary_flow.add_argument("--seed", type=int, default=7)
     boundary_flow.add_argument("--max-folds", type=int)
     boundary_flow.set_defaults(handler=_boundary_flow_walk_forward)
+
+    direct_path = subparsers.add_parser("path-efficiency-walk-forward")
+    direct_path.add_argument("--duckdb-path", required=True)
+    direct_path.add_argument("--symbols", required=True)
+    direct_path.add_argument("--dataset-id", required=True)
+    direct_path.add_argument("--start", required=True)
+    direct_path.add_argument("--end", required=True)
+    direct_path.add_argument("--output-dir", required=True)
+    direct_path.add_argument(
+        "--topology-lookback-sessions", type=int, choices=(60,), default=60
+    )
+    direct_path.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    direct_path.set_defaults(handler=_direct_path_walk_forward)
 
     train = subparsers.add_parser("train")
     train.add_argument("--duckdb-path", required=True)
