@@ -61,6 +61,7 @@ def write_convection_report(
     diagnostics: dict[str, Any],
 ) -> None:
     lines = [
+        f"本次使用 {int(diagnostics.get('convection_lookback_sessions', 3))} 日反向流量集中度。",
         "# PathEfficiencyFK 60 日对流门控报告",
         "",
         "方向仍然只由路径效率和 FK 漂移决定。对流使用股票 × 分钟二维平面上的反向流量集中度，只能减仓或清仓，不能反向开仓。",

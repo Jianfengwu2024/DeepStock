@@ -28,7 +28,7 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
 
     class FakePipeline:
         def __init__(self, config):
-            pass
+            assert config.convection_lookback_sessions == 3
 
         def run(self, data, output):
             assert data is loaded
@@ -68,6 +68,9 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
     module.run_boundary_flow_experiment(args)
 
     assert (tmp_path / "out" / "run-summary.json").is_file()
+    assert '"convection_lookback_sessions": 3' in (
+        tmp_path / "out" / "run-summary.json"
+    ).read_text(encoding="utf-8")
 
 
 def test_requested_evaluation_range_limits_sample_out_months(tmp_path) -> None:

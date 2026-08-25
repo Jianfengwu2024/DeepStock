@@ -97,6 +97,9 @@ class WebJobTests(unittest.TestCase):
             WalkForwardJobRequest(
                 auxiliary_gate_floor=0.8, auxiliary_gate_initial=0.7
             )
+        self.assertEqual(WalkForwardJobRequest().convection_lookback_sessions, 3)
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(convection_lookback_sessions=4)
 
     def test_command_contains_model_and_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(
@@ -146,6 +149,15 @@ class WebJobTests(unittest.TestCase):
         self.assertEqual(request.strong_threshold_sigma, 0.75)
         self.assertIn("--strong-threshold-sigma", command)
         self.assertIn("--return-standardization-lookback", command)
+
+        boundary = WalkForwardJobRequest(
+            strategy="boundary-flow-fk",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+        )
+        boundary_command = build_command(boundary, Path("/tmp/boundary-result"))
+        window_index = boundary_command.index("--convection-lookback-sessions") + 1
+        self.assertEqual(boundary_command[window_index], "3")
 
         sector = WalkForwardJobRequest(
             training_scope="sector-pooled", dataset_id="semiconductor"

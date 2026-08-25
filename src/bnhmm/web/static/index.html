@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.26.3">
+  <link rel="stylesheet" href="/static/styles.css?v=0.26.4">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.26.3" defer></script>
+  <script src="/static/app.js?v=0.26.4" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -145,6 +145,14 @@
           </div>
           <div class="two-columns">
             <input type="hidden" name="topology_lookback_sessions" value="60">
+            <label>反向流量窗口
+              <select name="convection_lookback_sessions">
+                <option value="1">1 日</option>
+                <option value="2">2 日</option>
+                <option value="3" selected>3 日</option>
+                <option value="5">5 日</option>
+              </select>
+            </label>
             <label>评估平区间（波动率倍数）<input name="regime_neutral_sigma" type="number" min="0.01" max="5" step="0.01"></label>
             <label>漂移半衰期（日）<input name="boundary_drift_half_life_sessions" type="number" min="5" max="504" step="1"></label>
             <label>方向最低后验概率<input name="boundary_minimum_direction_probability" type="number" min="0.5" max="1" step="0.01"></label>
@@ -458,7 +466,7 @@
 
               <div class="boundary-result-panel hidden" data-boundary-panel="predictions">
                 <div class="boundary-panel-intro"><strong>逐日样本外决策</strong><span>每一行都只使用当时已经成熟的数据，显示预测方向、目标仓位和下一日实际收益。</span></div>
-            <div class="table-scroll"><table><thead><tr><th>信号日</th><th>支流 1</th><th>支流 2</th><th>对流强度 / 档位</th><th>目标仓位</th><th>持股数</th><th>下一日策略收益</th></tr></thead><tbody id="boundary-prediction-table"></tbody></table></div>
+            <div class="table-scroll"><table><thead><tr><th>信号日</th><th>支流 1</th><th>支流 2</th><th>反向流量集中度 / 档位</th><th>目标仓位</th><th>持股数</th><th>下一日策略收益</th></tr></thead><tbody id="boundary-prediction-table"></tbody></table></div>
               </div>
 
               <div class="boundary-result-panel hidden" data-boundary-panel="posterior">

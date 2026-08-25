@@ -20,6 +20,7 @@ def test_convection_report_explains_gate_in_plain_chinese(tmp_path) -> None:
         ],
         {
             "gate_triggers": 12,
+            "convection_lookback_sessions": 3,
             "path_efficiency_rank_correlation": -0.4,
             "bands": {
                 "low": {"count": 3, "mean_next_return": 0.01},
@@ -33,6 +34,7 @@ def test_convection_report_explains_gate_in_plain_chinese(tmp_path) -> None:
     report = path.read_text(encoding="utf-8")
     assert "反向流量集中度" in report
     assert "股票 × 分钟" in report
+    assert "3 日" in report
     assert "反向流量占比" not in report
     assert "只能减仓或清仓" in report
     assert "PathEfficiencyFK-60D-ConvectionGate" in report

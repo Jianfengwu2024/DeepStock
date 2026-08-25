@@ -98,13 +98,16 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.26.3', html)
-        self.assertIn('/static/styles.css?v=0.26.3', html)
+        self.assertIn('/static/app.js?v=0.26.4', html)
+        self.assertIn('/static/styles.css?v=0.26.4', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
         self.assertIn('id="boundary-data-status"', html)
         self.assertIn('type="hidden" name="topology_lookback_sessions" value="60"', html)
+        self.assertIn('name="convection_lookback_sessions"', html)
+        for value in (1, 2, 3, 5):
+            self.assertIn(f'<option value="{value}"', html)
         self.assertNotIn('<select name="topology_lookback_sessions">', html)
         self.assertIn('api("/api/boundary-data/build"', script)
         for field in (
@@ -187,6 +190,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(field, script)
         self.assertIn("反向流量集中度", script)
         self.assertIn("股票 × 分钟二维集中度", html)
+        self.assertIn("反向流量集中度 / 档位", html)
+        self.assertIn("convection_lookback_sessions", script)
         self.assertNotIn("对流强度", script)
         for field in (
             "branches",

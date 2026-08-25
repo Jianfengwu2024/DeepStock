@@ -224,6 +224,7 @@ def config(request: Request) -> dict[str, Any]:
         "minimum_train_sessions": 120,
         "regime_neutral_sigma": 0.35,
         "boundary_fk_paths": 10_000,
+        "convection_lookback_sessions": 3,
         "boundary_drift_half_life_sessions": 60.0,
         "boundary_minimum_direction_probability": 0.60,
         "boundary_minimum_signal_to_noise": 0.10,

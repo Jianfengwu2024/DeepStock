@@ -41,7 +41,7 @@ const numberFields = new Set([
   "regime_maximum_bull_variance", "regime_epochs", "regime_batch_size",
   "regime_learning_rate", "regime_kl_weight", "regime_state_loss_weight",
   "regime_mc_samples",
-  "topology_lookback_sessions", "boundary_fk_paths",
+  "topology_lookback_sessions", "convection_lookback_sessions", "boundary_fk_paths",
   "boundary_drift_half_life_sessions", "boundary_minimum_direction_probability",
   "boundary_minimum_signal_to_noise", "boundary_minimum_survival_probability",
 ]);
@@ -94,6 +94,7 @@ const strategyParameterFields = {
   "boundary-flow-fk": [
     "minimum_train_sessions", "max_folds",
     "regime_neutral_sigma", "boundary_fk_paths", "boundary_drift_half_life_sessions",
+    "convection_lookback_sessions",
     "boundary_minimum_direction_probability", "boundary_minimum_signal_to_noise",
     "boundary_minimum_survival_probability", "transaction_cost_bps", "seed",
   ],
@@ -1200,7 +1201,7 @@ function paintBoundaryFlowResult(job, payload) {
   const baselineMetrics = baselineStage.metrics || {};
   const latest = predictions.at(-1);
   document.querySelector("#boundary-flow-result-status").textContent =
-    `${formatInteger(predictions.length)} 个样本外交易日 · ${job.request.topology_lookback_sessions} 日支流历史`;
+    `${formatInteger(predictions.length)} 个样本外交易日 · ${job.request.convection_lookback_sessions} 日反向流量集中度`;
 
   const profitable = Number(metrics.net_total_return) > 0;
   const directionUseful = Number(metrics.drift_direction_accuracy) >= 0.5;
@@ -1289,6 +1290,7 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
     boundaryMetric("股票数量", `${formatInteger(job.request.symbols?.length)} 只`),
     boundaryMetric("支流历史", `${job.request.topology_lookback_sessions} 日`),
+    boundaryMetric("集中度窗口", `${job.request.convection_lookback_sessions} 日`),
     boundaryMetric("FK 模拟路径", formatInteger(job.request.boundary_fk_paths)),
     boundaryMetric("模型版本", latest.model_version || posterior?.[0]?.model_name || "PathEfficiencyFK"),
     boundaryMetric("训练截止", latest.training_cutoff || "—"),

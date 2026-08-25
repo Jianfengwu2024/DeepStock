@@ -1443,6 +1443,12 @@ def build_parser() -> argparse.ArgumentParser:
     boundary_flow.add_argument("--minimum-train-sessions", type=int, default=120)
     boundary_flow.add_argument("--neutral-sigma", type=float, default=0.35)
     boundary_flow.add_argument("--fk-paths", type=int, default=10_000)
+    boundary_flow.add_argument(
+        "--convection-lookback-sessions",
+        type=int,
+        choices=(1, 2, 3, 5),
+        default=3,
+    )
     boundary_flow.add_argument("--drift-half-life-sessions", type=float, default=60.0)
     boundary_flow.add_argument("--minimum-direction-probability", type=float, default=0.60)
     boundary_flow.add_argument("--minimum-signal-to-noise", type=float, default=0.10)
