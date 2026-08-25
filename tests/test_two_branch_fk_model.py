@@ -11,7 +11,7 @@ from bnhmm.boundary_fk.branch_model import (
     BayesianBranchPosterior,
     DRIFT_FEATURE_NAMES,
 )
-from bnhmm.boundary_fk.convection import CONVECTION_POTENTIAL_FEATURE_NAMES
+from bnhmm.boundary_fk.convection import BACKGROUND_POTENTIAL_FEATURE_NAMES
 from bnhmm.boundary_fk.feynman_kac import (
     BoundaryFeynmanKacConfig,
     BranchFeynmanKacForecaster,
@@ -67,8 +67,7 @@ def _intraday_dataset(
 def _potential_inputs(
     states: TwoBranchDailyStates,
 ) -> tuple[np.ndarray, np.ndarray]:
-    driver = states.feature("signed_path_efficiency")[:, 0]
-    features = np.abs(driver)[:, None]
+    features = np.empty((len(states.sessions), 0), dtype=np.float64)
     valid = np.ones(len(features), dtype=np.bool_)
     return features, valid
 
@@ -92,30 +91,24 @@ def _fit_branch(
     )
 
 
-def test_convection_disruption_potential_has_nonnegative_slopes() -> None:
+def test_background_disruption_potential_has_only_beta0() -> None:
     states, labels = _dataset(rows=140)
     potential_features, potential_valid = _potential_inputs(states)
-    driver = states.feature("signed_path_efficiency")[:, 0]
-    changed_returns = labels.next_return.copy()
-    disruption = potential_features[:, 0] > np.nanmedian(potential_features[:, 0])
-    changed_returns[:, 0] = np.where(disruption, -np.sign(driver), np.sign(driver)) * 0.01
-    changed = replace(labels, next_return=changed_returns)
-
     posterior = BayesianBranchModel(
         BayesianBranchModelConfig(minimum_rows=30)
     ).fit(
         states,
-        changed,
+        labels,
         potential_features=potential_features,
         potential_valid=potential_valid,
         branch=0,
         training_cutoff=labels.target_time[120],
     )
 
-    assert posterior.potential_feature_names == CONVECTION_POTENTIAL_FEATURE_NAMES
-    assert np.all(posterior.potential_mean[1:] >= 0.0)
-    design = posterior.potential_design(np.array([0.6]))
-    assert design.shape == (2,)
+    assert posterior.potential_feature_names == BACKGROUND_POTENTIAL_FEATURE_NAMES == ()
+    assert posterior.potential_mean.shape == (1,)
+    design = posterior.potential_design(np.empty(0))
+    np.testing.assert_array_equal(design, np.ones(1))
 
 
 def test_path_efficiency_is_the_only_drift_input() -> None:
@@ -170,7 +163,7 @@ def test_future_labels_do_not_change_posterior_before_cutoff() -> None:
     assert original.diffusion_variance == repeated.diffusion_variance
 
 
-def test_future_convection_does_not_change_potential_before_cutoff() -> None:
+def test_background_potential_has_no_future_market_feature() -> None:
     states, labels = _dataset(rows=100)
     features, valid = _potential_inputs(states)
     cutoff = labels.target_time[60]
@@ -183,13 +176,10 @@ def test_future_convection_does_not_change_potential_before_cutoff() -> None:
         branch=0,
         training_cutoff=cutoff,
     )
-    changed = features.copy()
-    changed[61:] = 1_000.0
-
     repeated = model.fit(
         states,
         labels,
-        potential_features=changed,
+        potential_features=features.copy(),
         potential_valid=valid,
         branch=0,
         training_cutoff=cutoff,
@@ -244,18 +234,18 @@ def test_effective_potential_is_confidence_not_a_second_drift_shrinkage() -> Non
         drift_mean=np.asarray([0.02, 0.0]),
         drift_covariance=np.eye(2) * 1e-12,
         diffusion_variance=1e-6,
-        potential_feature_names=CONVECTION_POTENTIAL_FEATURE_NAMES,
-        potential_center=np.zeros(1),
-        potential_scale=np.ones(1),
-        potential_mean=np.asarray([-8.0, 0.0]),
-        potential_covariance=np.eye(2) * 1e-12,
+        potential_feature_names=BACKGROUND_POTENTIAL_FEATURE_NAMES,
+        potential_center=np.empty(0),
+        potential_scale=np.empty(0),
+        potential_mean=np.asarray([-8.0]),
+        potential_covariance=np.eye(1) * 1e-12,
         training_cutoff=np.datetime64("2024-01-01"),
         fit_rows=60,
     )
     forecaster = BranchFeynmanKacForecaster(
         BoundaryFeynmanKacConfig(paths=5000, seed=3)
     )
-    potential_features = np.array([0.4])
+    potential_features = np.empty(0)
     low = forecaster.predict(
         base,
         states,
@@ -264,7 +254,7 @@ def test_effective_potential_is_confidence_not_a_second_drift_shrinkage() -> Non
         neutral_threshold=0.002,
     )
     high = forecaster.predict(
-        replace(base, potential_mean=np.asarray([4.0, 0.0])),
+        replace(base, potential_mean=np.asarray([4.0])),
         states,
         row=40,
         potential_features=potential_features,
@@ -277,7 +267,7 @@ def test_effective_potential_is_confidence_not_a_second_drift_shrinkage() -> Non
     assert high.expected_effective_potential > low.expected_effective_potential
 
 
-def test_branch_ablation_disables_convection_potential() -> None:
+def test_branch_ablation_disables_background_potential() -> None:
     states, _ = _dataset()
     posterior = BayesianBranchPosterior(
         branch=0,
@@ -287,15 +277,15 @@ def test_branch_ablation_disables_convection_potential() -> None:
         drift_mean=np.asarray([0.0015, 0.0]),
         drift_covariance=np.eye(2) * 1e-12,
         diffusion_variance=1e-6,
-        potential_feature_names=CONVECTION_POTENTIAL_FEATURE_NAMES,
-        potential_center=np.zeros(1),
-        potential_scale=np.ones(1),
-        potential_mean=np.asarray([4.0, 2.0]),
-        potential_covariance=np.eye(2) * 1e-12,
+        potential_feature_names=BACKGROUND_POTENTIAL_FEATURE_NAMES,
+        potential_center=np.empty(0),
+        potential_scale=np.empty(0),
+        potential_mean=np.asarray([4.0]),
+        potential_covariance=np.eye(1) * 1e-12,
         training_cutoff=np.datetime64("2024-01-01"),
         fit_rows=60,
     )
-    features = np.array([0.8])
+    features = np.empty(0)
     enabled = BranchFeynmanKacForecaster(
         BoundaryFeynmanKacConfig(paths=5000, seed=5, use_effective_potential=True)
     ).predict(

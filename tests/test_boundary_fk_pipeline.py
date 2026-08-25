@@ -54,7 +54,7 @@ def _walk_forward_data(rows: int = 180) -> TwoBranchDataset:
     )
 
 
-def test_pipeline_compares_baseline_with_convection_potential_fk(tmp_path) -> None:
+def test_pipeline_compares_baseline_with_background_potential_fk(tmp_path) -> None:
     base = _walk_forward_data()
     shape = (len(base.states.sessions), 2, 4)
     data = replace(
@@ -72,7 +72,7 @@ def test_pipeline_compares_baseline_with_convection_potential_fk(tmp_path) -> No
 
     assert result.model_names == BOUNDARY_MODEL_NAMES == (
         "PathEfficiencyFK-60D-Baseline",
-        "PathEfficiencyFK-60D-OneDayPotential",
+        "PathEfficiencyFK-60D-BackgroundPotential",
     )
     assert len(result.stages) == 2
     assert result.stages[0].status == "completed"
@@ -91,7 +91,7 @@ def test_pipeline_compares_baseline_with_convection_potential_fk(tmp_path) -> No
         "drift_signal_to_noise",
         "survival_confidence",
     }.issubset(predictions[0]["branches"][0])
-    assert "convection_potential_features" in predictions[0]["branches"][0]
+    assert "convection_potential_features" not in predictions[0]["branches"][0]
     assert "expected_effective_potential" in predictions[0]["branches"][0]
     assert {
         "signal_time",
@@ -114,15 +114,17 @@ def test_pipeline_compares_baseline_with_convection_potential_fk(tmp_path) -> No
         (tmp_path / "boundary-model-posterior.json").read_text(encoding="utf-8")
     )
     assert {item["policy"] for item in posteriors} == {"path_efficiency_fk"}
+    assert all(item["potential_feature_names"] == [] for item in posteriors)
+    assert all(len(item["potential_mean"]) == 1 for item in posteriors)
     assert all(
         item["drift_feature_names"] == ["signed_path_efficiency"]
         for item in posteriors
     )
     assert result.stages[0].drift_feature_names == ("signed_path_efficiency",)
     assert (tmp_path / "path-efficiency-fk-report.md").exists()
-    assert (tmp_path / "path-efficiency-convection-potential-report.md").exists()
+    assert (tmp_path / "path-efficiency-background-potential-report.md").exists()
     diagnostics = json.loads(
-        (tmp_path / "convection-potential-evaluation.json").read_text(encoding="utf-8")
+        (tmp_path / "background-potential-evaluation.json").read_text(encoding="utf-8")
     )
     assert "mean_effective_potential" in diagnostics
     assert "mean_trend_survival_probability" in diagnostics

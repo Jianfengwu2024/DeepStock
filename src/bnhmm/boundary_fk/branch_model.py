@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.special import expit
 
-from .convection import CONVECTION_POTENTIAL_FEATURE_NAMES
+from .convection import BACKGROUND_POTENTIAL_FEATURE_NAMES
 from .types import TwoBranchDailyStates, TwoBranchLabels
 
 
@@ -70,7 +70,7 @@ class BayesianBranchPosterior:
     def potential_design(self, raw_features: np.ndarray) -> np.ndarray:
         raw = np.asarray(raw_features, dtype=np.float64)
         if raw.shape != self.potential_center.shape or np.any(~np.isfinite(raw)):
-            raise ValueError("convection potential features are invalid")
+            raise ValueError("background potential features are invalid")
         return np.concatenate(
             (np.ones(1), (raw - self.potential_center) / self.potential_scale)
         )
@@ -98,14 +98,14 @@ class BayesianBranchModel:
         potential_valid = np.asarray(potential_valid, dtype=np.bool_)
         expected_shape = (
             len(states.sessions),
-            len(CONVECTION_POTENTIAL_FEATURE_NAMES),
+            len(BACKGROUND_POTENTIAL_FEATURE_NAMES),
         )
         if potential_features.shape != expected_shape:
             raise ValueError(
-                f"convection potential features must have shape {expected_shape}"
+                f"background potential features must have shape {expected_shape}"
             )
         if potential_valid.shape != (len(states.sessions),):
-            raise ValueError("convection potential validity must align with sessions")
+            raise ValueError("background potential validity must align with sessions")
         cutoff = np.datetime64(training_cutoff, "ns")
         selected = (
             states.valid[:, branch]
@@ -142,7 +142,7 @@ class BayesianBranchModel:
         calibration_rows = calibration_rows[usable]
         causal_direction = causal_direction[usable]
         if len(calibration_rows) < 5:
-            raise ValueError("insufficient matured convection rows for potential fit")
+            raise ValueError("insufficient matured rows for background potential fit")
         potential_x, potential_center, potential_scale = _standardized_design(
             potential_features[calibration_rows]
         )
@@ -168,7 +168,7 @@ class BayesianBranchModel:
             drift_mean=drift_mean,
             drift_covariance=drift_covariance,
             diffusion_variance=diffusion_variance,
-            potential_feature_names=CONVECTION_POTENTIAL_FEATURE_NAMES,
+            potential_feature_names=BACKGROUND_POTENTIAL_FEATURE_NAMES,
             potential_center=potential_center,
             potential_scale=potential_scale,
             potential_mean=potential_mean,
@@ -264,7 +264,7 @@ class BayesianBranchModel:
             },
         )
         if not result.success:
-            raise ValueError(f"convection potential fit failed: {result.message}")
+            raise ValueError(f"background potential fit failed: {result.message}")
         coefficient = np.asarray(result.x, dtype=np.float64)
         linear = design @ coefficient
         probability = expit(linear)

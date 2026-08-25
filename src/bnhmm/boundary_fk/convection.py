@@ -1,4 +1,4 @@
-"""Causal convection features derived from opposing constituent minute flow."""
+"""Feature-free background potential inputs for strict FK ablation."""
 
 from __future__ import annotations
 
@@ -7,23 +7,19 @@ import numpy as np
 from .types import TwoBranchDataset
 
 
-CONVECTION_POTENTIAL_FEATURE_NAMES = ("reverse_flow_1d",)
+BACKGROUND_POTENTIAL_FEATURE_NAMES: tuple[str, ...] = ()
 
 
-def convection_potential_features(
+def background_potential_features(
     data: TwoBranchDataset,
     branch: int,
-) -> tuple[tuple[str], np.ndarray, np.ndarray]:
-    """Build the current one-day reverse-flow external potential input."""
+) -> tuple[tuple[str, ...], np.ndarray, np.ndarray]:
+    """Build an intercept-only potential input without reading market features."""
     if branch not in (0, 1):
-        raise ValueError("convection branch must be zero or one")
-    try:
-        one_day_index = data.convection_lookbacks.index(1)
-    except ValueError as exc:
-        raise ValueError("one-day convection data is required") from exc
-
-    source = data.convection_strength[:, branch, one_day_index]
-    source_valid = data.convection_valid[:, branch, one_day_index]
-    values = np.where(source_valid, source, np.nan).astype(np.float64)[:, None]
-    valid = source_valid.astype(np.bool_, copy=True)
-    return CONVECTION_POTENTIAL_FEATURE_NAMES, values, valid
+        raise ValueError("background potential branch must be zero or one")
+    rows = len(data.states.sessions)
+    return (
+        BACKGROUND_POTENTIAL_FEATURE_NAMES,
+        np.empty((rows, 0), dtype=np.float64),
+        np.ones(rows, dtype=np.bool_),
+    )

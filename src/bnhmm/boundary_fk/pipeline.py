@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from .branch_model import BayesianBranchModel, BayesianBranchModelConfig
-from .convection import convection_potential_features
+from .convection import background_potential_features
 from .evaluation import (
     BoundaryEvaluationConfig,
     BoundaryEvaluationMetrics,
@@ -17,13 +17,13 @@ from .evaluation import (
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
 from .policy import BoundaryPolicy, BoundaryPolicyConfig, BranchPositionState
-from .reporting import write_baseline_report, write_convection_report, write_json
+from .reporting import write_background_potential_report, write_baseline_report, write_json
 from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
 BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Baseline",
-    "PathEfficiencyFK-60D-OneDayPotential",
+    "PathEfficiencyFK-60D-BackgroundPotential",
 )
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
@@ -122,7 +122,7 @@ class BoundaryFlowPipeline:
         )
         drift_names: tuple[str, ...] = ()
         potential_inputs = tuple(
-            convection_potential_features(data, branch) for branch in range(2)
+            background_potential_features(data, branch) for branch in range(2)
         )
 
         for fold_index, test_start, training_rows, test_rows in folds:
@@ -292,7 +292,7 @@ class BoundaryFlowPipeline:
             ],
             dtype=np.float64,
         )
-        convection_payload = {
+        background_potential_payload = {
             "observations": int(len(potentials)),
             "mean_effective_potential": float(np.mean(potentials)),
             "median_effective_potential": float(np.median(potentials)),
@@ -302,7 +302,10 @@ class BoundaryFlowPipeline:
         write_json(root / "boundary-model-posterior.json", posterior_payloads)
         write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
-        write_json(root / "convection-potential-evaluation.json", convection_payload)
+        write_json(
+            root / "background-potential-evaluation.json",
+            background_potential_payload,
+        )
         write_json(
             root / "boundary-residual-analysis.json",
             [
@@ -327,10 +330,10 @@ class BoundaryFlowPipeline:
             root / "path-efficiency-fk-report.md",
             stage_payload,
         )
-        write_convection_report(
-            root / "path-efficiency-convection-potential-report.md",
+        write_background_potential_report(
+            root / "path-efficiency-background-potential-report.md",
             stage_payload,
-            convection_payload,
+            background_potential_payload,
         )
         return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, stages)
 
@@ -395,8 +398,8 @@ class BoundaryFlowPipeline:
         fold: int,
         row: int,
         potential_inputs: tuple[
-            tuple[tuple[str, str, str], np.ndarray, np.ndarray],
-            tuple[tuple[str, str, str], np.ndarray, np.ndarray],
+            tuple[tuple[str, ...], np.ndarray, np.ndarray],
+            tuple[tuple[str, ...], np.ndarray, np.ndarray],
         ],
         *,
         effective_potential_enabled: bool,
@@ -411,7 +414,6 @@ class BoundaryFlowPipeline:
                 strict=True,
             )
         ):
-            names, values, _ = potential_inputs[branch]
             branches.append(
                 {
                     "branch": branch + 1,
@@ -426,9 +428,6 @@ class BoundaryFlowPipeline:
                     "expected_diffusion_variance": forecast.expected_diffusion_variance,
                     "actual_return": actual,
                     "neutral_threshold": threshold,
-                    "convection_potential_features": dict(
-                        zip(names, (float(item) for item in values[row]), strict=True)
-                    ),
                     "effective_potential_enabled": effective_potential_enabled,
                 }
             )
