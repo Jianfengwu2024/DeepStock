@@ -269,13 +269,24 @@ class TwoBranchDailyStateBuilder:
 
         direction_value = float(np.sum(branch_velocity))
         flattened = np.concatenate(member_velocity)
-        total_flow = float(np.sum(np.abs(flattened)))
         observations = int(len(flattened))
-        if abs(direction_value) <= 1e-12 or total_flow <= 1e-12:
-            return np.nan, False, total_flow, observations
+        absolute_flow = np.abs(flattened)
+        if (
+            observations < 2
+            or abs(direction_value) <= 1e-12
+            or float(np.sum(absolute_flow)) <= 1e-12
+        ):
+            return np.nan, False, 0.0, observations
         direction = 1.0 if direction_value > 0.0 else -1.0
-        opposing = float(np.sum(np.abs(flattened[flattened * direction < 0.0])))
-        return opposing / total_flow, True, total_flow, observations
+        opposing_flow = np.where(flattened * direction < 0.0, absolute_flow, 0.0)
+        opposing_total = float(np.sum(opposing_flow))
+        if opposing_total <= 1e-12:
+            return np.nan, False, 0.0, observations
+
+        shares = opposing_flow / opposing_total
+        hhi = float(np.sum(np.square(shares)))
+        concentration = (observations * hhi - 1.0) / (observations - 1.0)
+        return float(np.clip(concentration, 0.0, 1.0)), True, opposing_total, observations
 
     @staticmethod
     def _memberships(
