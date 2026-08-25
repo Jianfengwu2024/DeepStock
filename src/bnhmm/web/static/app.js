@@ -929,8 +929,9 @@ function paintBoundaryFlowResult(job, stages, predictions) {
   }).join("");
 
   const dynamics = branches.flatMap(branch => [
-    [`支流 ${branch.branch} 漂移`, formatNumber(branch.expected_drift, 6)],
+    [`支流 ${branch.branch} 原始漂移`, formatNumber(branch.expected_drift, 6)],
     [`支流 ${branch.branch} 有效势`, formatNumber(branch.expected_effective_potential, 6)],
+    [`支流 ${branch.branch} 有效漂移`, formatNumber(branch.effective_drift, 6)],
     [`支流 ${branch.branch} 扩散`, formatNumber(branch.expected_diffusion_variance, 6)],
   ]);
   document.querySelector("#boundary-dynamics").innerHTML = dynamics

@@ -64,6 +64,7 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
     )
     assert predictions
     assert len(predictions[0]["branches"]) == 2
+    assert "effective_drift" in predictions[0]["branches"][0]
     assert {
         "signal_time",
         "available_at",

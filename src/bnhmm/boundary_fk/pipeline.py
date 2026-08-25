@@ -302,6 +302,7 @@ class BoundaryFlowPipeline:
                     "direction": direction,
                     "state_probabilities": list(forecast.raw_state_probabilities),
                     "expected_drift": forecast.expected_drift,
+                    "effective_drift": forecast.expected_return,
                     "expected_effective_potential": forecast.expected_effective_potential,
                     "expected_diffusion_variance": forecast.expected_diffusion_variance,
                     "actual_return": actual,

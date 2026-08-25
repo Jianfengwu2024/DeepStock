@@ -44,6 +44,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "branches",
             "state_probabilities",
             "expected_drift",
+            "effective_drift",
             "expected_effective_potential",
             "selected_symbols",
             "held_branches",
