@@ -49,6 +49,30 @@ def test_boundary_cache_round_trips_dataset_without_pickle(tmp_path: Path) -> No
     assert not any(path.suffix in {".pkl", ".pickle"} for path in cache.root.rglob("*"))
 
 
+def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> None:
+    cache = BoundaryDataCache(tmp_path / "cache")
+    key = _key(tmp_path)
+    base = _walk_forward_data(180)
+    shape = (len(base.states.sessions), 2)
+    original = replace(
+        base,
+        convection_strength=np.full(shape, 0.25),
+        convection_valid=np.ones(shape, dtype=np.bool_),
+        convection_total_flow=np.full(shape, 0.08),
+        convection_observations=np.full(shape, 6, dtype=np.int64),
+    )
+
+    cache.save(key, original)
+    restored = cache.load(key)
+
+    np.testing.assert_allclose(restored.convection_strength, original.convection_strength)
+    np.testing.assert_array_equal(restored.convection_valid, original.convection_valid)
+    np.testing.assert_allclose(restored.convection_total_flow, original.convection_total_flow)
+    np.testing.assert_array_equal(
+        restored.convection_observations, original.convection_observations
+    )
+
+
 def test_boundary_cache_rejects_changed_source_and_wrong_window(tmp_path: Path) -> None:
     cache = BoundaryDataCache(tmp_path / "cache")
     key = _key(tmp_path)

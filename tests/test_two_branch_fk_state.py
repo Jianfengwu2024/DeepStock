@@ -99,6 +99,46 @@ def test_path_efficiency_uses_displacement_over_total_variation() -> None:
     assert result.states.feature("signed_path_efficiency")[-1, 0] == pytest.approx(0.2)
 
 
+def test_convection_strength_uses_member_flow_opposing_the_branch_direction() -> None:
+    panel, topologies = _inputs()
+    changed_raw = panel.raw_velocity.copy()
+    changed_raw[-3:, :2] = np.asarray(
+        (
+            (0.03, 0.01),
+            (-0.01, 0.01),
+            (0.01, -0.01),
+        )
+    )
+
+    result = TwoBranchDailyStateBuilder(minimum_valid_minutes=3).build(
+        replace(panel, raw_velocity=changed_raw), topologies
+    )
+
+    assert result.convection_valid[-1, 0]
+    assert result.convection_strength[-1, 0] == pytest.approx(0.25)
+    assert result.convection_total_flow[-1, 0] == pytest.approx(0.08)
+    assert result.convection_observations[-1, 0] == 6
+
+
+def test_convection_is_invalid_when_the_branch_has_no_net_direction() -> None:
+    panel, topologies = _inputs()
+    changed_raw = panel.raw_velocity.copy()
+    changed_raw[-3:, :2] = np.asarray(
+        (
+            (0.01, 0.01),
+            (-0.01, -0.01),
+            (0.0, 0.0),
+        )
+    )
+
+    result = TwoBranchDailyStateBuilder(minimum_valid_minutes=3).build(
+        replace(panel, raw_velocity=changed_raw), topologies
+    )
+
+    assert not result.convection_valid[-1, 0]
+    assert np.isnan(result.convection_strength[-1, 0])
+
+
 def test_labels_and_member_returns_use_only_the_next_completed_session() -> None:
     panel, topologies = _inputs()
     result = TwoBranchDailyStateBuilder(minimum_valid_minutes=3).build(panel, topologies)

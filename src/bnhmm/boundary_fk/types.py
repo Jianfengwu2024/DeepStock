@@ -289,16 +289,64 @@ class TwoBranchDataset:
     member_next_valid: NDArray[np.bool_]
     evaluation_start: np.datetime64 | None = None
     evaluation_end: np.datetime64 | None = None
+    convection_strength: NDArray[np.float64] | None = None
+    convection_valid: NDArray[np.bool_] | None = None
+    convection_total_flow: NDArray[np.float64] | None = None
+    convection_observations: NDArray[np.int64] | None = None
 
     def __post_init__(self) -> None:
         rows = len(self.states.sessions)
         expected = (rows, len(self.symbols))
+        branch_shape = (rows, 2)
+        if self.convection_strength is None:
+            object.__setattr__(
+                self,
+                "convection_strength",
+                np.full(branch_shape, np.nan, dtype=np.float64),
+            )
+        if self.convection_valid is None:
+            object.__setattr__(
+                self,
+                "convection_valid",
+                np.zeros(branch_shape, dtype=np.bool_),
+            )
+        if self.convection_total_flow is None:
+            object.__setattr__(
+                self,
+                "convection_total_flow",
+                np.zeros(branch_shape, dtype=np.float64),
+            )
+        if self.convection_observations is None:
+            object.__setattr__(
+                self,
+                "convection_observations",
+                np.zeros(branch_shape, dtype=np.int64),
+            )
         if self.member_next_returns.shape != expected or self.member_next_valid.shape != expected:
             raise ValueError("member next returns must align with sessions and symbols")
         if not np.array_equal(self.states.sessions, self.labels.signal_sessions):
             raise ValueError("two-branch states and labels must align")
         if np.any(self.member_next_valid & ~np.isfinite(self.member_next_returns)):
             raise ValueError("valid member next returns must be finite")
+        convection_arrays = (
+            self.convection_strength,
+            self.convection_valid,
+            self.convection_total_flow,
+            self.convection_observations,
+        )
+        if any(item is None or item.shape != branch_shape for item in convection_arrays):
+            raise ValueError("convection diagnostics must align with sessions and branches")
+        if np.any(self.convection_valid & ~np.isfinite(self.convection_strength)):
+            raise ValueError("valid convection strength must be finite")
+        if np.any(
+            self.convection_valid
+            & ((self.convection_strength < 0.0) | (self.convection_strength > 1.0))
+        ):
+            raise ValueError("convection strength must lie in [0, 1]")
+        if np.any(self.convection_total_flow < 0.0) or np.any(
+            self.convection_observations < 0
+        ):
+            raise ValueError("convection diagnostics cannot be negative")
         if self.evaluation_start is not None and self.evaluation_end is not None:
             if np.datetime64(self.evaluation_end, "D") < np.datetime64(
                 self.evaluation_start, "D"

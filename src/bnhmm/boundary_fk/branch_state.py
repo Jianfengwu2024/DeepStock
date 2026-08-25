@@ -74,6 +74,10 @@ class TwoBranchDailyStateBuilder:
         branch_returns = np.full((len(sessions), 2), np.nan, dtype=np.float64)
         branch_coherence = np.full_like(branch_returns, np.nan)
         path_efficiency = np.full((len(sessions), 2), np.nan, dtype=np.float64)
+        convection_strength = np.full_like(path_efficiency, np.nan)
+        convection_valid = np.zeros_like(path_efficiency, dtype=np.bool_)
+        convection_total_flow = np.zeros_like(path_efficiency)
+        convection_observations = np.zeros_like(path_efficiency, dtype=np.int64)
         symbol_index = {symbol: index for index, symbol in enumerate(panel.symbols)}
 
         for row, session in enumerate(sessions):
@@ -95,6 +99,12 @@ class TwoBranchDailyStateBuilder:
                 path_efficiency[row, branch] = self._intraday_path_efficiency(
                     panel, minute_rows, columns
                 )
+                (
+                    convection_strength[row, branch],
+                    convection_valid[row, branch],
+                    convection_total_flow[row, branch],
+                    convection_observations[row, branch],
+                ) = self._intraday_convection(panel, minute_rows, columns)
 
         history = self.config.history_sessions
         for row in range(history - 1, len(sessions)):
@@ -172,6 +182,10 @@ class TwoBranchDailyStateBuilder:
             symbols=panel.symbols,
             member_next_returns=member_next_returns,
             member_next_valid=member_next_valid,
+            convection_strength=convection_strength,
+            convection_valid=convection_valid,
+            convection_total_flow=convection_total_flow,
+            convection_observations=convection_observations,
         )
 
     def _member_daily_returns(
@@ -234,6 +248,34 @@ class TwoBranchDailyStateBuilder:
             return 0.0
         displacement = float(np.sum(velocity))
         return float(np.clip(displacement / total_variation, -1.0, 1.0))
+
+    def _intraday_convection(
+        self,
+        panel: NormalizedBoundaryPanel,
+        rows: np.ndarray,
+        columns: np.ndarray,
+    ) -> tuple[float, bool, float, int]:
+        branch_velocity: list[float] = []
+        member_velocity: list[np.ndarray] = []
+        for row in rows:
+            available = panel.raw_velocity_valid[row, columns]
+            if float(np.mean(available)) < self.config.minimum_member_fraction:
+                continue
+            values = panel.raw_velocity[row, columns[available]]
+            branch_velocity.append(float(np.mean(values)))
+            member_velocity.append(values)
+        if len(branch_velocity) < self.config.minimum_valid_minutes:
+            return np.nan, False, 0.0, 0
+
+        direction_value = float(np.sum(branch_velocity))
+        flattened = np.concatenate(member_velocity)
+        total_flow = float(np.sum(np.abs(flattened)))
+        observations = int(len(flattened))
+        if abs(direction_value) <= 1e-12 or total_flow <= 1e-12:
+            return np.nan, False, total_flow, observations
+        direction = 1.0 if direction_value > 0.0 else -1.0
+        opposing = float(np.sum(np.abs(flattened[flattened * direction < 0.0])))
+        return opposing / total_flow, True, total_flow, observations
 
     @staticmethod
     def _memberships(

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 CACHE_FORMAT_VERSION = 1
-CACHE_CONSTRUCTION_VERSION = "path-efficiency-two-branch-v1"
+CACHE_CONSTRUCTION_VERSION = "path-efficiency-two-branch-v2-convection"
 CACHE_LOOKBACKS = (10, 20, 30, 40, 60, 90, 120)
 
 
@@ -119,6 +119,10 @@ class BoundaryDataCache:
                 symbols=np.asarray(data.symbols, dtype=np.str_),
                 member_next_returns=data.member_next_returns,
                 member_next_valid=data.member_next_valid,
+                convection_strength=data.convection_strength,
+                convection_valid=data.convection_valid,
+                convection_total_flow=data.convection_total_flow,
+                convection_observations=data.convection_observations,
                 memberships_json=np.asarray(membership_payload, dtype=np.str_),
                 topology_months=np.asarray(
                     [item.month for item in topologies], dtype="datetime64[M]"
@@ -197,6 +201,10 @@ class BoundaryDataCache:
                 symbols=tuple(str(item) for item in payload["symbols"]),
                 member_next_returns=payload["member_next_returns"].copy(),
                 member_next_valid=payload["member_next_valid"].copy(),
+                convection_strength=payload["convection_strength"].copy(),
+                convection_valid=payload["convection_valid"].copy(),
+                convection_total_flow=payload["convection_total_flow"].copy(),
+                convection_observations=payload["convection_observations"].copy(),
                 evaluation_start=(
                     None if evaluation_start is None else np.datetime64(evaluation_start, "D")
                 ),
