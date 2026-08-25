@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -15,6 +15,34 @@ class ConvectionGateDecision:
     band: str
     exposure_cap: float
     reason: str
+
+
+class ConvectionPersistenceGate:
+    """Require repeated one-day convection before limiting exposure."""
+
+    def __init__(self) -> None:
+        self._streaks = [0, 0]
+
+    def apply(
+        self,
+        decisions: tuple[ConvectionGateDecision, ConvectionGateDecision],
+    ) -> tuple[ConvectionGateDecision, ConvectionGateDecision]:
+        resolved: list[ConvectionGateDecision] = []
+        for branch, decision in enumerate(decisions):
+            if decision.exposure_cap < 0.5:
+                self._streaks[branch] += 1
+            else:
+                self._streaks[branch] = 0
+            streak = self._streaks[branch]
+            cap = 0.0 if streak >= 3 else 0.25 if streak == 2 else 0.5
+            resolved.append(
+                replace(
+                    decision,
+                    exposure_cap=cap,
+                    reason=f"one_day_convection_streak_{streak}",
+                )
+            )
+        return resolved[0], resolved[1]
 
 
 @dataclass(frozen=True, slots=True)

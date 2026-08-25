@@ -1191,7 +1191,7 @@ function boundaryMetric(label, value, note = "") {
 
 function paintBoundaryFlowResult(job, payload) {
   const { stages, predictions: allPredictions, posterior, residual, convection } = payload;
-  const gateModel = "PathEfficiencyFK-60D-ConvectionGate";
+  const gateModel = "PathEfficiencyFK-60D-ConvectionPersistence";
   const baselineModel = "PathEfficiencyFK-60D-Baseline";
   const predictions = allPredictions.filter(item => item.model_version === gateModel);
   const stage = stages.find(item => item.model_name === gateModel) || stages[0] || {};

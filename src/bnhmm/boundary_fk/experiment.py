@@ -47,7 +47,7 @@ def run_boundary_flow_experiment(args: Any) -> None:
         evaluation_end=end.isoformat(),
     )
     convection_lookback_sessions = int(
-        getattr(args, "convection_lookback_sessions", 3)
+        getattr(args, "convection_lookback_sessions", 1)
     )
     result = BoundaryFlowPipeline(
         BoundaryFlowPipelineConfig(

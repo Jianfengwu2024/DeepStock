@@ -98,8 +98,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.26.4', html)
-        self.assertIn('/static/styles.css?v=0.26.4', html)
+        self.assertIn('/static/app.js?v=0.26.5', html)
+        self.assertIn('/static/styles.css?v=0.26.5', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
@@ -180,7 +180,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "feynman-kac-predictions.json",
         ):
             self.assertIn(artifact, script)
-        self.assertIn("PathEfficiencyFK-60D-ConvectionGate", script)
+        self.assertIn("PathEfficiencyFK-60D-ConvectionPersistence", script)
+        self.assertIn('<option value="1" selected>', html)
         for field in (
             "convection_strength",
             "convection_band",

@@ -97,7 +97,7 @@ class WebJobTests(unittest.TestCase):
             WalkForwardJobRequest(
                 auxiliary_gate_floor=0.8, auxiliary_gate_initial=0.7
             )
-        self.assertEqual(WalkForwardJobRequest().convection_lookback_sessions, 3)
+        self.assertEqual(WalkForwardJobRequest().convection_lookback_sessions, 1)
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(convection_lookback_sessions=4)
 
@@ -157,7 +157,7 @@ class WebJobTests(unittest.TestCase):
         )
         boundary_command = build_command(boundary, Path("/tmp/boundary-result"))
         window_index = boundary_command.index("--convection-lookback-sessions") + 1
-        self.assertEqual(boundary_command[window_index], "3")
+        self.assertEqual(boundary_command[window_index], "1")
 
         sector = WalkForwardJobRequest(
             training_scope="sector-pooled", dataset_id="semiconductor"

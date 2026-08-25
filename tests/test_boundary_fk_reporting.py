@@ -14,13 +14,13 @@ def test_convection_report_explains_gate_in_plain_chinese(tmp_path) -> None:
                 "metrics": {"net_total_return": 0.02, "maximum_drawdown": 0.03},
             },
             {
-                "model_name": "PathEfficiencyFK-60D-ConvectionGate",
+                "model_name": "PathEfficiencyFK-60D-ConvectionPersistence",
                 "metrics": {"net_total_return": 0.03, "maximum_drawdown": 0.02},
             },
         ],
         {
             "gate_triggers": 12,
-            "convection_lookback_sessions": 3,
+            "convection_lookback_sessions": 1,
             "path_efficiency_rank_correlation": -0.4,
             "bands": {
                 "low": {"count": 3, "mean_next_return": 0.01},
@@ -34,10 +34,11 @@ def test_convection_report_explains_gate_in_plain_chinese(tmp_path) -> None:
     report = path.read_text(encoding="utf-8")
     assert "反向流量集中度" in report
     assert "股票 × 分钟" in report
-    assert "3 日" in report
+    assert "1 日" in report
+    assert "连续 2 日减半，连续 3 日清仓" in report
     assert "反向流量占比" not in report
     assert "只能减仓或清仓" in report
-    assert "PathEfficiencyFK-60D-ConvectionGate" in report
+    assert "PathEfficiencyFK-60D-ConvectionPersistence" in report
     assert "12" in report
 
 

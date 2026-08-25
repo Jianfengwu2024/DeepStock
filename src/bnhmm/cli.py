@@ -1447,7 +1447,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--convection-lookback-sessions",
         type=int,
         choices=(1, 2, 3, 5),
-        default=3,
+        default=1,
     )
     boundary_flow.add_argument("--drift-half-life-sessions", type=float, default=60.0)
     boundary_flow.add_argument("--minimum-direction-probability", type=float, default=0.60)

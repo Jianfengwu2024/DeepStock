@@ -5,7 +5,11 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from bnhmm.boundary_fk.convection import ConvectionGate
+from bnhmm.boundary_fk.convection import (
+    ConvectionGate,
+    ConvectionGateDecision,
+    ConvectionPersistenceGate,
+)
 from test_boundary_fk_pipeline import _walk_forward_data
 
 
@@ -98,3 +102,33 @@ def test_gate_selects_requested_precomputed_window() -> None:
 
     assert decision.strength == 0.95
     assert decision.band == "extreme"
+
+
+def test_persistence_gate_waits_for_two_days_then_exits_on_three() -> None:
+    gate = ConvectionPersistenceGate()
+    event = ConvectionGateDecision(0.8, "high", 0.25, "above_q75")
+    quiet = ConvectionGateDecision(0.2, "low", 0.5, "below_median")
+
+    first = gate.apply((event, quiet))
+    second = gate.apply((event, quiet))
+    third = gate.apply((event, quiet))
+
+    assert first[0].exposure_cap == 0.5
+    assert second[0].exposure_cap == 0.25
+    assert third[0].exposure_cap == 0.0
+    assert first[1].exposure_cap == second[1].exposure_cap == 0.5
+
+
+def test_persistence_gate_resets_after_convection_disappears() -> None:
+    gate = ConvectionPersistenceGate()
+    event = ConvectionGateDecision(0.8, "high", 0.25, "above_q75")
+    quiet = ConvectionGateDecision(0.2, "low", 0.5, "below_median")
+
+    gate.apply((event, quiet))
+    reduced = gate.apply((event, quiet))
+    reset = gate.apply((quiet, quiet))
+    restarted = gate.apply((event, quiet))
+
+    assert reduced[0].exposure_cap == 0.25
+    assert reset[0].exposure_cap == 0.5
+    assert restarted[0].exposure_cap == 0.5

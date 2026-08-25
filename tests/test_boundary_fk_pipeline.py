@@ -60,13 +60,13 @@ def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_pa
             minimum_train_sessions=60,
             max_folds=1,
             fk_paths=1000,
-            convection_lookback_sessions=3,
+            convection_lookback_sessions=1,
         )
     ).run(data, tmp_path)
 
     assert result.model_names == BOUNDARY_MODEL_NAMES == (
         "PathEfficiencyFK-60D-Baseline",
-        "PathEfficiencyFK-60D-ConvectionGate",
+        "PathEfficiencyFK-60D-ConvectionPersistence",
     )
     assert len(result.stages) == 2
     assert result.stages[0].status == "completed"
@@ -120,10 +120,10 @@ def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_pa
     )
     assert set(diagnostics["bands"]) == {"low", "elevated", "high", "extreme"}
     assert "path_efficiency_rank_correlation" in diagnostics
-    assert diagnostics["convection_lookback_sessions"] == 3
+    assert diagnostics["convection_lookback_sessions"] == 1
     assert not (tmp_path / "boundary-ablation-report.md").exists()
     assert 0.0 <= result.stages[0].metrics.average_exposure <= 1.0
-    assert all(item["convection_lookback_sessions"] == 3 for item in predictions)
+    assert all(item["convection_lookback_sessions"] == 1 for item in predictions)
 
     grouped: dict[str, list[dict[str, object]]] = {
         model: [item for item in predictions if item["model_version"] == model]

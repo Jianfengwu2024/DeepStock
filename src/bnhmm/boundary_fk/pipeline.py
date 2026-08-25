@@ -8,7 +8,11 @@ from pathlib import Path
 import numpy as np
 
 from .branch_model import BayesianBranchModel, BayesianBranchModelConfig
-from .convection import ConvectionGate, ConvectionGateDecision
+from .convection import (
+    ConvectionGate,
+    ConvectionGateDecision,
+    ConvectionPersistenceGate,
+)
 from .evaluation import (
     BoundaryEvaluationConfig,
     BoundaryEvaluationMetrics,
@@ -26,7 +30,7 @@ from .types import CONVECTION_LOOKBACKS
 
 BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Baseline",
-    "PathEfficiencyFK-60D-ConvectionGate",
+    "PathEfficiencyFK-60D-ConvectionPersistence",
 )
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
@@ -45,7 +49,7 @@ class BoundaryFlowPipelineConfig:
     minimum_direction_probability: float = 0.60
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
-    convection_lookback_sessions: int = 3
+    convection_lookback_sessions: int = 1
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -129,6 +133,7 @@ class BoundaryFlowPipeline:
                 minimum_survival_probability=self.config.minimum_survival_probability,
             )
         )
+        convection_persistence = ConvectionPersistenceGate()
         drift_names: tuple[str, ...] = ()
 
         for fold_index, test_start, training_rows, test_rows in folds:
@@ -201,9 +206,12 @@ class BoundaryFlowPipeline:
                     for branch in range(2)
                 )
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
-                convection_decisions = tuple(
+                raw_convection_decisions = tuple(
                     convection_gate.decide(data, row=int(row), branch=branch)
                     for branch in range(2)
+                )
+                convection_decisions = convection_persistence.apply(
+                    (raw_convection_decisions[0], raw_convection_decisions[1])
                 )
                 for branch, convection in enumerate(convection_decisions):
                     if convection.strength is not None:
