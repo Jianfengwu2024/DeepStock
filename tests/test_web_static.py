@@ -167,10 +167,20 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("路径效率 FK", html)
         for artifact in (
             "path-efficiency-fk-report.md",
+            "path-efficiency-convection-gate-report.md",
             "boundary-policy-evaluation.json",
+            "convection-gate-evaluation.json",
             "feynman-kac-predictions.json",
         ):
             self.assertIn(artifact, script)
+        self.assertIn("PathEfficiencyFK-60D-ConvectionGate", script)
+        for field in (
+            "convection_strength",
+            "convection_band",
+            "convection_exposure_cap",
+            "convection_gate_reason",
+        ):
+            self.assertIn(field, script)
         for field in (
             "branches",
             "state_probabilities",

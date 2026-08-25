@@ -686,6 +686,8 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "feynman-kac-predictions.json",
             "boundary-policy-evaluation.json",
             "path-efficiency-fk-report.md",
+            "path-efficiency-convection-gate-report.md",
+            "convection-gate-evaluation.json",
             "boundary-residual-analysis.json",
             "ranking.csv",
             "predictions.csv",

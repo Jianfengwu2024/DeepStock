@@ -92,7 +92,7 @@ const strategyParameterFields = {
     "regime_mc_samples", "device",
   ],
   "boundary-flow-fk": [
-    "minimum_train_sessions", "max_folds", "topology_lookback_sessions",
+    "minimum_train_sessions", "max_folds",
     "regime_neutral_sigma", "boundary_fk_paths", "boundary_drift_half_life_sessions",
     "boundary_minimum_direction_probability", "boundary_minimum_signal_to_noise",
     "boundary_minimum_survival_probability", "transaction_cost_bps", "seed",
@@ -107,7 +107,7 @@ const strategyNamePrefixes = {
   "stock-transformer": "StockTransformer",
   "fk-stock": "FKStock",
   "sector-flow-bayes": "SectorFlow",
-  "boundary-flow-fk": "PathEfficiencyFK",
+  "boundary-flow-fk": "PathEfficiencyFK-60D",
 };
 
 const statusText = {
@@ -1106,9 +1106,12 @@ function renderBoundaryFlowResult(job) {
   const predictionsUrl = job.artifacts?.["feynman-kac-predictions.json"];
   const posteriorUrl = job.artifacts?.["boundary-model-posterior.json"];
   const residualUrl = job.artifacts?.["boundary-residual-analysis.json"];
+  const convectionUrl = job.artifacts?.["convection-gate-evaluation.json"];
   const downloads = {
     "path-efficiency-fk-report.md": "中文报告",
+    "path-efficiency-convection-gate-report.md": "对流门控报告",
     "boundary-policy-evaluation.json": "策略评估",
+    "convection-gate-evaluation.json": "对流条件统计",
     "feynman-kac-predictions.json": "样本外预测",
     "boundary-model-posterior.json": "模型后验",
     "boundary-residual-analysis.json": "残差分析",
@@ -1152,12 +1155,14 @@ function renderBoundaryFlowResult(job) {
     api(predictionsUrl),
     posteriorUrl ? api(posteriorUrl) : Promise.resolve([]),
     residualUrl ? api(residualUrl) : Promise.resolve({}),
-  ]).then(([stages, predictions, posterior, residual]) => {
+    convectionUrl ? api(convectionUrl) : Promise.resolve({}),
+  ]).then(([stages, predictions, posterior, residual, convection]) => {
     const payload = {
       stages: Array.isArray(stages) ? stages : [],
       predictions: Array.isArray(predictions) ? predictions : [],
       posterior: Array.isArray(posterior) ? posterior : [],
       residual: residual || {},
+      convection: convection || {},
     };
     state.boundaryResultCache.set(job.id, payload);
     if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload);
@@ -1184,10 +1189,15 @@ function boundaryMetric(label, value, note = "") {
 }
 
 function paintBoundaryFlowResult(job, payload) {
-  const { stages, predictions, posterior, residual } = payload;
-  document.querySelector("#boundary-result-title").textContent = "路径效率 FK";
-  const stage = stages[0] || {};
+  const { stages, predictions: allPredictions, posterior, residual, convection } = payload;
+  const gateModel = "PathEfficiencyFK-60D-ConvectionGate";
+  const baselineModel = "PathEfficiencyFK-60D-Baseline";
+  const predictions = allPredictions.filter(item => item.model_version === gateModel);
+  const stage = stages.find(item => item.model_name === gateModel) || stages[0] || {};
+  const baselineStage = stages.find(item => item.model_name === baselineModel) || {};
+  document.querySelector("#boundary-result-title").textContent = "60 日路径效率 + 对流门控";
   const metrics = stage.metrics || {};
+  const baselineMetrics = baselineStage.metrics || {};
   const latest = predictions.at(-1);
   document.querySelector("#boundary-flow-result-status").textContent =
     `${formatInteger(predictions.length)} 个样本外交易日 · ${job.request.topology_lookback_sessions} 日支流历史`;
@@ -1204,7 +1214,9 @@ function paintBoundaryFlowResult(job, payload) {
     <p>基于 ${formatInteger(metrics.observations)} 个真实样本外交易日。这里不看训练期成绩，只看未参与拟合的数据。</p>`;
   document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${verdict[1]}`;
   document.querySelector("#boundary-evaluation-metrics").innerHTML = [
+    boundaryMetric("基线成本后收益", formatPercent(baselineMetrics.net_total_return), "60 日纯路径效率 FK"),
     boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return), "扣除换手成本"),
+    boundaryMetric("对流门控触发", formatInteger(convection?.gate_triggers), "只能减仓或清仓"),
     boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown), "历史高点后的最大跌幅"),
     boundaryMetric("方向判断正确率", formatPercent(metrics.drift_direction_accuracy), "上涨或下跌方向"),
     boundaryMetric("平均实际仓位", formatPercent(metrics.average_exposure), "整个测试期平均"),
@@ -1233,6 +1245,8 @@ function paintBoundaryFlowResult(job, payload) {
     [`支流 ${branch.branch} 趋势延续可信度`, formatPercent(branch.survival_confidence)],
     [`支流 ${branch.branch} 看多概率`, formatPercent(branch.bullish_drift_probability)],
     [`支流 ${branch.branch} 趋势强度`, formatNumber(branch.drift_signal_to_noise, 3)],
+    [`支流 ${branch.branch} 对流强度`, formatPercent(branch.convection_strength)],
+    [`支流 ${branch.branch} 仓位上限`, formatPercent(branch.convection_exposure_cap)],
   ]);
   document.querySelector("#boundary-dynamics").innerHTML = dynamics
     .map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`)
@@ -1245,13 +1259,17 @@ function paintBoundaryFlowResult(job, payload) {
     ? `当前持有 ${latest.selected_symbols.length} 只股票 · 目标仓位 ${formatPercent(totalExposure)} · 两支流仓位 ${branchTargetExposures.map(formatPercent).join(" / ")}`
     : `当前空仓 · 连续看平 ${branchFlatSignalCounts.join(" / ")}`;
   const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
-  document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span>`;
+  const convectionTrace = branches.map(branch =>
+    `支流${branch.branch} ${branch.convection_band || "unavailable"} / ${branch.convection_gate_reason || "—"}`
+  ).join(" · ");
+  document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span><span>${escapeHtml(convectionTrace)}</span>`;
 
   document.querySelector("#boundary-prediction-table").innerHTML = predictions.slice(-60).reverse().map(item => {
     const itemBranches = item.branches || [];
     const exposure = (item.branch_target_exposures || []).reduce((sum, value) => sum + Number(value || 0), 0);
     const label = branch => ({ bear: "空", flat: "平", bull: "多" })[branch?.direction] || "—";
-    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${label(itemBranches[0])}</td><td>${label(itemBranches[1])}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.selected_symbols?.length || 0)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
+    const convectionText = itemBranches.map(branch => `${formatPercent(branch.convection_strength)} / ${branch.convection_band || "—"}`).join(" · ");
+    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${label(itemBranches[0])}</td><td>${label(itemBranches[1])}</td><td>${escapeHtml(convectionText)}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.selected_symbols?.length || 0)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
   }).join("");
 
   document.querySelector("#boundary-model-quality").innerHTML = [
@@ -1262,7 +1280,10 @@ function paintBoundaryFlowResult(job, payload) {
   ].join("");
 
   paintBoundaryReturnAnalysis(job, metrics, predictions);
-  paintBoundaryResidualAnalysis(metrics, residual, predictions);
+  const modelResidual = Array.isArray(residual)
+    ? residual.find(item => item.model_name === gateModel) || {}
+    : residual;
+  paintBoundaryResidualAnalysis(metrics, modelResidual, predictions);
   document.querySelector("#boundary-run-summary").innerHTML = [
     boundaryMetric("数据集", job.request.dataset_id || "—"),
     boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
