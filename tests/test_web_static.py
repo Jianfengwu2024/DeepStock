@@ -40,8 +40,11 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertNotIn("comparison.completed_count}/6", script)
         self.assertNotIn("ready}/6", script)
         self.assertIn("boundary_cache_lookbacks?.length", script)
-        self.assertIn('<option value="120">120 日</option>', html)
-        self.assertIn("构造 / 刷新七套数据", html)
+        self.assertIn(
+            'type="hidden" name="topology_lookback_sessions" value="60"',
+            html,
+        )
+        self.assertIn("构造 / 刷新策略数据", html)
         self.assertIn("renderComparison", script)
         self.assertIn("drawComparisonEquity", script)
         self.assertIn("openComparisonChild", script)
@@ -95,13 +98,14 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.26.1', html)
-        self.assertIn('/static/styles.css?v=0.26.1', html)
+        self.assertIn('/static/app.js?v=0.26.2', html)
+        self.assertIn('/static/styles.css?v=0.26.2', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
         self.assertIn('id="boundary-data-status"', html)
-        self.assertIn('<option value="90">90 日</option>', html)
+        self.assertIn('type="hidden" name="topology_lookback_sessions" value="60"', html)
+        self.assertNotIn('<select name="topology_lookback_sessions">', html)
         self.assertIn('api("/api/boundary-data/build"', script)
         for field in (
             "boundary_drift_half_life_sessions",
