@@ -6,7 +6,7 @@
   <title>DeepStock Lab</title>
   <link rel="stylesheet" href="/static/styles.css?v=0.24.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.24.0" defer></script>
+  <script src="/static/app.js?v=0.24.1" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -303,7 +303,7 @@
           <summary id="policy-section-title">仓位策略</summary>
           <div class="two-columns">
             <label class="non-sector-flow-only non-boundary-flow-only">认知不确定性惩罚<input name="uncertainty_aversion" type="number" min="0" step="0.1"></label>
-            <label>交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
+            <label class="non-boundary-flow-only">交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
           </div>
           <div class="device-note non-sector-flow-only">弱多半仓、强多满仓；弱空或强空平仓，策略不做空。</div>
         </details>

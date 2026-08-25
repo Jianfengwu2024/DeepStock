@@ -8,11 +8,28 @@ ROOT = Path(__file__).parents[1] / "src" / "bnhmm" / "web" / "static"
 
 
 class SectorFlowStaticContractTests(unittest.TestCase):
+    def test_strategy_switch_excludes_hidden_configuration_controls(self) -> None:
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function syncStrategyControlAvailability()", script)
+        self.assertIn("function namedFormControls(form, name)", script)
+        self.assertIn("function preferredFormControl(form, name)", script)
+        self.assertIn("for (const field of namedFormControls(form, name))", script)
+        self.assertIn('form.querySelectorAll("[name]")', script)
+        self.assertIn('element.closest(".hidden")', script)
+        self.assertIn("if (element.disabled) continue;", script)
+        self.assertIn(
+            'class="non-boundary-flow-only">交易成本 BP<input '
+            'name="transaction_cost_bps"',
+            html,
+        )
+
     def test_boundary_flow_configuration_and_results_have_stable_hooks(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.24.0', html)
+        self.assertIn('/static/app.js?v=0.24.1', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         for field in (

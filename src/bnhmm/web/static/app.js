@@ -134,11 +134,12 @@ async function api(path, options = {}) {
 function fillForm(defaults) {
   const form = document.querySelector("#experiment-form");
   for (const [name, value] of Object.entries(defaults)) {
-    const field = form.elements[name];
-    if (!field) continue;
-    if (name === "symbols") field.value = value.join(", ");
-    else if (field.type === "checkbox") field.checked = Boolean(value);
-    else field.value = value ?? "";
+    for (const field of namedFormControls(form, name)) {
+      if (name === "symbols") field.value = value.join(", ");
+      else if (field.type === "radio") field.checked = field.value === value;
+      else if (field.type === "checkbox") field.checked = Boolean(value);
+      else field.value = value ?? "";
+    }
   }
   state.activeStrategy = currentStrategy();
   state.strategyFormValues.set(
@@ -177,10 +178,21 @@ function setNextExperimentName(strategy = currentStrategy()) {
   document.querySelector('[name="name"]').value = nextExperimentName(strategy);
 }
 
+function namedFormControls(form, name) {
+  return [...form.elements].filter(field => field.name === name);
+}
+
+function preferredFormControl(form, name) {
+  const controls = namedFormControls(form, name);
+  return controls.find(field => !field.disabled)
+    || controls.find(field => !field.closest(".hidden"))
+    || controls[0];
+}
+
 function readFormFields(names) {
   const form = document.querySelector("#experiment-form");
   return Object.fromEntries(names.map(name => {
-    const field = form.elements[name];
+    const field = preferredFormControl(form, name);
     return [name, field?.type === "checkbox" ? field.checked : field?.value];
   }));
 }
@@ -188,10 +200,10 @@ function readFormFields(names) {
 function writeFormFields(values) {
   const form = document.querySelector("#experiment-form");
   for (const [name, value] of Object.entries(values || {})) {
-    const field = form.elements[name];
-    if (!field) continue;
-    if (field.type === "checkbox") field.checked = Boolean(value);
-    else field.value = value ?? "";
+    for (const field of namedFormControls(form, name)) {
+      if (field.type === "checkbox") field.checked = Boolean(value);
+      else field.value = value ?? "";
+    }
   }
 }
 
@@ -278,6 +290,14 @@ function syncStrategySelection() {
   document.querySelector("#form-error").textContent = noDataset
     ? `${boundaryFlow ? "两支流 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
     : "";
+  syncStrategyControlAvailability();
+}
+
+function syncStrategyControlAvailability() {
+  const form = document.querySelector("#experiment-form");
+  form.querySelectorAll("[name]").forEach(element => {
+    element.disabled = Boolean(element.closest(".hidden"));
+  });
 }
 
 function setupDatasets(datasets) {
@@ -467,7 +487,13 @@ function renderGpuMonitor() {
 
 function formPayload() {
   const form = document.querySelector("#experiment-form");
-  const data = new FormData(form);
+  syncStrategyControlAvailability();
+  const data = new FormData();
+  for (const element of form.querySelectorAll("[name]")) {
+    if (element.disabled) continue;
+    if (["checkbox", "radio"].includes(element.type) && !element.checked) continue;
+    data.append(element.name, element.value);
+  }
   const payload = {};
   for (const [name, value] of data.entries()) {
     if (name === "symbols") {
