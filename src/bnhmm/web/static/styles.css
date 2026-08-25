@@ -93,7 +93,6 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .header-title, .header-actions { display: flex; align-items: center; gap: 11px; }
 .sector-flow-head-actions { display: flex; align-items: center; gap: 8px; }
 .sector-flow-head-actions .secondary-button { min-height: 30px; text-decoration: none; font-size: 10px; }
-.history-edit-button { min-height: 32px; }
 .header-title h1 { margin: 0; font-size: 17px; }
 .header-title p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
 .gpu-monitor { display: flex; align-items: center; gap: 6px; }
@@ -107,14 +106,19 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .workspace-grid { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: calc(100vh - 68px); }
 .run-history { background: #f9fafb; border-right: 1px solid var(--line); padding: 14px 10px; }
 .section-title { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 9px; }
+.section-title-main, .history-panel-actions { display: flex; align-items: center; }
+.section-title-main { min-width: 0; gap: 7px; }
+.history-panel-actions { flex: 0 0 auto; gap: 5px; }
 .section-title h2 { margin: 0; font-size: 12px; }
 .section-title span { color: var(--muted); font-size: 11px; }
-.history-batch-actions { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 7px; margin: 0 0 9px; padding: 7px 5px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.history-panel-actions .icon-button { width: 28px; height: 28px; }
+.history-panel-actions .icon-button svg { width: 13px; height: 13px; }
+.history-panel-actions .danger-icon-button { color: var(--red); }
+.history-panel-actions .danger-icon-button:disabled { color: #a9b0b4; }
+.history-batch-actions { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px; margin: 0 0 9px; padding: 7px 5px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .history-select-all { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--text); font-size: 10px; cursor: pointer; }
 .history-select-all input, .history-job-checkbox { width: 14px; height: 14px; margin: 0; accent-color: var(--green); }
 #history-selected-count { color: var(--muted); font-size: 10px; }
-.history-batch-actions .danger-button { min-height: 27px; padding: 0 7px; font-size: 10px; }
-.history-batch-actions .danger-button svg { width: 13px; height: 13px; }
 .job-list { display: grid; gap: 5px; }
 .job-item { width: 100%; min-height: 62px; padding: 9px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--text); }
 .job-item:hover { background: white; border-color: var(--line); }

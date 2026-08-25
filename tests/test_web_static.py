@@ -8,6 +8,31 @@ ROOT = Path(__file__).parents[1] / "src" / "bnhmm" / "web" / "static"
 
 
 class SectorFlowStaticContractTests(unittest.TestCase):
+    def test_history_management_actions_stay_inside_history_panel(self) -> None:
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        workspace_header = html.split(
+            '<header class="workspace-header">', 1
+        )[1].split("</header>", 1)[0]
+        history_panel = html.split('<nav class="run-history"', 1)[1].split(
+            "</nav>", 1
+        )[0]
+
+        self.assertNotIn('id="edit-history-button"', workspace_header)
+        self.assertIn('id="edit-history-button"', history_panel)
+        self.assertIn('id="batch-delete-button"', history_panel)
+        self.assertLess(
+            history_panel.index('id="edit-history-button"'),
+            history_panel.index('id="history-batch-actions"'),
+        )
+        self.assertLess(
+            history_panel.index('id="batch-delete-button"'),
+            history_panel.index('id="history-batch-actions"'),
+        )
+        self.assertNotIn('id="delete-button"', html)
+        self.assertNotIn("function deleteSelectedJob(", script)
+
     def test_strategy_switch_excludes_hidden_configuration_controls(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
@@ -29,7 +54,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.24.6', html)
+        self.assertIn('/static/app.js?v=0.24.7', html)
+        self.assertIn('/static/styles.css?v=0.24.1', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         for field in (

@@ -622,22 +622,26 @@ function renderJobList() {
 function renderHistoryEditor(activeIds) {
   const editButton = document.querySelector("#edit-history-button");
   editButton.innerHTML = state.historyEditing
-    ? '<i data-lucide="check"></i><span>完成</span>'
-    : '<i data-lucide="pencil"></i><span>编辑</span>';
+    ? '<i data-lucide="check"></i>'
+    : '<i data-lucide="pencil"></i>';
+  const editLabel = state.historyEditing ? "完成编辑" : "编辑历史测试";
+  editButton.title = editLabel;
+  editButton.setAttribute("aria-label", editLabel);
   editButton.disabled = state.historyDeleting;
+  const eligible = state.jobs.filter(job => !activeIds.has(job.id));
+  const selectedEligible = eligible.filter(job => state.historySelected.has(job.id));
+  const deleteButton = document.querySelector("#batch-delete-button");
+  deleteButton.disabled = !state.historyEditing || selectedEligible.length === 0 || state.historyDeleting;
+  deleteButton.title = state.historyDeleting ? "删除中" : "删除选中的测试";
+  deleteButton.setAttribute("aria-label", deleteButton.title);
   const actions = document.querySelector("#history-batch-actions");
   actions.classList.toggle("hidden", !state.historyEditing);
   if (!state.historyEditing) return;
-  const eligible = state.jobs.filter(job => !activeIds.has(job.id));
-  const selectedEligible = eligible.filter(job => state.historySelected.has(job.id));
   const selectAll = document.querySelector("#history-select-all");
   selectAll.checked = eligible.length > 0 && selectedEligible.length === eligible.length;
   selectAll.indeterminate = selectedEligible.length > 0 && selectedEligible.length < eligible.length;
   selectAll.disabled = eligible.length === 0 || state.historyDeleting;
   document.querySelector("#history-selected-count").textContent = `已选 ${selectedEligible.length}`;
-  const deleteButton = document.querySelector("#batch-delete-button");
-  deleteButton.disabled = selectedEligible.length === 0 || state.historyDeleting;
-  deleteButton.querySelector("span").textContent = state.historyDeleting ? "删除中" : "删除";
 }
 
 function renderGlobalStatus() {
@@ -749,7 +753,6 @@ function renderJob(job) {
   renderJobGpuMemory(job);
   const active = ["queued", "running"].includes(job.status);
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
-  document.querySelector("#delete-button").classList.toggle("hidden", active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
     ? (directPath ? "等待路径效率任务" : boundaryFlow ? "等待两支流 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
@@ -1445,34 +1448,12 @@ function setupEvents() {
   document.querySelector("#select-all").addEventListener("click", () => { document.querySelectorAll("#symbol-list input").forEach(item => { item.checked = true; state.dialogSelected.add(item.value); }); updateSelectedCount(); });
   document.querySelector("#clear-symbols").addEventListener("click", () => { state.dialogSelected.clear(); document.querySelectorAll("#symbol-list input").forEach(item => item.checked = false); updateSelectedCount(); });
   document.querySelector("#cancel-button").addEventListener("click", async () => { if (state.selectedId) { await api(`/api/jobs/${state.selectedId}/cancel`, { method: "POST" }); refreshAll(); } });
-  document.querySelector("#delete-button").addEventListener("click", deleteSelectedJob);
   document.querySelector("#open-config").addEventListener("click", () => document.querySelector("#config-panel").classList.add("open"));
   document.querySelector("#close-config").addEventListener("click", () => document.querySelector("#config-panel").classList.remove("open"));
   document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach(item => item.classList.toggle("active", item === tab));
     document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("hidden", panel.dataset.panel !== tab.dataset.tab));
   }));
-}
-
-async function deleteSelectedJob() {
-  if (!state.selectedId) return;
-  const job = state.jobs.find(item => item.id === state.selectedId);
-  const name = job?.request?.name || state.selectedId;
-  if (!window.confirm(`确定删除“${name}”及其全部检查点和报告吗？此操作不可撤销。`)) return;
-  const identifier = state.selectedId;
-  const button = document.querySelector("#delete-button");
-  button.disabled = true;
-  try {
-    await api(`/api/jobs/${encodeURIComponent(identifier)}`, { method: "DELETE" });
-    state.jobs = state.jobs.filter(item => item.id !== identifier);
-    state.boundaryResultCache.delete(identifier);
-    state.selectedId = state.jobs[0]?.id || null;
-    await refreshAll();
-  } catch (exception) {
-    window.alert(`删除失败：${exception.message}`);
-  } finally {
-    button.disabled = false;
-  }
 }
 
 async function deleteSelectedJobs() {
