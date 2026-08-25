@@ -218,6 +218,32 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .boundary-gate { display: grid; gap: 4px; padding: 11px 12px; border-left: 3px solid var(--green); background: var(--green-soft); }
 .boundary-gate strong { font-size: 11px; }
 .boundary-gate span, .boundary-empty { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.boundary-flow-results { display: grid; gap: 14px; }
+.boundary-result-tabs { position: sticky; top: 0; z-index: 3; display: flex; gap: 0; overflow-x: auto; background: white; border: 1px solid var(--line); }
+.boundary-result-tabs button { flex: 1 0 auto; min-width: 112px; height: 44px; padding: 0 14px; border: 0; border-right: 1px solid var(--line); border-bottom: 3px solid transparent; color: var(--muted); background: white; font-size: 12px; font-weight: 700; cursor: pointer; }
+.boundary-result-tabs button:last-child { border-right: 0; }
+.boundary-result-tabs button:hover { color: var(--text); background: var(--panel-muted); }
+.boundary-result-tabs button.active { color: var(--text); border-bottom-color: var(--green); background: var(--green-soft); }
+.boundary-result-panel { display: grid; gap: 14px; min-width: 0; }
+.boundary-panel-intro { display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.boundary-panel-intro strong { font-size: 13px; }
+.boundary-panel-intro span { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.boundary-evaluation-summary { display: grid; gap: 7px; padding: 16px 18px; border-left: 4px solid #69767c; background: var(--panel-muted); }
+.boundary-evaluation-summary.positive { border-left-color: var(--green); background: var(--green-soft); }
+.boundary-evaluation-summary.caution { border-left-color: #ba7a20; background: #fff8e8; }
+.boundary-evaluation-summary.negative { border-left-color: #b64b45; background: #fff2f1; }
+.boundary-evaluation-summary span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.boundary-evaluation-summary strong { font-size: 18px; }
+.boundary-evaluation-summary p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.boundary-key-metrics, .boundary-model-quality, .boundary-run-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.boundary-key-metrics > div, .boundary-model-quality > div, .boundary-run-summary > div { min-width: 0; min-height: 82px; padding: 12px; background: white; }
+.boundary-key-metrics span, .boundary-model-quality span, .boundary-run-summary span { display: block; color: var(--muted); font-size: 10px; }
+.boundary-key-metrics strong, .boundary-model-quality strong, .boundary-run-summary strong { display: block; margin-top: 9px; font-size: 17px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.boundary-key-metrics small, .boundary-model-quality small, .boundary-run-summary small { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; line-height: 1.4; }
+.boundary-canvas-wrap { width: 100%; overflow: hidden; border: 1px solid var(--line); background: white; }
+.boundary-canvas-wrap canvas { display: block; width: 100%; height: auto; aspect-ratio: 15 / 4; }
+.positive-text { color: var(--green); }
+.negative-text { color: #b64b45; }
 .boundary-data-control { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid var(--line); background: var(--panel-muted); }
 .boundary-data-control > div { display: grid; gap: 3px; min-width: 0; }
 .boundary-data-control strong { font-size: 11px; }
@@ -303,6 +329,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 @media (max-width: 820px) {
   .boundary-result-grid, .boundary-dynamics { grid-template-columns: 1fr; }
+  .boundary-key-metrics, .boundary-model-quality, .boundary-run-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .boundary-result-tabs { position: static; }
   .boundary-probabilities { grid-template-columns: repeat(3, minmax(76px, 1fr)); }
   .sector-regime-probabilities, .sector-regime-summary-grid { grid-template-columns: 1fr; }
   .mobile-only { display: inline-flex !important; }

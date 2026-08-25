@@ -9,6 +9,7 @@ const state = {
   resultScopeByJob: new Map(),
   symbolReportCache: new Map(),
   boundaryResultCache: new Map(),
+  boundaryTabByJob: new Map(),
   strategyFormValues: new Map(),
   activeStrategy: "bnhmm",
   historyEditing: false,
@@ -915,6 +916,8 @@ function renderBoundaryFlowResult(job) {
   const status = document.querySelector("#boundary-flow-result-status");
   const evaluationUrl = job.artifacts?.["boundary-policy-evaluation.json"];
   const predictionsUrl = job.artifacts?.["feynman-kac-predictions.json"];
+  const posteriorUrl = job.artifacts?.["boundary-model-posterior.json"];
+  const residualUrl = job.artifacts?.["boundary-residual-analysis.json"];
   const downloads = {
     "path-efficiency-fk-report.md": "中文报告",
     "boundary-policy-evaluation.json": "策略评估",
@@ -936,16 +939,16 @@ function renderBoundaryFlowResult(job) {
     return;
   }
   if (cached?.stages && cached?.predictions) {
-    paintBoundaryFlowResult(job, cached.stages, cached.predictions);
+    paintBoundaryFlowResult(job, cached);
     return;
   }
   if (!evaluationUrl || !predictionsUrl) {
     status.textContent = job.status === "failed"
       ? "运行失败，请查看日志"
       : ["queued", "running"].includes(job.status) ? "路径效率 FK 样本外计算中" : "暂无可读取的结果制品";
-    document.querySelector("#boundary-stage-table").replaceChildren();
     document.querySelector("#boundary-probabilities").replaceChildren();
     document.querySelector("#boundary-dynamics").replaceChildren();
+    document.querySelector("#boundary-prediction-table").replaceChildren();
     document.querySelector("#boundary-gate-reason").textContent = "";
     return;
   }
@@ -959,44 +962,65 @@ function renderBoundaryFlowResult(job) {
   Promise.all([
     api(evaluationUrl),
     api(predictionsUrl),
-  ]).then(([stages, predictions]) => {
+    posteriorUrl ? api(posteriorUrl) : Promise.resolve([]),
+    residualUrl ? api(residualUrl) : Promise.resolve({}),
+  ]).then(([stages, predictions, posterior, residual]) => {
     const payload = {
       stages: Array.isArray(stages) ? stages : [],
       predictions: Array.isArray(predictions) ? predictions : [],
+      posterior: Array.isArray(posterior) ? posterior : [],
+      residual: residual || {},
     };
     state.boundaryResultCache.set(job.id, payload);
-    if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload.stages, payload.predictions);
+    if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload);
   }).catch(exception => {
     state.boundaryResultCache.set(job.id, { error: exception.message });
     if (state.selectedId === job.id) status.textContent = `结果读取失败：${exception.message}`;
   });
 }
 
-function paintBoundaryFlowResult(job, stages, predictions) {
-  const statusLabels = { completed: "完成", failed: "失败" };
-  document.querySelector("#boundary-result-title").textContent = "路径效率 FK";
-  document.querySelector("#boundary-direction-title").textContent = "两支流方向概率";
-  document.querySelector("#boundary-dynamics-title").textContent = "漂移与有效势";
-  document.querySelector("#boundary-table-head").innerHTML = "<th>模型</th><th>状态</th><th>漂移输入</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>平均仓位</th><th>开仓率</th><th>换手</th>";
-  document.querySelector("#boundary-stage-table").innerHTML = stages.map(stage => {
-    const metrics = stage.metrics || {};
-    return `<tr>
-      <td><strong>${escapeHtml(stage.model_name || "—")}</strong></td>
-      <td><span class="status-badge ${stage.status === "completed" ? "completed" : "failed"}">${statusLabels[stage.status] || escapeHtml(stage.status || "未知")}</span></td>
-      <td>纯路径效率</td>
-      <td>${formatInteger(stage.minimum_fit_rows)}</td>
-      <td>${formatNumber(metrics.brier_score, 4)}</td>
-      <td>${formatNumber(metrics.log_loss, 4)}</td>
-      <td>${formatNumber(metrics.ece, 4)}</td>
-      <td>${formatPercent(metrics.average_exposure)}</td>
-      <td>${formatPercent(metrics.open_rate)}</td>
-      <td>${formatPercent(metrics.average_turnover)}</td>
-    </tr>`;
-  }).join("");
+function switchBoundaryResultTab(name, jobId = state.selectedId) {
+  if (jobId) state.boundaryTabByJob.set(jobId, name);
+  document.querySelectorAll("[data-boundary-tab]").forEach(button => {
+    const selected = button.dataset.boundaryTab === name;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+  });
+  document.querySelectorAll("[data-boundary-panel]").forEach(panel => {
+    panel.classList.toggle("hidden", panel.dataset.boundaryPanel !== name);
+  });
+}
 
+function boundaryMetric(label, value, note = "") {
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ""}</div>`;
+}
+
+function paintBoundaryFlowResult(job, payload) {
+  const { stages, predictions, posterior, residual } = payload;
+  document.querySelector("#boundary-result-title").textContent = "路径效率 FK";
+  const stage = stages[0] || {};
+  const metrics = stage.metrics || {};
   const latest = predictions.at(-1);
   document.querySelector("#boundary-flow-result-status").textContent =
-    `${formatInteger(predictions.length)} 个样本外交易日 · 任一支流看空即全部清仓`;
+    `${formatInteger(predictions.length)} 个样本外交易日 · ${job.request.topology_lookback_sessions} 日支流历史`;
+
+  const profitable = Number(metrics.net_total_return) > 0;
+  const directionUseful = Number(metrics.drift_direction_accuracy) >= 0.5;
+  const verdict = profitable && directionUseful
+    ? ["样本外结果为正，方向判断具备可用性", "positive"]
+    : profitable
+      ? ["策略取得正收益，但方向判断仍不稳定", "caution"]
+      : ["当前样本外结果未形成正收益", "negative"];
+  document.querySelector("#boundary-evaluation-summary").innerHTML = `
+    <span>本次结论</span><strong>${verdict[0]}</strong>
+    <p>基于 ${formatInteger(metrics.observations)} 个真实样本外交易日。这里不看训练期成绩，只看未参与拟合的数据。</p>`;
+  document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${verdict[1]}`;
+  document.querySelector("#boundary-evaluation-metrics").innerHTML = [
+    boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return), "扣除换手成本"),
+    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown), "历史高点后的最大跌幅"),
+    boundaryMetric("方向判断正确率", formatPercent(metrics.drift_direction_accuracy), "上涨或下跌方向"),
+    boundaryMetric("平均实际仓位", formatPercent(metrics.average_exposure), "整个测试期平均"),
+  ].join("");
 
   if (!latest) {
     document.querySelector("#boundary-probabilities").innerHTML = '<p class="boundary-empty">没有样本外预测。</p>';
@@ -1016,12 +1040,11 @@ function paintBoundaryFlowResult(job, stages, predictions) {
   }).join("");
 
   const dynamics = branches.flatMap(branch => [
-    [`支流 ${branch.branch} 原始漂移`, formatNumber(branch.expected_drift, 6)],
-    [`支流 ${branch.branch} 有效势`, formatNumber(branch.expected_effective_potential, 6)],
-    [`支流 ${branch.branch} 势可信度`, formatPercent(branch.survival_confidence)],
-    [`支流 ${branch.branch} 看多后验`, formatPercent(branch.bullish_drift_probability)],
-    [`支流 ${branch.branch} 漂移信噪比`, formatNumber(branch.drift_signal_to_noise, 3)],
-    [`支流 ${branch.branch} 扩散`, formatNumber(branch.expected_diffusion_variance, 6)],
+    [`支流 ${branch.branch} 预期涨跌`, formatPercent(branch.expected_drift)],
+    [`支流 ${branch.branch} 趋势阻力（有效势）`, formatNumber(branch.expected_effective_potential, 4)],
+    [`支流 ${branch.branch} 趋势延续可信度`, formatPercent(branch.survival_confidence)],
+    [`支流 ${branch.branch} 看多概率`, formatPercent(branch.bullish_drift_probability)],
+    [`支流 ${branch.branch} 趋势强度`, formatNumber(branch.drift_signal_to_noise, 3)],
   ]);
   document.querySelector("#boundary-dynamics").innerHTML = dynamics
     .map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`)
@@ -1031,10 +1054,107 @@ function paintBoundaryFlowResult(job, stages, predictions) {
   const branchFlatSignalCounts = latest.branch_flat_signal_counts || [0, 0];
   const totalExposure = branchTargetExposures.reduce((total, value) => total + value, 0);
   const holdings = latest.selected_symbols?.length
-    ? `目标仓位 ${formatPercent(totalExposure)} · 支流 ${branchTargetExposures.map(formatPercent).join(" / ")} · 连续看平 ${branchFlatSignalCounts.join(" / ")} · ${latest.selected_symbols.join("、")}`
+    ? `当前持有 ${latest.selected_symbols.length} 只股票 · 目标仓位 ${formatPercent(totalExposure)} · 两支流仓位 ${branchTargetExposures.map(formatPercent).join(" / ")}`
     : `当前空仓 · 连续看平 ${branchFlatSignalCounts.join(" / ")}`;
   const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
   document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span>`;
+
+  document.querySelector("#boundary-prediction-table").innerHTML = predictions.slice(-60).reverse().map(item => {
+    const itemBranches = item.branches || [];
+    const exposure = (item.branch_target_exposures || []).reduce((sum, value) => sum + Number(value || 0), 0);
+    const label = branch => ({ bear: "空", flat: "平", bull: "多" })[branch?.direction] || "—";
+    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${label(itemBranches[0])}</td><td>${label(itemBranches[1])}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.selected_symbols?.length || 0)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
+  }).join("");
+
+  document.querySelector("#boundary-model-quality").innerHTML = [
+    boundaryMetric("概率整体误差", formatNumber(metrics.brier_score, 4), "越小越好"),
+    boundaryMetric("概率校准偏差", formatPercent(metrics.ece), "预测概率与实际频率的差"),
+    boundaryMetric("三状态均衡正确率", formatPercent(metrics.balanced_accuracy), "避免多数状态掩盖结果"),
+    boundaryMetric("训练成熟样本", formatInteger(stage.minimum_fit_rows), "每支流用于后验估计"),
+  ].join("");
+
+  paintBoundaryReturnAnalysis(job, metrics, predictions);
+  paintBoundaryResidualAnalysis(metrics, residual, predictions);
+  document.querySelector("#boundary-run-summary").innerHTML = [
+    boundaryMetric("数据集", job.request.dataset_id || "—"),
+    boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
+    boundaryMetric("股票数量", `${formatInteger(job.request.symbols?.length)} 只`),
+    boundaryMetric("支流历史", `${job.request.topology_lookback_sessions} 日`),
+    boundaryMetric("FK 模拟路径", formatInteger(job.request.boundary_fk_paths)),
+    boundaryMetric("模型版本", latest.model_version || posterior?.[0]?.model_name || "PathEfficiencyFK"),
+    boundaryMetric("训练截止", latest.training_cutoff || "—"),
+    boundaryMetric("运行耗时", `${formatNumber(job.summary?.elapsed_seconds, 2)} 秒`),
+  ].join("");
+  switchBoundaryResultTab(state.boundaryTabByJob.get(job.id) || "evaluation", job.id);
+}
+
+function paintBoundaryReturnAnalysis(job, metrics, predictions) {
+  const costRate = Number(job.request.transaction_cost_bps || 0) / 10000;
+  let equity = 1;
+  let peak = 1;
+  const series = predictions.map(item => {
+    equity *= 1 + Number(item.gross_strategy_return || 0) - costRate * Number(item.turnover || 0);
+    peak = Math.max(peak, equity);
+    return { value: equity, drawdown: equity / peak - 1 };
+  });
+  const wins = predictions.filter(item => Number(item.gross_strategy_return) > 0).length;
+  document.querySelector("#boundary-return-metrics").innerHTML = [
+    boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return)),
+    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
+    boundaryMetric("盈利交易日", formatPercent(predictions.length ? wins / predictions.length : 0)),
+    boundaryMetric("平均换手", formatPercent(metrics.average_turnover)),
+  ].join("");
+  drawBoundaryLine(document.querySelector("#boundary-return-canvas"), series.map(item => item.value), "策略净值", "#176b87", 1);
+}
+
+function paintBoundaryResidualAnalysis(metrics, residual, predictions) {
+  const values = predictions.map(item => {
+    const branches = item.branches || [];
+    const errors = branches.map(branch => Number(branch.actual_return) - Number(branch.expected_drift)).filter(Number.isFinite);
+    return errors.length ? errors.reduce((sum, value) => sum + value, 0) / errors.length : 0;
+  });
+  const mean = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  const mae = values.length ? values.reduce((sum, value) => sum + Math.abs(value), 0) / values.length : 0;
+  document.querySelector("#boundary-residual-metrics").innerHTML = [
+    boundaryMetric("平均预测偏差", formatPercent(mean), "应接近 0"),
+    boundaryMetric("平均绝对误差", formatPercent(mae), "越小越好"),
+    boundaryMetric("误差连续性", formatNumber(residual.probability_residual_autocorrelation ?? metrics.probability_residual_autocorrelation, 3), "接近 0 表示没有连续偏错"),
+    boundaryMetric("样本数量", formatInteger(values.length)),
+  ].join("");
+  drawBoundaryLine(document.querySelector("#boundary-residual-canvas"), values, "实际收益 - 预测收益", "#b64b45", 0);
+}
+
+function drawBoundaryLine(canvas, values, label, color, baseline) {
+  if (!canvas || !values.length) return;
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = { left: 58, right: 22, top: 35, bottom: 35 };
+  const minimum = Math.min(...values, baseline);
+  const maximum = Math.max(...values, baseline);
+  const span = Math.max(maximum - minimum, 1e-9);
+  const x = index => padding.left + index * (width - padding.left - padding.right) / Math.max(values.length - 1, 1);
+  const y = value => padding.top + (maximum - value) * (height - padding.top - padding.bottom) / span;
+  context.clearRect(0, 0, width, height);
+  context.strokeStyle = "#d9dfe1";
+  context.lineWidth = 1;
+  for (let row = 0; row <= 4; row += 1) {
+    const py = padding.top + row * (height - padding.top - padding.bottom) / 4;
+    context.beginPath(); context.moveTo(padding.left, py); context.lineTo(width - padding.right, py); context.stroke();
+  }
+  context.strokeStyle = "#889499";
+  context.beginPath(); context.moveTo(padding.left, y(baseline)); context.lineTo(width - padding.right, y(baseline)); context.stroke();
+  context.strokeStyle = color;
+  context.lineWidth = 3;
+  context.beginPath();
+  values.forEach((value, index) => index ? context.lineTo(x(index), y(value)) : context.moveTo(x(index), y(value)));
+  context.stroke();
+  context.fillStyle = "#34444a";
+  context.font = "20px sans-serif";
+  context.fillText(label, padding.left, 24);
+  context.font = "16px sans-serif";
+  context.fillText(maximum.toFixed(3), 4, padding.top + 5);
+  context.fillText(minimum.toFixed(3), 4, height - padding.bottom + 5);
 }
 
 function renderSectorFlowResult(job) {
@@ -1431,6 +1551,9 @@ function setupEvents() {
   document.querySelector("#training-scope").addEventListener("change", syncDatasetSelection);
   document.querySelector("#dataset-select").addEventListener("change", syncDatasetSelection);
   document.querySelector("#boundary-data-build").addEventListener("click", buildBoundaryData);
+  document.querySelectorAll("[data-boundary-tab]").forEach(button => {
+    button.addEventListener("click", () => switchBoundaryResultTab(button.dataset.boundaryTab));
+  });
   document.querySelector("#apply-symbols").addEventListener("click", applySymbols);
   document.querySelector("#symbol-search").addEventListener("input", event => renderSymbolOptions(event.target.value));
   document.querySelector("#select-all").addEventListener("click", () => { document.querySelectorAll("#symbol-list input").forEach(item => { item.checked = true; state.dialogSelected.add(item.value); }); updateSelectedCount(); });
@@ -1465,6 +1588,7 @@ async function deleteSelectedJobs() {
     state.historySelected.delete(identifier);
     state.resultScopeByJob.delete(identifier);
     state.boundaryResultCache.delete(identifier);
+    state.boundaryTabByJob.delete(identifier);
     for (const key of state.symbolReportCache.keys()) {
       if (key.startsWith(`${identifier}:`)) state.symbolReportCache.delete(key);
     }

@@ -81,17 +81,41 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertNotIn(f'name="{field}"', html)
         for identifier in (
             "boundary-flow-results",
-            "boundary-stage-table",
             "boundary-probabilities",
             "boundary-dynamics",
             "boundary-gate-reason",
         ):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn("renderBoundaryFlowResult", script)
-        self.assertIn(
-            "<th>平均仓位</th><th>开仓率</th><th>换手</th>",
-            html,
+        expected_tabs = (
+            ("evaluation", "策略评估"),
+            ("predictions", "样本外预测"),
+            ("posterior", "模型后验"),
+            ("returns", "收益分析"),
+            ("residuals", "残差分析"),
+            ("summary", "运行摘要"),
         )
+        for panel, label in expected_tabs:
+            self.assertIn(f'data-boundary-tab="{panel}"', html)
+            self.assertIn(f'data-boundary-panel="{panel}"', html)
+            self.assertIn(label, html)
+        self.assertLess(
+            html.index('id="boundary-result-tabs"'),
+            html.index('data-boundary-panel="evaluation"'),
+        )
+        for identifier in (
+            "boundary-evaluation-summary",
+            "boundary-prediction-table",
+            "boundary-return-canvas",
+            "boundary-residual-canvas",
+            "boundary-run-summary",
+        ):
+            self.assertIn(f'id="{identifier}"', html)
+        self.assertIn("switchBoundaryResultTab", script)
+        self.assertIn("paintBoundaryReturnAnalysis", script)
+        self.assertIn("paintBoundaryResidualAnalysis", script)
+        self.assertNotIn('id="boundary-table-head"', html)
+        self.assertNotIn('id="boundary-stage-table"', html)
         self.assertNotIn('id="boundary-ablation-table"', html)
         self.assertNotIn("boundary-policy-ablation.json", script)
         self.assertNotIn("ablationLabels", script)

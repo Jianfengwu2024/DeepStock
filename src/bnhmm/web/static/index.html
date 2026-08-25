@@ -424,13 +424,52 @@
                 <div><h3 id="boundary-result-title">路径效率 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
                 <span class="scope-badge">月度样本外</span>
               </div>
-              <div class="table-scroll"><table><thead><tr id="boundary-table-head"><th>模型</th><th>状态</th><th>漂移输入</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>平均仓位</th><th>开仓率</th><th>换手</th></tr></thead><tbody id="boundary-stage-table"></tbody></table></div>
-              <div class="boundary-result-grid">
-                <section><h3 id="boundary-direction-title">两支流方向概率</h3><div class="boundary-probabilities" id="boundary-probabilities"></div></section>
-                <section><h3 id="boundary-dynamics-title">漂移与有效势</h3><div class="boundary-dynamics" id="boundary-dynamics"></div></section>
+              <div class="boundary-result-tabs" id="boundary-result-tabs" role="tablist" aria-label="路径效率 FK 结果">
+                <button class="active" type="button" data-boundary-tab="evaluation">策略评估</button>
+                <button type="button" data-boundary-tab="predictions">样本外预测</button>
+                <button type="button" data-boundary-tab="posterior">模型后验</button>
+                <button type="button" data-boundary-tab="returns">收益分析</button>
+                <button type="button" data-boundary-tab="residuals">残差分析</button>
+                <button type="button" data-boundary-tab="summary">运行摘要</button>
               </div>
-              <div class="boundary-gate" id="boundary-gate-reason"></div>
-              <div class="download-row" id="boundary-flow-downloads"></div>
+
+              <div class="boundary-result-panel" data-boundary-panel="evaluation">
+                <div class="boundary-evaluation-summary" id="boundary-evaluation-summary"></div>
+                <div class="boundary-key-metrics" id="boundary-evaluation-metrics"></div>
+                <div class="boundary-gate" id="boundary-gate-reason"></div>
+              </div>
+
+              <div class="boundary-result-panel hidden" data-boundary-panel="predictions">
+                <div class="boundary-panel-intro"><strong>逐日样本外决策</strong><span>每一行都只使用当时已经成熟的数据，显示预测方向、目标仓位和下一日实际收益。</span></div>
+                <div class="table-scroll"><table><thead><tr><th>信号日</th><th>支流 1</th><th>支流 2</th><th>目标仓位</th><th>持股数</th><th>下一日策略收益</th></tr></thead><tbody id="boundary-prediction-table"></tbody></table></div>
+              </div>
+
+              <div class="boundary-result-panel hidden" data-boundary-panel="posterior">
+                <div class="boundary-panel-intro"><strong>最新一次模型判断</strong><span>概率回答方向有多确定；漂移表示趋势方向，有效势表示趋势能否延续。</span></div>
+                <div class="boundary-result-grid">
+                  <section><h3 id="boundary-direction-title">多 / 平 / 空概率</h3><div class="boundary-probabilities" id="boundary-probabilities"></div></section>
+                  <section><h3 id="boundary-dynamics-title">趋势与延续性</h3><div class="boundary-dynamics" id="boundary-dynamics"></div></section>
+                </div>
+                <div class="boundary-model-quality" id="boundary-model-quality"></div>
+              </div>
+
+              <div class="boundary-result-panel hidden" data-boundary-panel="returns">
+                <div class="boundary-panel-intro"><strong>策略净值与回撤</strong><span>净值已按每日仓位和交易成本累计；回撤表示从历史高点跌落的幅度。</span></div>
+                <div class="boundary-key-metrics" id="boundary-return-metrics"></div>
+                <div class="boundary-canvas-wrap"><canvas id="boundary-return-canvas" width="1200" height="320" aria-label="策略净值与回撤"></canvas></div>
+              </div>
+
+              <div class="boundary-result-panel hidden" data-boundary-panel="residuals">
+                <div class="boundary-panel-intro"><strong>预测误差</strong><span>残差是实际收益减去模型预期；越接近零、越没有连续偏向越好。</span></div>
+                <div class="boundary-key-metrics" id="boundary-residual-metrics"></div>
+                <div class="boundary-canvas-wrap"><canvas id="boundary-residual-canvas" width="1200" height="280" aria-label="逐日预测残差"></canvas></div>
+              </div>
+
+              <div class="boundary-result-panel hidden" data-boundary-panel="summary">
+                <div class="boundary-panel-intro"><strong>本次运行</strong><span>数据范围、模型版本、关键配置和结果文件集中在这里。</span></div>
+                <div class="boundary-run-summary" id="boundary-run-summary"></div>
+                <div class="download-row" id="boundary-flow-downloads"></div>
+              </div>
             </section>
 
             <div class="tabs standard-result-only" role="tablist">
