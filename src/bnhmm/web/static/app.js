@@ -1188,6 +1188,43 @@ function boundaryMetric(label, value, note = "") {
   return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ""}</div>`;
 }
 
+function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
+  const strategyReturn = Number(metrics.net_total_return);
+  const baselineReturn = Number(baselineMetrics.net_total_return);
+  const strategyDrawdown = Math.abs(Number(metrics.maximum_drawdown));
+  const baselineDrawdown = Math.abs(Number(baselineMetrics.maximum_drawdown));
+  const returnDelta = strategyReturn - baselineReturn;
+  const drawdownImprovement = baselineDrawdown - strategyDrawdown;
+
+  if (![strategyReturn, baselineReturn, strategyDrawdown, baselineDrawdown].every(Number.isFinite)) {
+    return {
+      title: "基线数据不完整，暂时无法判断是否改进",
+      level: "caution",
+      returnDelta,
+      drawdownImprovement,
+      passed: false,
+    };
+  }
+  if (returnDelta > 0) {
+    return {
+      title: "对流势能版本超过纯路径效率基线",
+      level: "positive",
+      returnDelta,
+      drawdownImprovement,
+      passed: true,
+    };
+  }
+  return {
+    title: drawdownImprovement > 0
+      ? "对流势能降低了回撤，但没有提高收益，未通过改进标准"
+      : "对流势能未超过纯路径效率基线，未通过改进标准",
+    level: drawdownImprovement > 0 ? "caution" : "negative",
+    returnDelta,
+    drawdownImprovement,
+    passed: false,
+  };
+}
+
 function paintBoundaryFlowResult(job, payload) {
   const { stages, predictions: allPredictions, posterior, residual, convection } = payload;
   const potentialModel = "PathEfficiencyFK-60D-ConvectionPotential";
@@ -1203,17 +1240,11 @@ function paintBoundaryFlowResult(job, payload) {
   document.querySelector("#boundary-flow-result-status").textContent =
     `${formatInteger(predictions.length)} 个样本外交易日 · C1 / C2 / C3 对流势能`;
 
-  const profitable = Number(metrics.net_total_return) > 0;
-  const directionUseful = Number(metrics.drift_direction_accuracy) >= 0.5;
-  const verdict = profitable && directionUseful
-    ? ["样本外结果为正，方向判断具备可用性", "positive"]
-    : profitable
-      ? ["策略取得正收益，但方向判断仍不稳定", "caution"]
-      : ["当前样本外结果未形成正收益", "negative"];
+  const verdict = boundaryImprovementVerdict(metrics, baselineMetrics);
   document.querySelector("#boundary-evaluation-summary").innerHTML = `
-    <span>本次结论</span><strong>${verdict[0]}</strong>
-    <p>基于 ${formatInteger(metrics.observations)} 个真实样本外交易日。这里不看训练期成绩，只看未参与拟合的数据。</p>`;
-  document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${verdict[1]}`;
+    <span>本次结论</span><strong>${verdict.title}</strong>
+    <p>基于 ${formatInteger(metrics.observations)} 个真实样本外交易日。相对基线收益 ${formatPercent(verdict.returnDelta)}，回撤改善 ${formatPercent(verdict.drawdownImprovement)}；${verdict.passed ? "通过" : "未通过"}改进标准。</p>`;
+  document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${verdict.level}`;
   document.querySelector("#boundary-evaluation-metrics").innerHTML = [
     boundaryMetric("基线成本后收益", formatPercent(baselineMetrics.net_total_return), "60 日纯路径效率 FK"),
     boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return), "扣除换手成本"),

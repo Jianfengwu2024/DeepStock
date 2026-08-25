@@ -98,8 +98,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.26.7', html)
-        self.assertIn('/static/styles.css?v=0.26.7', html)
+        self.assertIn('/static/app.js?v=0.26.8', html)
+        self.assertIn('/static/styles.css?v=0.26.8', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
@@ -185,6 +185,11 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         ):
             self.assertIn(artifact, script)
         self.assertIn("PathEfficiencyFK-60D-ConvectionPotential", script)
+        self.assertIn("boundaryImprovementVerdict", script)
+        self.assertIn("returnDelta > 0", script)
+        self.assertIn("未通过改进标准", script)
+        self.assertIn("相对基线收益", script)
+        self.assertIn("回撤改善", script)
         for field in (
             "convection_potential_features",
             "expected_effective_potential",
