@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 
 import numpy as np
@@ -46,8 +47,14 @@ def _walk_forward_data(rows: int = 180) -> TwoBranchDataset:
     )
 
 
-def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_path) -> None:
-    data = _walk_forward_data()
+def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_path) -> None:
+    base = _walk_forward_data()
+    shape = (len(base.states.sessions), 2)
+    data = replace(
+        base,
+        convection_strength=np.full(shape, 0.2),
+        convection_valid=np.ones(shape, dtype=np.bool_),
+    )
     result = BoundaryFlowPipeline(
         BoundaryFlowPipelineConfig(
             minimum_train_sessions=60,
@@ -56,8 +63,11 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
         )
     ).run(data, tmp_path)
 
-    assert result.model_names == BOUNDARY_MODEL_NAMES == ("PathEfficiencyFK",)
-    assert len(result.stages) == 1
+    assert result.model_names == BOUNDARY_MODEL_NAMES == (
+        "PathEfficiencyFK-60D-Baseline",
+        "PathEfficiencyFK-60D-ConvectionGate",
+    )
+    assert len(result.stages) == 2
     assert result.stages[0].status == "completed"
     predictions = json.loads(
         (tmp_path / "feynman-kac-predictions.json").read_text(encoding="utf-8")
@@ -69,6 +79,12 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
         "bullish_drift_probability",
         "drift_signal_to_noise",
         "survival_confidence",
+    }.issubset(predictions[0]["branches"][0])
+    assert {
+        "convection_strength",
+        "convection_band",
+        "convection_exposure_cap",
+        "convection_gate_reason",
     }.issubset(predictions[0]["branches"][0])
     assert {
         "signal_time",
@@ -97,8 +113,30 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
     )
     assert result.stages[0].drift_feature_names == ("signed_path_efficiency",)
     assert (tmp_path / "path-efficiency-fk-report.md").exists()
+    assert (tmp_path / "path-efficiency-convection-gate-report.md").exists()
+    diagnostics = json.loads(
+        (tmp_path / "convection-gate-evaluation.json").read_text(encoding="utf-8")
+    )
+    assert set(diagnostics["bands"]) == {"low", "elevated", "high", "extreme"}
+    assert "path_efficiency_rank_correlation" in diagnostics
     assert not (tmp_path / "boundary-ablation-report.md").exists()
     assert 0.0 <= result.stages[0].metrics.average_exposure <= 1.0
+
+    grouped: dict[str, list[dict[str, object]]] = {
+        model: [item for item in predictions if item["model_version"] == model]
+        for model in BOUNDARY_MODEL_NAMES
+    }
+    assert len(grouped[BOUNDARY_MODEL_NAMES[0]]) == len(grouped[BOUNDARY_MODEL_NAMES[1]])
+    for baseline, gated in zip(
+        grouped[BOUNDARY_MODEL_NAMES[0]],
+        grouped[BOUNDARY_MODEL_NAMES[1]],
+        strict=True,
+    ):
+        assert baseline["signal_time"] == gated["signal_time"]
+        assert [item["expected_drift"] for item in baseline["branches"]] == [
+            item["expected_drift"] for item in gated["branches"]
+        ]
+        assert sum(gated["target_weights"]) <= sum(baseline["target_weights"]) + 1e-12
 
 
 def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) -> None:
@@ -116,7 +154,12 @@ def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) ->
     predictions = json.loads(
         (tmp_path / "feynman-kac-predictions.json").read_text(encoding="utf-8")
     )
-    opened = next(item for item in predictions if item["selected_symbols"])
+    opened = next(
+        item
+        for item in predictions
+        if item["model_version"] == BOUNDARY_MODEL_NAMES[0]
+        and item["selected_symbols"]
+    )
     row = int(
         np.flatnonzero(
             data.states.sessions

@@ -79,6 +79,64 @@ class BoundaryEvaluationMetrics:
     drift_direction_accuracy: float
 
 
+@dataclass(frozen=True, slots=True)
+class ConvectionDiagnosticObservation:
+    strength: float
+    band: str
+    path_efficiency: float
+    actual_return: float
+    exposure_cap: float
+
+
+@dataclass(frozen=True, slots=True)
+class ConvectionDiagnosticMetrics:
+    observations: int
+    gate_triggers: int
+    path_efficiency_rank_correlation: float
+    bands: dict[str, dict[str, float | int]]
+
+
+def evaluate_convection_diagnostics(
+    observations: tuple[ConvectionDiagnosticObservation, ...],
+) -> ConvectionDiagnosticMetrics:
+    names = ("low", "elevated", "high", "extreme")
+    bands: dict[str, dict[str, float | int]] = {}
+    for name in names:
+        selected = [item for item in observations if item.band == name]
+        if not selected:
+            bands[name] = {
+                "count": 0,
+                "mean_next_return": 0.0,
+                "continuation_rate": 0.0,
+                "reversal_rate": 0.0,
+            }
+            continue
+        returns = np.asarray([item.actual_return for item in selected])
+        direction = np.sign([item.path_efficiency for item in selected])
+        actual_direction = np.sign(returns)
+        bands[name] = {
+            "count": len(selected),
+            "mean_next_return": float(np.mean(returns)),
+            "continuation_rate": float(np.mean(actual_direction == direction)),
+            "reversal_rate": float(np.mean(actual_direction == -direction)),
+        }
+    if len(observations) >= 2:
+        correlation = _rank_correlation(
+            np.asarray([item.strength for item in observations]),
+            np.abs(np.asarray([item.path_efficiency for item in observations])),
+        )
+        if not np.isfinite(correlation):
+            correlation = 0.0
+    else:
+        correlation = 0.0
+    return ConvectionDiagnosticMetrics(
+        observations=len(observations),
+        gate_triggers=sum(item.exposure_cap < 0.5 for item in observations),
+        path_efficiency_rank_correlation=float(correlation),
+        bands=bands,
+    )
+
+
 def evaluate_boundary_forecasts(
     observations: tuple[BoundaryForecastObservation, ...],
     config: BoundaryEvaluationConfig | None = None,

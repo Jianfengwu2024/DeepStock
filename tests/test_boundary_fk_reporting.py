@@ -1,6 +1,40 @@
 from __future__ import annotations
 
-from bnhmm.boundary_fk.reporting import write_baseline_report
+from bnhmm.boundary_fk.reporting import write_baseline_report, write_convection_report
+
+
+def test_convection_report_explains_gate_in_plain_chinese(tmp_path) -> None:
+    path = tmp_path / "convection.md"
+
+    write_convection_report(
+        path,
+        [
+            {
+                "model_name": "PathEfficiencyFK-60D-Baseline",
+                "metrics": {"net_total_return": 0.02, "maximum_drawdown": 0.03},
+            },
+            {
+                "model_name": "PathEfficiencyFK-60D-ConvectionGate",
+                "metrics": {"net_total_return": 0.03, "maximum_drawdown": 0.02},
+            },
+        ],
+        {
+            "gate_triggers": 12,
+            "path_efficiency_rank_correlation": -0.4,
+            "bands": {
+                "low": {"count": 3, "mean_next_return": 0.01},
+                "elevated": {"count": 3, "mean_next_return": 0.0},
+                "high": {"count": 3, "mean_next_return": -0.01},
+                "extreme": {"count": 3, "mean_next_return": -0.02},
+            },
+        },
+    )
+
+    report = path.read_text(encoding="utf-8")
+    assert "反向微观流量" in report
+    assert "只能减仓或清仓" in report
+    assert "PathEfficiencyFK-60D-ConvectionGate" in report
+    assert "12" in report
 
 
 def test_report_describes_pure_path_position_baseline(tmp_path) -> None:

@@ -8,19 +8,25 @@ from pathlib import Path
 import numpy as np
 
 from .branch_model import BayesianBranchModel, BayesianBranchModelConfig
+from .convection import ConvectionGate, ConvectionGateDecision
 from .evaluation import (
     BoundaryEvaluationConfig,
     BoundaryEvaluationMetrics,
+    ConvectionDiagnosticObservation,
     TwoBranchForecastObservation,
+    evaluate_convection_diagnostics,
     evaluate_two_branch_forecasts,
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
 from .policy import BoundaryPolicy, BoundaryPolicyConfig, BranchPositionState
-from .reporting import write_baseline_report, write_json
+from .reporting import write_baseline_report, write_convection_report, write_json
 from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
-BOUNDARY_MODEL_NAMES = ("PathEfficiencyFK",)
+BOUNDARY_MODEL_NAMES = (
+    "PathEfficiencyFK-60D-Baseline",
+    "PathEfficiencyFK-60D-ConvectionGate",
+)
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
 
@@ -98,12 +104,18 @@ class BoundaryFlowPipeline:
             raise ValueError("no monthly fold has enough mature PathEfficiencyFK history")
 
         membership_by_month = {item.month: item for item in data.memberships}
-        observations: list[TwoBranchForecastObservation] = []
+        observations_by_model: dict[str, list[TwoBranchForecastObservation]] = {
+            name: [] for name in BOUNDARY_MODEL_NAMES
+        }
         prediction_payloads: list[dict[str, object]] = []
         posterior_payloads: list[dict[str, object]] = []
+        convection_records: list[ConvectionDiagnosticObservation] = []
         fit_rows: list[int] = []
-        previous_weights: dict[str, float] = {}
-        previous_branch_states = (BranchPositionState(), BranchPositionState())
+        previous_weights = {name: {} for name in BOUNDARY_MODEL_NAMES}
+        previous_branch_states = {
+            name: (BranchPositionState(), BranchPositionState())
+            for name in BOUNDARY_MODEL_NAMES
+        }
         policy = BoundaryPolicy(
             BoundaryPolicyConfig(
                 minimum_direction_probability=self.config.minimum_direction_probability,
@@ -115,6 +127,10 @@ class BoundaryFlowPipeline:
 
         for fold_index, test_start, training_rows, test_rows in folds:
             cutoff = test_start - np.timedelta64(1, "ns")
+            convection_gate = ConvectionGate.fit(
+                data,
+                training_cutoff=cutoff,
+            )
             posteriors = []
             for branch in range(2):
                 posterior = BayesianBranchModel(
@@ -178,75 +194,125 @@ class BoundaryFlowPipeline:
                     for branch in range(2)
                 )
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
-                decision = policy.decide(
-                    (forecasts[0], forecasts[1]),
-                    branches=membership.branches,
-                    neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
-                    previous_branch_states=previous_branch_states,
+                convection_decisions = tuple(
+                    convection_gate.decide(data, row=int(row), branch=branch)
+                    for branch in range(2)
                 )
-                current_weights = dict(
-                    zip(
-                        decision.selected_symbols,
-                        decision.target_weights,
-                        strict=True,
+                for branch, convection in enumerate(convection_decisions):
+                    if convection.strength is not None:
+                        convection_records.append(
+                            ConvectionDiagnosticObservation(
+                                strength=convection.strength,
+                                band=convection.band,
+                                path_efficiency=float(
+                                    data.states.feature("signed_path_efficiency")[
+                                        row, branch
+                                    ]
+                                ),
+                                actual_return=float(
+                                    data.labels.next_return[row, branch]
+                                ),
+                                exposure_cap=convection.exposure_cap,
+                            )
+                        )
+                for model_index, model_name in enumerate(BOUNDARY_MODEL_NAMES):
+                    gated = model_index == 1
+                    caps = (
+                        tuple(item.exposure_cap for item in convection_decisions)
+                        if gated
+                        else (0.5, 0.5)
                     )
-                )
-                turnover = self._turnover(previous_weights, current_weights)
-                gross_return = self._portfolio_return(data, int(row), current_weights)
-                observation = TwoBranchForecastObservation(
-                    signal_time=signal,
-                    available_at=signal + np.timedelta64(1, "ns"),
-                    target_time=data.labels.target_time[row],
-                    training_cutoff=cutoff,
-                    model_version=BOUNDARY_MODEL_NAMES[0],
-                    forecasts=(forecasts[0], forecasts[1]),
-                    actual_returns=(
-                        float(data.labels.next_return[row, 0]),
-                        float(data.labels.next_return[row, 1]),
-                    ),
-                    neutral_thresholds=(
-                        float(thresholds[0]),
-                        float(thresholds[1]),
-                    ),
-                    decision=decision,
-                    gross_strategy_return=gross_return,
-                    turnover=turnover,
-                )
-                observations.append(observation)
-                previous_weights = current_weights
-                previous_branch_states = decision.branch_position_states
-                prediction_payloads.append(
-                    self._prediction_payload(observation, fold_index)
-                )
+                    decision = policy.decide(
+                        (forecasts[0], forecasts[1]),
+                        branches=membership.branches,
+                        neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
+                        previous_branch_states=previous_branch_states[model_name],
+                        branch_exposure_caps=(float(caps[0]), float(caps[1])),
+                    )
+                    current_weights = dict(
+                        zip(
+                            decision.selected_symbols,
+                            decision.target_weights,
+                            strict=True,
+                        )
+                    )
+                    turnover = self._turnover(
+                        previous_weights[model_name], current_weights
+                    )
+                    gross_return = self._portfolio_return(
+                        data, int(row), current_weights
+                    )
+                    observation = TwoBranchForecastObservation(
+                        signal_time=signal,
+                        available_at=signal + np.timedelta64(1, "ns"),
+                        target_time=data.labels.target_time[row],
+                        training_cutoff=cutoff,
+                        model_version=model_name,
+                        forecasts=(forecasts[0], forecasts[1]),
+                        actual_returns=(
+                            float(data.labels.next_return[row, 0]),
+                            float(data.labels.next_return[row, 1]),
+                        ),
+                        neutral_thresholds=(
+                            float(thresholds[0]),
+                            float(thresholds[1]),
+                        ),
+                        decision=decision,
+                        gross_strategy_return=gross_return,
+                        turnover=turnover,
+                    )
+                    observations_by_model[model_name].append(observation)
+                    previous_weights[model_name] = current_weights
+                    previous_branch_states[model_name] = decision.branch_position_states
+                    prediction_payloads.append(
+                        self._prediction_payload(
+                            observation,
+                            fold_index,
+                            convection_decisions,
+                            convection_applied=gated,
+                        )
+                    )
 
-        if not observations:
+        if any(not items for items in observations_by_model.values()):
             raise ValueError("PathEfficiencyFK produced no sample-out predictions")
         evaluation_config = BoundaryEvaluationConfig(
             transaction_cost_bps=self.config.transaction_cost_bps
         )
-        metrics = evaluate_two_branch_forecasts(tuple(observations), evaluation_config)
         test_months = tuple(
             str(test_start.astype("datetime64[M]")) for _, test_start, _, _ in folds
         )
-        stage = BoundaryStageResult(
-            model_name=BOUNDARY_MODEL_NAMES[0],
-            status="completed",
-            passed=True,
-            test_months=test_months,
-            drift_feature_names=drift_names,
-            minimum_fit_rows=min(fit_rows),
-            metrics=metrics,
+        stages = tuple(
+            BoundaryStageResult(
+                model_name=model_name,
+                status="completed",
+                passed=True,
+                test_months=test_months,
+                drift_feature_names=drift_names,
+                minimum_fit_rows=min(fit_rows),
+                metrics=evaluate_two_branch_forecasts(
+                    tuple(observations_by_model[model_name]), evaluation_config
+                ),
+            )
+            for model_name in BOUNDARY_MODEL_NAMES
         )
-        stage_payload = [self._stage_payload(stage)]
+        stage_payload = [self._stage_payload(stage) for stage in stages]
+        convection_metrics = evaluate_convection_diagnostics(tuple(convection_records))
+        convection_payload = asdict(convection_metrics)
         write_json(root / "boundary-model-posterior.json", posterior_payloads)
         write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
+        write_json(root / "convection-gate-evaluation.json", convection_payload)
         write_json(
             root / "boundary-residual-analysis.json",
-            {
-                "model_name": stage.model_name,
-                "probability_residual_autocorrelation": metrics.probability_residual_autocorrelation,
-            },
+            [
+                {
+                    "model_name": stage.model_name,
+                    "probability_residual_autocorrelation": (
+                        stage.metrics.probability_residual_autocorrelation
+                    ),
+                }
+                for stage in stages
+            ],
         )
         write_json(
             root / "boundary-daily-states.json",
@@ -260,7 +326,12 @@ class BoundaryFlowPipeline:
             root / "path-efficiency-fk-report.md",
             stage_payload,
         )
-        return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, (stage,))
+        write_convection_report(
+            root / "path-efficiency-convection-gate-report.md",
+            stage_payload,
+            convection_payload,
+        )
+        return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, stages)
 
     def _mature_monthly_folds(
         self, data: TwoBranchDataset
@@ -319,15 +390,20 @@ class BoundaryFlowPipeline:
 
     @staticmethod
     def _prediction_payload(
-        observation: TwoBranchForecastObservation, fold: int
+        observation: TwoBranchForecastObservation,
+        fold: int,
+        convection_decisions: tuple[ConvectionGateDecision, ConvectionGateDecision],
+        *,
+        convection_applied: bool,
     ) -> dict[str, object]:
         branches = []
-        for branch, (forecast, actual, threshold, direction) in enumerate(
+        for branch, (forecast, actual, threshold, direction, convection) in enumerate(
             zip(
                 observation.forecasts,
                 observation.actual_returns,
                 observation.neutral_thresholds,
                 observation.decision.branch_directions,
+                convection_decisions,
                 strict=True,
             )
         ):
@@ -345,6 +421,16 @@ class BoundaryFlowPipeline:
                     "expected_diffusion_variance": forecast.expected_diffusion_variance,
                     "actual_return": actual,
                     "neutral_threshold": threshold,
+                    "convection_strength": convection.strength,
+                    "convection_band": (
+                        convection.band if convection_applied else "not_applied"
+                    ),
+                    "convection_exposure_cap": (
+                        convection.exposure_cap if convection_applied else 0.5
+                    ),
+                    "convection_gate_reason": (
+                        convection.reason if convection_applied else "baseline"
+                    ),
                 }
             )
         return {

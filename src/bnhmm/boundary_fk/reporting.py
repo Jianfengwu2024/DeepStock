@@ -53,3 +53,70 @@ def write_baseline_report(
 
 def _percent(value: Any) -> str:
     return "-" if value is None else f"{float(value) * 100.0:.2f}%"
+
+
+def write_convection_report(
+    path: Path,
+    stages: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+) -> None:
+    lines = [
+        "# PathEfficiencyFK 60 日对流门控报告",
+        "",
+        "方向仍然只由路径效率和 FK 漂移决定。对流使用成分股分钟速度中的反向微观流量占比，只能减仓或清仓，不能反向开仓。",
+        "",
+        "## 策略结果",
+        "",
+        "| 模型 | 成本后收益 | 最大回撤 | 平均仓位 | 平均换手 |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    for stage in stages:
+        metrics = stage.get("metrics") or {}
+        lines.append(
+            "| {model} | {ret} | {drawdown} | {exposure} | {turnover} |".format(
+                model=stage["model_name"],
+                ret=_percent(metrics.get("net_total_return")),
+                drawdown=_percent(metrics.get("maximum_drawdown")),
+                exposure=_percent(metrics.get("average_exposure")),
+                turnover=_percent(metrics.get("average_turnover")),
+            )
+        )
+    lines.extend(
+        (
+            "",
+            "## 对流条件统计",
+            "",
+            f"门控触发 {int(diagnostics.get('gate_triggers', 0))} 次。",
+            "",
+            "| 对流档位 | 样本数 | 下一日平均收益 | 趋势延续率 | 反转率 |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        )
+    )
+    labels = {
+        "low": "较弱",
+        "elevated": "偏强",
+        "high": "很强",
+        "extreme": "极强",
+    }
+    for name in ("low", "elevated", "high", "extreme"):
+        item = (diagnostics.get("bands") or {}).get(name, {})
+        lines.append(
+            "| {label} | {count} | {ret} | {continuation} | {reversal} |".format(
+                label=labels[name],
+                count=int(item.get("count", 0)),
+                ret=_percent(item.get("mean_next_return")),
+                continuation=_percent(item.get("continuation_rate")),
+                reversal=_percent(item.get("reversal_rate")),
+            )
+        )
+    lines.extend(
+        (
+            "",
+            "对流与路径效率绝对值的 Rank 相关系数："
+            f"{float(diagnostics.get('path_efficiency_rank_correlation', 0.0)):.4f}。",
+            "",
+            "只有真实样本外收益和回撤同时改善，才能认为对流门控有效。",
+            "",
+        )
+    )
+    path.write_text("\n".join(lines), encoding="utf-8")
