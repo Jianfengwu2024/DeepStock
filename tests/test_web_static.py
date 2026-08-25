@@ -23,7 +23,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         ):
             self.assertIn(f'id="{identifier}"', html)
         for label in (
-            "运行六窗口对比",
+            "运行七窗口对比",
             "窗口对比",
             "成本后收益",
             "最大回撤",
@@ -35,6 +35,13 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(label, html)
         self.assertIn('api("/api/comparisons"', script)
         self.assertIn("submitWindowComparison", script)
+        self.assertIn("comparison.windows.length", script)
+        self.assertIn("120: \"#", script)
+        self.assertNotIn("comparison.completed_count}/6", script)
+        self.assertNotIn("ready}/6", script)
+        self.assertIn("boundary_cache_lookbacks?.length", script)
+        self.assertIn('<option value="120">120 日</option>', html)
+        self.assertIn("构造 / 刷新七套数据", html)
         self.assertIn("renderComparison", script)
         self.assertIn("drawComparisonEquity", script)
         self.assertIn("openComparisonChild", script)
@@ -88,8 +95,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.25.0', html)
-        self.assertIn('/static/styles.css?v=0.25.0', html)
+        self.assertIn('/static/app.js?v=0.26.1', html)
+        self.assertIn('/static/styles.css?v=0.26.1', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)

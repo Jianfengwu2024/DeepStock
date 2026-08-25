@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from bnhmm.web.app import (
     delete_comparison,
+    extend_comparison,
     get_comparison,
     list_comparisons,
     submit_comparison,
@@ -50,11 +51,18 @@ class WindowComparisonApiTests(unittest.TestCase):
             )
 
             created = submit_comparison(payload, request)
+            legacy = comparisons.get(created["id"])
+            assert legacy is not None
+            legacy.children = legacy.children[1:]
+            comparisons._records[legacy.id] = legacy
+            comparisons._persist(legacy)
+            extended = extend_comparison(created["id"], request)
             listed = list_comparisons(request)
             detail = get_comparison(created["id"], request)
             deleted = delete_comparison(created["id"], request)
 
         self.assertEqual(len(listed), 1)
+        self.assertEqual(len(extended["windows"]), 7)
         self.assertEqual(detail["id"], created["id"])
         self.assertTrue(deleted["deleted"])
         for record in jobs.records.values():

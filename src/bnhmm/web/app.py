@@ -402,6 +402,18 @@ def get_comparison(identifier: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="comparison not found") from exc
 
 
+@app.post("/api/comparisons/{identifier}/missing-windows")
+def extend_comparison(identifier: str, request: Request) -> dict[str, Any]:
+    comparisons = comparison_manager(request)
+    try:
+        record = comparisons.extend(identifier)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="comparison not found") from exc
+    except (DuplicateJobNameError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return comparisons.payload(record.id)
+
+
 @app.delete("/api/comparisons/{identifier}")
 def delete_comparison(identifier: str, request: Request) -> dict[str, bool]:
     if not comparison_manager(request).delete(identifier):

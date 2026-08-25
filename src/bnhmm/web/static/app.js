@@ -373,11 +373,12 @@ async function refreshBoundaryDataStatus() {
     const payload = await api(`/api/boundary-data/status/${encodeURIComponent(datasetId)}`);
     const variants = payload.cache?.variants || [];
     const ready = variants.filter(item => item.status === "ready").length;
+    const expected = state.config?.boundary_cache_lookbacks?.length || variants.length || 7;
     button.disabled = payload.status === "running";
-    if (payload.status === "running") element.textContent = `构造中 · 已就绪 ${ready}/6`;
+    if (payload.status === "running") element.textContent = `构造中 · 已就绪 ${ready}/${expected}`;
     else if (payload.status === "failed") element.textContent = `构造失败 · ${payload.error || "请查看日志"}`;
-    else if (ready === 6) element.textContent = `六套数据已就绪 · ${variants[0]?.start || ""} 至 ${variants[0]?.end || ""}`;
-    else element.textContent = `已就绪 ${ready}/6，请先构造`;
+    else if (ready === expected) element.textContent = `${expected} 套数据已就绪 · ${variants[0]?.start || ""} 至 ${variants[0]?.end || ""}`;
+    else element.textContent = `已就绪 ${ready}/${expected}，请先构造`;
   } catch (exception) {
     element.textContent = exception.message;
     button.disabled = false;
@@ -683,7 +684,7 @@ function renderComparisonList() {
     const label = comparison.status === "completed"
       ? "已完成"
       : comparison.status === "running" ? "运行中" : comparison.status === "queued" ? "排队中" : "失败";
-    button.innerHTML = `<div class="job-item-head"><strong>${escapeHtml(comparison.name)}</strong><span class="status-badge ${comparison.status}">${label}</span></div><div class="job-item-meta">${comparison.completed_count}/6 完成 · ${formatDate(comparison.created_at)}</div>`;
+    button.innerHTML = `<div class="job-item-head"><strong>${escapeHtml(comparison.name)}</strong><span class="status-badge ${comparison.status}">${label}</span></div><div class="job-item-meta">${comparison.completed_count}/${comparison.windows.length} 完成 · ${formatDate(comparison.created_at)}</div>`;
     button.addEventListener("click", () => {
       state.selectedComparisonId = comparison.id;
       state.selectedId = null;
@@ -761,8 +762,10 @@ function renderComparison(comparison) {
   const badge = document.querySelector("#comparison-status");
   badge.className = `status-badge ${comparison.status}`;
   badge.textContent = comparisonStatusLabel(comparison.status);
-  document.querySelector("#comparison-meta").textContent = `PathEfficiencyFK · 90 / 60 / 40 / 30 / 20 / 10 日 · ${formatDate(comparison.created_at)}`;
-  document.querySelector("#comparison-progress").innerHTML = `<strong>${comparison.completed_count}/6 个窗口完成</strong><span>${comparison.finished_count}/6 个窗口已经结束</span>`;
+  const windowCount = comparison.windows.length;
+  const windowLabels = comparison.windows.map(item => item.window_sessions).join(" / ");
+  document.querySelector("#comparison-meta").textContent = `PathEfficiencyFK · ${windowLabels} 日 · ${formatDate(comparison.created_at)}`;
+  document.querySelector("#comparison-progress").innerHTML = `<strong>${comparison.completed_count}/${windowCount} 个窗口完成</strong><span>${comparison.finished_count}/${windowCount} 个窗口已经结束</span>`;
 
   const completed = comparison.windows.filter(item => item.status === "completed" && Object.keys(item.metrics || {}).length);
   const byMetric = (field, direction) => [...completed].sort((left, right) => direction * (Number(right.metrics[field]) - Number(left.metrics[field])))[0];
@@ -816,7 +819,7 @@ async function openComparisonChild(jobId) {
 
 async function deleteSelectedComparison() {
   if (!state.selectedComparisonId) return;
-  if (!window.confirm("确定删除这组窗口对比吗？六个原始回测结果会继续保留。")) return;
+  if (!window.confirm("确定删除这组窗口对比吗？所有原始回测结果会继续保留。")) return;
   await api(`/api/comparisons/${encodeURIComponent(state.selectedComparisonId)}`, { method: "DELETE" });
   state.selectedComparisonId = null;
   await refreshAll();
@@ -825,7 +828,7 @@ async function deleteSelectedComparison() {
 function drawComparisonEquity(windows) {
   const canvas = document.querySelector("#comparison-equity-canvas");
   const context = canvas.getContext("2d");
-  const colors = { 90: "#176b87", 60: "#2f7d4f", 40: "#a96f16", 30: "#7a5aa6", 20: "#b64b45", 10: "#52636a" };
+  const colors = { 120: "#8c3f62", 90: "#176b87", 60: "#2f7d4f", 40: "#a96f16", 30: "#7a5aa6", 20: "#b64b45", 10: "#52636a" };
   const series = windows
     .filter(item => item.equity_curve?.length)
     .map(item => ({ window: item.window_sessions, values: item.equity_curve.map(point => Number(point.value)) }));

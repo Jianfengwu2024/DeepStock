@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 CACHE_FORMAT_VERSION = 1
 CACHE_CONSTRUCTION_VERSION = "path-efficiency-two-branch-v1"
-CACHE_LOOKBACKS = (10, 20, 30, 40, 60, 90)
+CACHE_LOOKBACKS = (10, 20, 30, 40, 60, 90, 120)
 
 
 class BoundaryDataCacheMiss(FileNotFoundError):

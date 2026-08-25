@@ -88,7 +88,7 @@ class WalkForwardJobRequest(BaseModel):
     ] = (
         "river-regime-v3"
     )
-    topology_lookback_sessions: Literal[10, 20, 30, 40, 60, 90] = 60
+    topology_lookback_sessions: Literal[10, 20, 30, 40, 60, 90, 120] = 60
     sector_flow_path_windows: tuple[int, ...] = (5, 15, 30, 60)
     sector_flow_ranking_window: int = Field(60, ge=1, le=240)
     sector_flow_evaluation_horizon_minutes: int = Field(30, ge=1, le=120)

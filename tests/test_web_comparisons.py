@@ -59,7 +59,7 @@ class WindowComparisonTests(unittest.TestCase):
             ),
         )
 
-    def test_create_submits_six_fixed_windows_with_unique_names(self) -> None:
+    def test_create_submits_seven_fixed_windows_with_unique_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             jobs = RecordingJobs(root)
@@ -67,7 +67,7 @@ class WindowComparisonTests(unittest.TestCase):
 
             comparison = manager.create(self.request())
 
-        self.assertEqual(COMPARISON_WINDOWS, (90, 60, 40, 30, 20, 10))
+        self.assertEqual(COMPARISON_WINDOWS, (120, 90, 60, 40, 30, 20, 10))
         self.assertEqual(
             [child.window_sessions for child in comparison.children],
             list(COMPARISON_WINDOWS),
@@ -88,6 +88,53 @@ class WindowComparisonTests(unittest.TestCase):
                 reference,
             )
 
+    def test_extend_submits_only_windows_missing_from_legacy_record(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobs = RecordingJobs(root)
+            manager = ComparisonManager(root, jobs)
+            comparison = manager.create(self.request())
+            legacy = comparison.model_copy(update={"children": comparison.children[1:]})
+            comparison_path = root / "_comparisons" / f"{comparison.id}.json"
+            comparison_path.write_text(
+                legacy.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            reloaded = ComparisonManager(root, jobs)
+
+            extended = reloaded.extend(comparison.id)
+
+        self.assertEqual(len(extended.children), 7)
+        self.assertEqual(extended.children[0].window_sessions, 120)
+        self.assertEqual(len(jobs.records), 8)
+        new_job = jobs.records[extended.children[0].job_id]
+        self.assertEqual(new_job.request.name, "PathEfficiencyFK-Compare-001-120d")
+        self.assertEqual(new_job.request.topology_lookback_sessions, 120)
+
+    def test_extend_retries_failed_window_without_repeating_successes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobs = RecordingJobs(root)
+            manager = ComparisonManager(root, jobs)
+            comparison = manager.create(self.request())
+            failed = comparison.children[0]
+            jobs.records[failed.job_id].status = "failed"
+
+            extended = manager.extend(comparison.id)
+
+        self.assertEqual(len(extended.children), 7)
+        self.assertNotEqual(extended.children[0].job_id, failed.job_id)
+        self.assertEqual(len(jobs.records), 8)
+        retry_job = jobs.records[extended.children[0].job_id]
+        self.assertRegex(
+            retry_job.request.name,
+            r"^PathEfficiencyFK-Compare-001-120d-retry-[0-9a-f]{6}$",
+        )
+        self.assertEqual(
+            [child.job_id for child in extended.children[1:]],
+            [child.job_id for child in comparison.children[1:]],
+        )
+
     def test_records_survive_manager_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -105,15 +152,17 @@ class WindowComparisonTests(unittest.TestCase):
             jobs = RecordingJobs(root)
             manager = ComparisonManager(root, jobs)
             comparison = manager.create(self.request())
-            statuses = ("completed", "failed", "running", "queued", "cancelled", "completed")
+            statuses = (
+                "completed", "failed", "running", "queued", "cancelled", "completed", "completed"
+            )
             for child, status in zip(comparison.children, statuses, strict=True):
                 jobs.records[child.job_id].status = status
 
             payload = manager.payload(comparison.id)
 
         self.assertEqual(payload["status"], "running")
-        self.assertEqual(payload["completed_count"], 2)
-        self.assertEqual(payload["finished_count"], 4)
+        self.assertEqual(payload["completed_count"], 3)
+        self.assertEqual(payload["finished_count"], 5)
         self.assertEqual(
             [item["status"] for item in payload["windows"]],
             list(statuses),

@@ -11,6 +11,16 @@ from bnhmm.web.jobs import JobManager, JobRecord, WalkForwardJobRequest
 
 
 class WebSectorFlowConfigTests(unittest.TestCase):
+    def test_walk_forward_request_accepts_120_day_boundary_window(self) -> None:
+        request = WalkForwardJobRequest(
+            strategy="boundary-flow-fk",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            topology_lookback_sessions=120,
+        )
+
+        self.assertEqual(request.topology_lookback_sessions, 120)
+
     def test_config_has_no_direct_path_bypass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manager = JobManager(directory, Path.cwd())
@@ -46,7 +56,9 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         defaults = payload["strategy_defaults"]["boundary-flow-fk"]
         self.assertEqual(defaults["strategy"], "boundary-flow-fk")
         self.assertEqual(defaults["topology_lookback_sessions"], 60)
-        self.assertEqual(payload["boundary_cache_lookbacks"], [10, 20, 30, 40, 60, 90])
+        self.assertEqual(
+            payload["boundary_cache_lookbacks"], [10, 20, 30, 40, 60, 90, 120]
+        )
         self.assertEqual(defaults["minimum_train_sessions"], 120)
         self.assertEqual(defaults["regime_neutral_sigma"], 0.35)
         self.assertEqual(defaults["boundary_fk_paths"], 10_000)

@@ -152,6 +152,6 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
     assert calls["normalize"] == ["raw-panel"]
     assert tuple(calls["lookbacks"]) == CACHE_LOOKBACKS
     assert tuple(calls["minimums"]) == (
-        (7, 5), (14, 10), (20, 15), (27, 20), (40, 30), (60, 45)
+        (7, 5), (14, 10), (20, 15), (27, 20), (40, 30), (60, 45), (80, 60)
     )
     assert tuple(calls["save"]) == CACHE_LOOKBACKS

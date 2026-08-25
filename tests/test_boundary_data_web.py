@@ -17,5 +17,5 @@ def test_web_boundary_data_command_builds_all_windows(tmp_path: Path) -> None:
     )
 
     assert command[:4] == ["python", "-m", "bnhmm.cli", "boundary-data-build"]
-    assert command[command.index("--lookbacks") + 1] == "10,20,30,40,60,90"
+    assert command[command.index("--lookbacks") + 1] == "10,20,30,40,60,90,120"
     assert command[command.index("--cache-root") + 1] == str(tmp_path / "cache")

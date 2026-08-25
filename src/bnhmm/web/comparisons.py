@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .jobs import JobRecord, WalkForwardJobRequest
 
 
-COMPARISON_WINDOWS = (90, 60, 40, 30, 20, 10)
+COMPARISON_WINDOWS = (120, 90, 60, 40, 30, 20, 10)
 TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 
 
@@ -99,6 +99,50 @@ class ComparisonManager:
                     reverse=True,
                 )
             ]
+
+    def extend(self, identifier: str) -> ComparisonRecord:
+        with self._lock:
+            record = self._records.get(identifier)
+            if record is None:
+                raise KeyError(identifier)
+            base_job = None
+            retained = []
+            retry_windows = set()
+            for child in record.children:
+                child_job = self.jobs.get(child.job_id)
+                if base_job is None and child_job is not None:
+                    base_job = child_job
+                if child_job is None or child_job.status in {
+                    "failed", "cancelled", "interrupted"
+                }:
+                    retry_windows.add(child.window_sessions)
+                    continue
+                retained.append(child)
+            existing = {child.window_sessions for child in retained}
+            missing = [window for window in COMPARISON_WINDOWS if window not in existing]
+            if not missing:
+                return record.model_copy(deep=True)
+            if base_job is None:
+                raise ValueError("comparison has no reusable child request")
+            record.children = retained
+            for window in missing:
+                name = f"{record.name}-{window}d"
+                if window in retry_windows:
+                    name = f"{name}-retry-{uuid.uuid4().hex[:6]}"
+                request = base_job.request.model_copy(
+                    update={
+                        "name": name,
+                        "topology_lookback_sessions": window,
+                    }
+                )
+                job = self.jobs.submit(request)
+                record.children.append(
+                    ComparisonChild(window_sessions=window, job_id=job.id)
+                )
+            order = {window: index for index, window in enumerate(COMPARISON_WINDOWS)}
+            record.children.sort(key=lambda child: order[child.window_sessions])
+            self._persist(record)
+            return record.model_copy(deep=True)
 
     def get(self, identifier: str) -> ComparisonRecord | None:
         with self._lock:
