@@ -74,6 +74,8 @@ class BoundaryEvaluationMetrics:
     open_rate: float
     profit_concentration: float
     direction_counts: tuple[int, int, int]
+    drift_rank_ic: float
+    drift_direction_accuracy: float
 
 
 def evaluate_boundary_forecasts(
@@ -131,6 +133,9 @@ def evaluate_boundary_forecasts(
     gross_equity = np.cumprod(1.0 + gross_returns)
     net_equity = np.cumprod(1.0 + net_returns)
     probability_residual = one_hot[:, 2] - probabilities[:, 2]
+    expected_drift = np.asarray(
+        [item.forecast.expected_drift for item in observations], dtype=np.float64
+    )
 
     return BoundaryEvaluationMetrics(
         observations=len(observations),
@@ -150,6 +155,10 @@ def evaluate_boundary_forecasts(
         profit_concentration=_profit_concentration(net_returns[opened]),
         direction_counts=tuple(
             int(np.sum(predicted_classes == label)) for label in range(3)
+        ),
+        drift_rank_ic=_rank_correlation(expected_drift, actual_returns),
+        drift_direction_accuracy=float(
+            np.mean(np.sign(expected_drift) == np.sign(actual_returns))
         ),
     )
 
@@ -227,6 +236,10 @@ def evaluate_two_branch_forecasts(
     net_equity = np.cumprod(1.0 + net_returns)
     opened = np.asarray([item.decision.open_position for item in observations])
     probability_residual = one_hot[:, 2] - probabilities[:, 2]
+    expected_drift = np.asarray(
+        [forecast.expected_drift for item in observations for forecast in item.forecasts],
+        dtype=np.float64,
+    )
 
     return BoundaryEvaluationMetrics(
         observations=len(observations),
@@ -246,6 +259,10 @@ def evaluate_two_branch_forecasts(
         profit_concentration=_profit_concentration(net_returns[opened]),
         direction_counts=tuple(
             int(np.sum(predicted_classes == label)) for label in range(3)
+        ),
+        drift_rank_ic=_rank_correlation(expected_drift, actual_returns),
+        drift_direction_accuracy=float(
+            np.mean(np.sign(expected_drift) == np.sign(actual_returns))
         ),
     )
 
@@ -358,6 +375,29 @@ def _lag_one_autocorrelation(values: np.ndarray) -> float:
     if len(values) < 2 or np.std(values[:-1]) <= 1e-15 or np.std(values[1:]) <= 1e-15:
         return 0.0
     return float(np.corrcoef(values[:-1], values[1:])[0, 1])
+
+
+def _rank_correlation(left: np.ndarray, right: np.ndarray) -> float:
+    if len(left) < 2:
+        return 0.0
+    left_rank = _average_ranks(left)
+    right_rank = _average_ranks(right)
+    if np.std(left_rank) <= 1e-15 or np.std(right_rank) <= 1e-15:
+        return 0.0
+    return float(np.corrcoef(left_rank, right_rank)[0, 1])
+
+
+def _average_ranks(values: np.ndarray) -> np.ndarray:
+    order = np.argsort(values, kind="mergesort")
+    ranks = np.empty(len(values), dtype=np.float64)
+    start = 0
+    while start < len(values):
+        end = start + 1
+        while end < len(values) and values[order[end]] == values[order[start]]:
+            end += 1
+        ranks[order[start:end]] = (start + end - 1) * 0.5
+        start = end
+    return ranks
 
 
 def _maximum_drawdown(equity: np.ndarray) -> float:

@@ -12,6 +12,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
+        self.assertIn('/static/app.js?v=0.24.0', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         for field in (
@@ -61,6 +62,16 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "held_branches",
         ):
             self.assertIn(field, script)
+        for label in (
+            "尾盘流向（正式）",
+            "旧4项输入",
+            "仅加路径效率",
+            "仅加冲击恢复",
+            "三项全加",
+            "漂移方向命中",
+            "漂移秩相关",
+        ):
+            self.assertIn(label, html + script)
 
     def test_river_workspace_has_four_views_and_stock_inspector(self) -> None:
         html = (ROOT / "river.html").read_text(encoding="utf-8")

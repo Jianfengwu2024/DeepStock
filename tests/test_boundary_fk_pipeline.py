@@ -83,9 +83,22 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
     ablation = json.loads(
         (tmp_path / "boundary-policy-ablation.json").read_text(encoding="utf-8")
     )
-    assert set(ablation) == {"posterior_signal", "legacy_attenuated"}
+    assert set(ablation) == {
+        "posterior_signal",
+        "legacy_features",
+        "path_efficiency",
+        "shock_recovery",
+        "all_intraday",
+        "legacy_attenuated",
+    }
+    assert result.stages[0].drift_feature_names[-1] == "closing_flow"
     assert len(ablation["posterior_signal"]["direction_counts"]) == 3
     assert len(ablation["legacy_attenuated"]["direction_counts"]) == 3
+    assert -1.0 <= ablation["posterior_signal"]["drift_rank_ic"] <= 1.0
+    assert 0.0 <= ablation["posterior_signal"]["drift_direction_accuracy"] <= 1.0
+    report = (tmp_path / "boundary-ablation-report.md").read_text(encoding="utf-8")
+    assert "日内物理特征消融" in report
+    assert "漂移秩相关" in report
 
 
 def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
+import pytest
 
 from bnhmm.boundary_fk.branch_state import (
     BRANCH_FEATURE_NAMES,
@@ -68,6 +69,45 @@ def test_builder_emits_two_branch_feature_tensor_and_frozen_memberships() -> Non
     assert result.states.valid.shape == (26, 2)
     assert result.memberships[0].branches == (("A", "B"), ("C", "D"))
     assert result.states.valid[-1].all()
+
+
+def test_builder_emits_directional_intraday_path_features() -> None:
+    panel, topologies = _inputs()
+
+    result = TwoBranchDailyStateBuilder(minimum_valid_minutes=3).build(panel, topologies)
+
+    assert result.states.feature_names[-3:] == (
+        "signed_path_efficiency",
+        "closing_flow",
+        "shock_recovery",
+    )
+    assert result.states.feature("signed_path_efficiency")[-1, 0] == 1.0
+    assert result.states.feature("closing_flow")[-1, 0] == 1.0
+    assert result.states.feature("shock_recovery")[-1, 0] == 1.0
+    assert result.states.feature("signed_path_efficiency")[-1, 1] == -1.0
+    assert result.states.feature("closing_flow")[-1, 1] == -1.0
+    assert result.states.feature("shock_recovery")[-1, 1] == -1.0
+
+
+def test_closing_flow_uses_only_the_configured_terminal_window() -> None:
+    panel, topologies = _inputs()
+    changed_raw = panel.raw_velocity.copy()
+    changed_raw[-3:, :2] = np.asarray(
+        (
+            (0.03, 0.03),
+            (-0.01, -0.01),
+            (-0.01, -0.01),
+        )
+    )
+
+    result = TwoBranchDailyStateBuilder(
+        minimum_valid_minutes=3,
+        closing_window_minutes=2,
+    ).build(replace(panel, raw_velocity=changed_raw), topologies)
+
+    assert result.states.feature("signed_path_efficiency")[-1, 0] == pytest.approx(0.2)
+    assert result.states.feature("closing_flow")[-1, 0] == pytest.approx(-0.4)
+    assert result.states.feature("shock_recovery")[-1, 0] == pytest.approx(-0.2)
 
 
 def test_labels_and_member_returns_use_only_the_next_completed_session() -> None:

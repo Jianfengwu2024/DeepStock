@@ -21,7 +21,22 @@ from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
 BOUNDARY_MODEL_NAMES = ("TwoBranchFK",)
-POLICY_ABLATION_NAMES = ("posterior_signal", "legacy_attenuated")
+POLICY_ABLATION_NAMES = (
+    "posterior_signal",
+    "legacy_features",
+    "path_efficiency",
+    "shock_recovery",
+    "all_intraday",
+    "legacy_attenuated",
+)
+DRIFT_FEATURE_SET_BY_POLICY = {
+    "posterior_signal": "closing_flow",
+    "legacy_features": "legacy",
+    "path_efficiency": "path_efficiency",
+    "shock_recovery": "shock_recovery",
+    "all_intraday": "intraday_path",
+    "legacy_attenuated": "legacy",
+}
 BoundaryWalkForwardData = TwoBranchDataset
 
 
@@ -106,17 +121,18 @@ class BoundaryFlowPipeline:
         fit_rows: list[int] = []
         held_by_policy = {name: (False, False) for name in POLICY_ABLATION_NAMES}
         previous_weights_by_policy = {name: {} for name in POLICY_ABLATION_NAMES}
+        posterior_policy_config = BoundaryPolicyConfig(
+            minimum_direction_probability=self.config.minimum_direction_probability,
+            minimum_signal_to_noise=self.config.minimum_signal_to_noise,
+            minimum_survival_probability=self.config.minimum_survival_probability,
+        )
         policies = {
-            "posterior_signal": BoundaryPolicy(
-                BoundaryPolicyConfig(
-                    minimum_direction_probability=self.config.minimum_direction_probability,
-                    minimum_signal_to_noise=self.config.minimum_signal_to_noise,
-                    minimum_survival_probability=self.config.minimum_survival_probability,
-                )
-            ),
-            "legacy_attenuated": BoundaryPolicy(
+            name: BoundaryPolicy(
                 BoundaryPolicyConfig(mode="legacy_attenuated")
-            ),
+                if name == "legacy_attenuated"
+                else posterior_policy_config
+            )
+            for name in POLICY_ABLATION_NAMES
         }
         drift_names: tuple[str, ...] = ()
 
@@ -142,6 +158,9 @@ class BoundaryFlowPipeline:
                                 if legacy
                                 else "drift_survival"
                             ),
+                            drift_feature_set=DRIFT_FEATURE_SET_BY_POLICY[
+                                policy_name
+                            ],
                         )
                     ).fit(
                         data.states,
@@ -150,7 +169,7 @@ class BoundaryFlowPipeline:
                         training_cutoff=cutoff,
                     )
                     posteriors_by_policy[policy_name].append(posterior)
-                    if not legacy:
+                    if policy_name == "posterior_signal":
                         fit_rows.append(posterior.fit_rows)
                         drift_names = posterior.drift_feature_names
                     posterior_payloads.append(

@@ -20,9 +20,16 @@ from bnhmm.boundary_fk.types import TwoBranchDailyStates, TwoBranchLabels
 def _dataset(rows: int = 80) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
     rng = np.random.default_rng(17)
     sessions = np.busday_offset(np.datetime64("2024-01-02"), np.arange(rows))
-    values = rng.normal(0.0, 0.01, size=(rows, 2, 5))
+    values = np.concatenate(
+        (
+            rng.normal(0.0, 0.01, size=(rows, 2, 5)),
+            np.zeros((rows, 2, 3), dtype=np.float64),
+        ),
+        axis=2,
+    )
     values[:, :, 3] = 0.01
     values[:, :, 4] = 0.8
+    values[:, :, 5:] = 0.0
     next_return = np.column_stack(
         (0.8 * values[:, 0, 1], -0.8 * values[:, 1, 1])
     ) + rng.normal(0.0, 0.001, size=(rows, 2))
@@ -40,6 +47,9 @@ def _dataset(rows: int = 80) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
                 "return_mean_20",
                 "volatility_20",
                 "coherence_1d",
+                "signed_path_efficiency",
+                "closing_flow",
+                "shock_recovery",
             ),
             values=values,
             valid=np.ones((rows, 2), dtype=np.bool_),
@@ -51,6 +61,88 @@ def _dataset(rows: int = 80) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
             historical_volatility=np.full((rows, 2), 0.01),
             valid=valid,
         ),
+    )
+
+
+def _intraday_dataset(
+    rows: int = 80,
+) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
+    return _dataset(rows)
+
+
+def test_closing_flow_profile_is_default_and_legacy_profile_stays_four_dimensional() -> None:
+    states, labels = _intraday_dataset()
+    cutoff = labels.target_time[59]
+
+    posterior = BayesianBranchModel(
+        BayesianBranchModelConfig(minimum_rows=30)
+    ).fit(states, labels, branch=0, training_cutoff=cutoff)
+    legacy = BayesianBranchModel(
+        BayesianBranchModelConfig(
+            minimum_rows=30,
+            drift_feature_set="legacy",
+        )
+    ).fit(states, labels, branch=0, training_cutoff=cutoff)
+
+    assert posterior.drift_feature_names[-1] == "closing_flow"
+    assert len(posterior.drift_feature_names) == 5
+    assert legacy.drift_feature_names == (
+        "return_1d",
+        "return_mean_5",
+        "return_mean_20",
+        "coherence_1d",
+    )
+
+
+@pytest.mark.parametrize(
+    ("feature_set", "added_feature"),
+    (
+        ("path_efficiency", "signed_path_efficiency"),
+        ("closing_flow", "closing_flow"),
+        ("shock_recovery", "shock_recovery"),
+    ),
+)
+def test_single_intraday_feature_profiles_are_independently_fittable(
+    feature_set: str,
+    added_feature: str,
+) -> None:
+    states, labels = _intraday_dataset()
+
+    posterior = BayesianBranchModel(
+        BayesianBranchModelConfig(
+            minimum_rows=30,
+            drift_feature_set=feature_set,
+        )
+    ).fit(
+        states,
+        labels,
+        branch=0,
+        training_cutoff=labels.target_time[59],
+    )
+
+    assert posterior.drift_feature_names[-1] == added_feature
+    assert len(posterior.drift_feature_names) == 5
+
+
+def test_all_intraday_profile_remains_available_for_ablation() -> None:
+    states, labels = _intraday_dataset()
+
+    posterior = BayesianBranchModel(
+        BayesianBranchModelConfig(
+            minimum_rows=30,
+            drift_feature_set="intraday_path",
+        )
+    ).fit(
+        states,
+        labels,
+        branch=0,
+        training_cutoff=labels.target_time[59],
+    )
+
+    assert posterior.drift_feature_names[-3:] == (
+        "signed_path_efficiency",
+        "closing_flow",
+        "shock_recovery",
     )
 
 

@@ -920,13 +920,19 @@ function paintBoundaryFlowResult(job, stages, predictions, ablation = {}) {
   }).join("");
 
   const ablationLabels = {
-    posterior_signal: "近期后验信号",
+    posterior_signal: "尾盘流向（正式）",
+    legacy_features: "旧4项输入",
+    path_efficiency: "仅加路径效率",
+    shock_recovery: "仅加冲击恢复",
+    all_intraday: "三项全加",
     legacy_attenuated: "旧衰减漂移",
   };
   document.querySelector("#boundary-ablation-table").innerHTML = Object.entries(ablation)
     .map(([name, metrics]) => `<tr>
       <td><strong>${escapeHtml(ablationLabels[name] || name)}</strong></td>
       <td>${(metrics.direction_counts || [0, 0, 0]).map(formatInteger).join(" / ")}</td>
+      <td>${formatPercent(metrics.drift_direction_accuracy)}</td>
+      <td>${formatNumber(metrics.drift_rank_ic, 4)}</td>
       <td>${formatPercent(metrics.balanced_accuracy)}</td>
       <td>${formatPercent(metrics.macro_f1)}</td>
       <td>${formatPercent(metrics.open_rate)}</td>
