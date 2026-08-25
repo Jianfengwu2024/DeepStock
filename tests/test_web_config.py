@@ -11,7 +11,7 @@ from bnhmm.web.jobs import JobManager, JobRecord, WalkForwardJobRequest
 
 
 class WebSectorFlowConfigTests(unittest.TestCase):
-    def test_config_exposes_minimal_direct_path_defaults(self) -> None:
+    def test_config_has_no_direct_path_bypass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manager = JobManager(directory, Path.cwd())
             request = SimpleNamespace(
@@ -26,11 +26,7 @@ class WebSectorFlowConfigTests(unittest.TestCase):
             payload = config(request)
             manager.close()
 
-        defaults = payload["strategy_defaults"]["path-efficiency-direct"]
-        self.assertEqual(defaults["strategy"], "path-efficiency-direct")
-        self.assertEqual(defaults["topology_lookback_sessions"], 60)
-        self.assertEqual(defaults["transaction_cost_bps"], 10.0)
-        self.assertEqual(defaults["device"], "cpu")
+        self.assertNotIn("path-efficiency-direct", payload["strategy_defaults"])
 
     def test_config_exposes_boundary_flow_specific_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -50,6 +46,7 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         defaults = payload["strategy_defaults"]["boundary-flow-fk"]
         self.assertEqual(defaults["strategy"], "boundary-flow-fk")
         self.assertEqual(defaults["topology_lookback_sessions"], 60)
+        self.assertEqual(payload["boundary_cache_lookbacks"], [10, 20, 30, 40, 60, 90])
         self.assertEqual(defaults["minimum_train_sessions"], 120)
         self.assertEqual(defaults["regime_neutral_sigma"], 0.35)
         self.assertEqual(defaults["boundary_fk_paths"], 10_000)

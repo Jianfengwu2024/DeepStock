@@ -1,4 +1,4 @@
-"""Real-data construction and CLI execution for TwoBranchFK."""
+"""Real-data construction and CLI execution for PathEfficiencyFK."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from ..data.source import DuckDBBarSource
 from ..sector_flow.panel import SectorMinutePanelBuilder
 from ..sector_flow.topology import TopologyConfig
 from .branch_state import TwoBranchDailyStateBuilder
+from .cache import BoundaryDataCache, BoundaryDataCacheKey
 from .daily_state import BoundaryTopologyBuilder
 from .normalization import CausalBoundaryNormalizer
 from .pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
@@ -25,22 +26,26 @@ def run_boundary_flow_experiment(args: Any) -> None:
     started = time.perf_counter()
     symbols = tuple(item.strip() for item in args.symbols.split(",") if item.strip())
     if len(symbols) < 4:
-        raise ValueError("TwoBranchFK requires at least four symbols")
+        raise ValueError("PathEfficiencyFK requires at least four symbols")
     start = date.fromisoformat(args.start)
     end = date.fromisoformat(args.end)
     if end <= start:
-        raise ValueError("TwoBranchFK end must follow start")
+        raise ValueError("PathEfficiencyFK end must follow start")
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    source = DuckDBBarSource(args.duckdb_path)
-    data, context = build_boundary_experiment_data(
-        source,
-        symbols,
-        start,
-        end,
-        topology_lookback_sessions=args.topology_lookback_sessions,
+    key = BoundaryDataCacheKey.from_source(
+        dataset_id=args.dataset_id,
+        source_path=args.duckdb_path,
+        symbols=symbols,
+        start=start.isoformat(),
+        end=end.isoformat(),
+        lookback_sessions=args.topology_lookback_sessions,
     )
-    _write_upstream_artifacts(output, context)
+    data = BoundaryDataCache(args.cache_root).load(
+        key,
+        evaluation_start=start.isoformat(),
+        evaluation_end=end.isoformat(),
+    )
     result = BoundaryFlowPipeline(
         BoundaryFlowPipelineConfig(
             minimum_train_sessions=args.minimum_train_sessions,
@@ -57,9 +62,11 @@ def run_boundary_flow_experiment(args: Any) -> None:
     ).run(data, output)
     summary = {
         "strategy": "boundary-flow-fk",
-        "display_name": "两支流 FK",
+        "display_name": "路径效率 FK",
         "dataset_id": args.dataset_id,
         "symbols": len(symbols),
+        "data_source": "precomputed",
+        "topology_lookback_sessions": args.topology_lookback_sessions,
         "elapsed_seconds": time.perf_counter() - started,
         "model_names": list(result.model_names),
         "stages": [

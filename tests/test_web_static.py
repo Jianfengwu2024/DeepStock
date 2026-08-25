@@ -54,10 +54,14 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.24.7', html)
-        self.assertIn('/static/styles.css?v=0.24.1', html)
+        self.assertIn('/static/app.js?v=0.25.0', html)
+        self.assertIn('/static/styles.css?v=0.25.0', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
+        self.assertIn('id="boundary-data-build"', html)
+        self.assertIn('id="boundary-data-status"', html)
+        self.assertIn('<option value="90">90 日</option>', html)
+        self.assertIn('api("/api/boundary-data/build"', script)
         for field in (
             "boundary_drift_half_life_sessions",
             "boundary_minimum_direction_probability",
@@ -95,8 +99,9 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("metrics.average_exposure", script)
         self.assertIn("metrics.average_turnover", script)
         self.assertIn('"boundary-flow-fk"', script)
-        self.assertIn("两支流 FK", html)
+        self.assertIn("路径效率 FK", html)
         for artifact in (
+            "path-efficiency-fk-report.md",
             "boundary-policy-evaluation.json",
             "feynman-kac-predictions.json",
         ):
@@ -115,27 +120,20 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(field, script)
         self.assertNotIn("旧衰减漂移", script)
 
-    def test_direct_path_workspace_reads_direct_sign_artifacts(self) -> None:
+    def test_path_efficiency_fk_is_the_only_two_branch_strategy(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('value="path-efficiency-direct"', html)
-        self.assertIn("路径效率基准", html)
-        self.assertIn("正值买入 50%", html)
-        self.assertIn("负值清仓", html)
-        self.assertIn("零值不动", html)
-        self.assertIn('"path-efficiency-direct"', script)
-        self.assertIn("PathEfficiency", script)
-        self.assertIn("path-efficiency-evaluation.json", script)
-        self.assertIn("path-efficiency-predictions.json", script)
-        self.assertIn("path_efficiency", script)
-        self.assertIn("signal_rank_ic", script)
-        self.assertIn("benchmark.net_total_return", script)
-        self.assertRegex(
-            script,
-            r'"path-efficiency-direct": \[\s*'
-            r'"topology_lookback_sessions", "transaction_cost_bps", "device",\s*\]',
-        )
+        self.assertEqual(html.count('value="boundary-flow-fk"'), 1)
+        self.assertIn("路径效率 FK", html)
+        self.assertIn("看多：满仓", html)
+        self.assertIn("看平：每次减仓 25%", html)
+        self.assertIn("连续四次看平清仓", html)
+        self.assertIn("看空：立即清仓", html)
+        self.assertNotIn('value="path-efficiency-direct"', html)
+        self.assertNotIn('"path-efficiency-direct"', script)
+        self.assertNotIn("path-efficiency-evaluation.json", script)
+        self.assertNotIn("path-efficiency-predictions.json", script)
 
     def test_river_workspace_has_four_views_and_stock_inspector(self) -> None:
         html = (ROOT / "river.html").read_text(encoding="utf-8")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import json
 import subprocess
+import sys
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..config import HOLOGRAPHIC_LITE_FIELD_NAMES
+from ..boundary_fk.cache import CACHE_LOOKBACKS
 from ..data.sector_dataset import SectorDatasetCatalog
 from ..data.source import DuckDBBarSource
 from ..repair import RepairVariantCatalog
@@ -29,6 +31,7 @@ from .jobs import (
     JobRecord,
     WalkForwardJobRequest,
 )
+from .boundary_data import BoundaryDataBuildManager
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -38,6 +41,9 @@ DEFAULT_JOB_ROOT = "/home/wujianfeng/private/bnhmm-storage/ui-runs"
 DEFAULT_SECTOR_DATASET_ROOT = "/home/share/data/sectors"
 DEFAULT_VISUAL_DATASET_ROOT = (
     "/home/wujianfeng/private/bnhmm-storage/visual-datasets/semiconductor-2024-2025"
+)
+DEFAULT_BOUNDARY_CACHE_ROOT = (
+    "/home/wujianfeng/private/bnhmm-storage/path-efficiency-data"
 )
 
 
@@ -53,6 +59,11 @@ async def lifespan(app: FastAPI):
     )
     app.state.visual_dataset = VisualDatasetIndex(
         os.getenv("BNHMM_VISUAL_DATASET_ROOT", DEFAULT_VISUAL_DATASET_ROOT)
+    )
+    app.state.boundary_data = BoundaryDataBuildManager(
+        os.getenv("BNHMM_BOUNDARY_CACHE_ROOT", DEFAULT_BOUNDARY_CACHE_ROOT),
+        os.getenv("BNHMM_PROJECT_ROOT", str(PROJECT_ROOT)),
+        sys.executable,
     )
     yield
     manager.close()
@@ -207,18 +218,11 @@ def config(request: Request) -> dict[str, Any]:
         "boundary_minimum_signal_to_noise": 0.10,
         "boundary_minimum_survival_probability": 0.35,
     })
-    direct_path_defaults = {
-        **defaults,
-        "strategy": "path-efficiency-direct",
-        "training_scope": "sector-pooled",
-        "device": "cpu",
-        "topology_lookback_sessions": 60,
-        "transaction_cost_bps": 10.0,
-    }
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
         "active_jobs": sum(item.status in {"queued", "running"} for item in jobs),
+        "boundary_cache_lookbacks": list(CACHE_LOOKBACKS),
         "defaults": defaults,
         "strategy_defaults": {
             "bnhmm": defaults,
@@ -229,7 +233,6 @@ def config(request: Request) -> dict[str, Any]:
             "fk-stock": fk_defaults,
             "sector-flow-bayes": sector_flow_defaults,
             "boundary-flow-fk": boundary_flow_defaults,
-            "path-efficiency-direct": direct_path_defaults,
         },
         "datasets": [item.as_json() for item in datasets],
         "repair_variants": [
@@ -268,6 +271,38 @@ def datasets(request: Request) -> dict[str, list[dict[str, object]]]:
             item.as_json() for item in request.app.state.sector_datasets.list()
         ]
     }
+
+
+@app.get("/api/boundary-data/status/{dataset_id}")
+def boundary_data_status(dataset_id: str, request: Request) -> dict[str, Any]:
+    if request.app.state.sector_datasets.get(dataset_id) is None:
+        raise HTTPException(status_code=404, detail="板块数据集不存在")
+    return request.app.state.boundary_data.status(dataset_id)
+
+
+@app.post("/api/boundary-data/build", status_code=202)
+def build_boundary_data(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    dataset_id = str(payload.get("dataset_id", ""))
+    dataset = request.app.state.sector_datasets.get(dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="板块数据集不存在")
+    try:
+        start = date.fromisoformat(str(payload.get("start", "")))
+        end = date.fromisoformat(str(payload.get("end", "")))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="构造日期无效") from exc
+    if end <= start:
+        raise HTTPException(status_code=400, detail="结束日期必须晚于开始日期")
+    try:
+        return request.app.state.boundary_data.submit(
+            database_path=dataset.database_path,
+            symbols=dataset.symbols,
+            dataset_id=dataset.dataset_id,
+            start=start.isoformat(),
+            end=end.isoformat(),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/visual-dataset/summary")
@@ -576,12 +611,8 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "boundary-model-posterior.json",
             "feynman-kac-predictions.json",
             "boundary-policy-evaluation.json",
-            "boundary-policy-ablation.json",
-            "boundary-ablation-report.md",
+            "path-efficiency-fk-report.md",
             "boundary-residual-analysis.json",
-            "path-efficiency-predictions.json",
-            "path-efficiency-evaluation.json",
-            "path-efficiency-report.md",
             "ranking.csv",
             "predictions.csv",
         )

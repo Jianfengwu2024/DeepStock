@@ -23,8 +23,6 @@ BRANCH_FEATURE_NAMES = (
     "volatility_20",
     "coherence_1d",
     "signed_path_efficiency",
-    "closing_flow",
-    "shock_recovery",
 )
 
 
@@ -33,7 +31,6 @@ class TwoBranchDailyStateConfig:
     minimum_valid_minutes: int = 30
     history_sessions: int = 20
     minimum_member_fraction: float = 0.8
-    closing_window_minutes: int = 30
 
     def __post_init__(self) -> None:
         if self.minimum_valid_minutes < 1:
@@ -42,8 +39,6 @@ class TwoBranchDailyStateConfig:
             raise ValueError("branch history must contain at least five sessions")
         if not 0.0 < self.minimum_member_fraction <= 1.0:
             raise ValueError("minimum member fraction must lie in (0, 1]")
-        if self.closing_window_minutes < 1:
-            raise ValueError("closing flow window must be positive")
 
 
 class TwoBranchDailyStateBuilder:
@@ -53,13 +48,11 @@ class TwoBranchDailyStateBuilder:
         minimum_valid_minutes: int = 30,
         history_sessions: int = 20,
         minimum_member_fraction: float = 0.8,
-        closing_window_minutes: int = 30,
     ) -> None:
         self.config = TwoBranchDailyStateConfig(
             minimum_valid_minutes=minimum_valid_minutes,
             history_sessions=history_sessions,
             minimum_member_fraction=minimum_member_fraction,
-            closing_window_minutes=closing_window_minutes,
         )
 
     def build(
@@ -80,7 +73,7 @@ class TwoBranchDailyStateBuilder:
         valid = np.zeros((len(sessions), 2), dtype=np.bool_)
         branch_returns = np.full((len(sessions), 2), np.nan, dtype=np.float64)
         branch_coherence = np.full_like(branch_returns, np.nan)
-        path_features = np.full((len(sessions), 2, 3), np.nan, dtype=np.float64)
+        path_efficiency = np.full((len(sessions), 2), np.nan, dtype=np.float64)
         symbol_index = {symbol: index for index, symbol in enumerate(panel.symbols)}
 
         for row, session in enumerate(sessions):
@@ -99,7 +92,7 @@ class TwoBranchDailyStateBuilder:
                 branch_coherence[row, branch] = self._coherence(
                     panel, minute_rows, columns
                 )
-                path_features[row, branch] = self._intraday_path_features(
+                path_efficiency[row, branch] = self._intraday_path_efficiency(
                     panel, minute_rows, columns
                 )
 
@@ -108,11 +101,11 @@ class TwoBranchDailyStateBuilder:
             for branch in range(2):
                 trailing = branch_returns[row - history + 1 : row + 1, branch]
                 coherence = branch_coherence[row, branch]
-                intraday = path_features[row, branch]
+                intraday = path_efficiency[row, branch]
                 if (
                     np.any(~np.isfinite(trailing))
                     or not np.isfinite(coherence)
-                    or np.any(~np.isfinite(intraday))
+                    or not np.isfinite(intraday)
                 ):
                     continue
                 values[row, branch] = (
@@ -121,7 +114,7 @@ class TwoBranchDailyStateBuilder:
                     float(np.mean(trailing)),
                     max(float(np.std(trailing)), 1e-8),
                     coherence,
-                    *intraday,
+                    intraday,
                 )
                 valid[row, branch] = True
 
@@ -218,12 +211,12 @@ class TwoBranchDailyStateBuilder:
                 ratios.append(abs(float(np.mean(velocity))) / denominator)
         return float(np.mean(ratios)) if ratios else np.nan
 
-    def _intraday_path_features(
+    def _intraday_path_efficiency(
         self,
         panel: NormalizedBoundaryPanel,
         rows: np.ndarray,
         columns: np.ndarray,
-    ) -> np.ndarray:
+    ) -> float:
         branch_velocity: list[float] = []
         for row in rows:
             available = panel.raw_velocity_valid[row, columns]
@@ -233,29 +226,14 @@ class TwoBranchDailyStateBuilder:
                 float(np.mean(panel.raw_velocity[row, columns[available]]))
             )
         if len(branch_velocity) < self.config.minimum_valid_minutes:
-            return np.full(3, np.nan, dtype=np.float64)
+            return np.nan
 
         velocity = np.asarray(branch_velocity, dtype=np.float64)
         total_variation = float(np.sum(np.abs(velocity)))
         if total_variation <= 1e-12:
-            return np.zeros(3, dtype=np.float64)
+            return 0.0
         displacement = float(np.sum(velocity))
-        closing_window = min(self.config.closing_window_minutes, len(velocity))
-        closing_flow = float(np.sum(velocity[-closing_window:])) / total_variation
-        path = np.concatenate((np.zeros(1), np.cumsum(velocity)))
-        close = float(path[-1])
-        recovery = (
-            (close - float(np.min(path)))
-            - (float(np.max(path)) - close)
-        ) / total_variation
-        return np.clip(
-            np.asarray(
-                (displacement / total_variation, closing_flow, recovery),
-                dtype=np.float64,
-            ),
-            -1.0,
-            1.0,
-        )
+        return float(np.clip(displacement / total_variation, -1.0, 1.0))
 
     @staticmethod
     def _memberships(

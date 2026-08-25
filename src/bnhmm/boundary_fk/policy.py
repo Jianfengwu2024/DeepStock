@@ -3,27 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
-
 import numpy as np
 
 from .feynman_kac import BoundaryFeynmanKacForecast
 
 
 FULL_BRANCH_EXPOSURE = 0.5
-HALF_BRANCH_EXPOSURE = 0.25
+BRANCH_EXPOSURE_STEP = 0.125
+ALLOWED_BRANCH_EXPOSURES = (0.0, 0.125, 0.25, 0.375, 0.5)
 
 
 @dataclass(frozen=True, slots=True)
 class BoundaryPolicyConfig:
-    mode: Literal["posterior_signal", "legacy_attenuated"] = "posterior_signal"
     minimum_direction_probability: float = 0.60
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
 
     def __post_init__(self) -> None:
-        if self.mode not in ("posterior_signal", "legacy_attenuated"):
-            raise ValueError("unknown two-branch policy mode")
         if not 0.5 <= self.minimum_direction_probability <= 1.0:
             raise ValueError("direction probability must lie in [0.5, 1]")
         if self.minimum_signal_to_noise < 0.0:
@@ -38,10 +34,10 @@ class BranchPositionState:
     consecutive_flat_signals: int = 0
 
     def __post_init__(self) -> None:
-        if self.exposure not in (0.0, HALF_BRANCH_EXPOSURE, FULL_BRANCH_EXPOSURE):
-            raise ValueError("branch exposure must be 0%, 25%, or 50%")
-        if self.consecutive_flat_signals not in (0, 1):
-            raise ValueError("flat signal count must be 0 or 1")
+        if self.exposure not in ALLOWED_BRANCH_EXPOSURES:
+            raise ValueError("branch exposure must use 12.5% reduction steps")
+        if self.consecutive_flat_signals not in range(4):
+            raise ValueError("flat signal count must be between 0 and 3")
         if self.exposure == 0.0 and self.consecutive_flat_signals:
             raise ValueError("an empty branch cannot retain a flat signal count")
 
@@ -86,12 +82,15 @@ class BoundaryPolicy:
             self._direction(item, threshold)
             for item, threshold in zip(forecasts, neutral_thresholds, strict=True)
         )
-        states = tuple(
-            self._next_position_state(direction, previous)
-            for direction, previous in zip(
-                directions, previous_branch_states, strict=True
+        if "bear" in directions:
+            states = (BranchPositionState(), BranchPositionState())
+        else:
+            states = tuple(
+                self._next_position_state(direction, previous)
+                for direction, previous in zip(
+                    directions, previous_branch_states, strict=True
+                )
             )
-        )
         exposures = tuple(state.exposure for state in states)
         selected: list[str] = []
         target_weights: list[float] = []
@@ -125,14 +124,15 @@ class BoundaryPolicy:
     ) -> BranchPositionState:
         if direction == "bull":
             return BranchPositionState(exposure=FULL_BRANCH_EXPOSURE)
-        if direction == "bear" or previous.exposure == 0.0:
+        if previous.exposure == 0.0:
             return BranchPositionState()
-        if previous.consecutive_flat_signals == 0:
-            return BranchPositionState(
-                exposure=HALF_BRANCH_EXPOSURE,
-                consecutive_flat_signals=1,
-            )
-        return BranchPositionState()
+        exposure = round(previous.exposure - BRANCH_EXPOSURE_STEP, 3)
+        if exposure <= 0.0:
+            return BranchPositionState()
+        return BranchPositionState(
+            exposure=exposure,
+            consecutive_flat_signals=previous.consecutive_flat_signals + 1,
+        )
 
     def _direction(
         self,
@@ -141,12 +141,6 @@ class BoundaryPolicy:
     ) -> str:
         if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
             raise ValueError("neutral threshold must be finite and non-negative")
-        if self.config.mode == "legacy_attenuated":
-            if forecast.expected_attenuated_drift > neutral_threshold:
-                return "bull"
-            if forecast.expected_attenuated_drift < -neutral_threshold:
-                return "bear"
-            return "flat"
         if (
             forecast.drift_signal_to_noise < self.config.minimum_signal_to_noise
             or forecast.trend_survival_probability

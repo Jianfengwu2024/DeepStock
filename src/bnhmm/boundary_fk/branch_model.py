@@ -3,32 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
-
 import numpy as np
 
 from .types import TwoBranchDailyStates, TwoBranchLabels
 
 
-LEGACY_DRIFT_FEATURE_NAMES = (
-    "return_1d",
-    "return_mean_5",
-    "return_mean_20",
-    "coherence_1d",
-)
-DRIFT_FEATURE_NAMES = LEGACY_DRIFT_FEATURE_NAMES + (
-    "signed_path_efficiency",
-    "closing_flow",
-    "shock_recovery",
-)
-DRIFT_FEATURE_SETS = {
-    "legacy": LEGACY_DRIFT_FEATURE_NAMES,
-    "path_efficiency_only": ("signed_path_efficiency",),
-    "path_efficiency": LEGACY_DRIFT_FEATURE_NAMES + ("signed_path_efficiency",),
-    "closing_flow": LEGACY_DRIFT_FEATURE_NAMES + ("closing_flow",),
-    "shock_recovery": LEGACY_DRIFT_FEATURE_NAMES + ("shock_recovery",),
-    "intraday_path": DRIFT_FEATURE_NAMES,
-}
+DRIFT_FEATURE_NAMES = ("signed_path_efficiency",)
 POTENTIAL_FEATURE_NAMES = (
     "abs_return_1d",
     "volatility_20",
@@ -45,17 +25,6 @@ class BayesianBranchModelConfig:
     convergence_tolerance: float = 1e-8
     neutral_sigma: float = 0.35
     drift_half_life_sessions: float | None = 60.0
-    potential_target: Literal[
-        "drift_survival", "momentum_continuation"
-    ] = "drift_survival"
-    drift_feature_set: Literal[
-        "intraday_path",
-        "legacy",
-        "path_efficiency_only",
-        "path_efficiency",
-        "closing_flow",
-        "shock_recovery",
-    ] = "closing_flow"
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -69,13 +38,6 @@ class BayesianBranchModelConfig:
             and self.drift_half_life_sessions <= 0.0
         ):
             raise ValueError("drift half-life must be positive when provided")
-        if self.potential_target not in (
-            "drift_survival",
-            "momentum_continuation",
-        ):
-            raise ValueError("unknown branch potential target")
-        if self.drift_feature_set not in DRIFT_FEATURE_SETS:
-            raise ValueError("unknown branch drift feature set")
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +101,7 @@ class BayesianBranchModel:
         if int(selected.sum()) < self.config.minimum_rows:
             raise ValueError("insufficient matured branch returns for Bayesian fit")
 
-        drift_names = DRIFT_FEATURE_SETS[self.config.drift_feature_set]
+        drift_names = DRIFT_FEATURE_NAMES
         drift_raw = np.column_stack(
             [states.feature(name)[:, branch] for name in drift_names]
         )
@@ -159,14 +121,10 @@ class BayesianBranchModel:
 
         potential_raw = _potential_matrix(states, branch)
         selected_rows = np.flatnonzero(selected)
-        if self.config.potential_target == "drift_survival":
-            calibration_positions, causal_direction = (
-                self._causal_drift_predictions(drift_raw[selected], target)
-            )
-            calibration_rows = selected_rows[calibration_positions]
-        else:
-            calibration_rows = selected_rows
-            causal_direction = states.feature("return_mean_5")[selected, branch]
+        calibration_positions, causal_direction = self._causal_drift_predictions(
+            drift_raw[selected], target
+        )
+        calibration_rows = selected_rows[calibration_positions]
         potential_x, potential_center, potential_scale = _standardized_design(
             potential_raw[calibration_rows]
         )

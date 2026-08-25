@@ -218,6 +218,10 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .boundary-gate { display: grid; gap: 4px; padding: 11px 12px; border-left: 3px solid var(--green); background: var(--green-soft); }
 .boundary-gate strong { font-size: 11px; }
 .boundary-gate span, .boundary-empty { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.boundary-data-control { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid var(--line); background: var(--panel-muted); }
+.boundary-data-control > div { display: grid; gap: 3px; min-width: 0; }
+.boundary-data-control strong { font-size: 11px; }
+.boundary-data-control span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .sector-flow-results { display: grid; gap: 16px; margin-bottom: 18px; }
 .sector-flow-results.regime-mode > #sector-flow-water-state,
 .sector-flow-results.regime-mode > .report-image-wrap,

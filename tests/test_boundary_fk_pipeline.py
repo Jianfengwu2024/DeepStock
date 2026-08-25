@@ -56,7 +56,7 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
         )
     ).run(data, tmp_path)
 
-    assert result.model_names == BOUNDARY_MODEL_NAMES == ("TwoBranchFK",)
+    assert result.model_names == BOUNDARY_MODEL_NAMES == ("PathEfficiencyFK",)
     assert len(result.stages) == 1
     assert result.stages[0].status == "completed"
     predictions = json.loads(
@@ -66,7 +66,6 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
     assert len(predictions[0]["branches"]) == 2
     assert "effective_drift" in predictions[0]["branches"][0]
     assert {
-        "legacy_attenuated_drift",
         "bullish_drift_probability",
         "drift_signal_to_noise",
         "survival_confidence",
@@ -84,18 +83,21 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
     }.issubset(predictions[0])
     assert not (tmp_path / "boundary-policy-ablation.json").exists()
     assert all(
-        round(sum(item["target_weights"]), 8) in {0.0, 0.25, 0.5, 0.75, 1.0}
+        round(sum(item["target_weights"]), 8)
+        in {0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0}
         for item in predictions
     )
     posteriors = json.loads(
         (tmp_path / "boundary-model-posterior.json").read_text(encoding="utf-8")
     )
-    assert {item["policy"] for item in posteriors} == {"path_efficiency_only"}
+    assert {item["policy"] for item in posteriors} == {"path_efficiency_fk"}
     assert all(
         item["drift_feature_names"] == ["signed_path_efficiency"]
         for item in posteriors
     )
     assert result.stages[0].drift_feature_names == ("signed_path_efficiency",)
+    assert (tmp_path / "path-efficiency-fk-report.md").exists()
+    assert not (tmp_path / "boundary-ablation-report.md").exists()
     assert 0.0 <= result.stages[0].metrics.average_exposure <= 1.0
 
 

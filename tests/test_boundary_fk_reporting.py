@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bnhmm.boundary_fk.reporting import write_ablation_report
+from bnhmm.boundary_fk.reporting import write_baseline_report
 
 
 def test_report_describes_pure_path_position_baseline(tmp_path) -> None:
@@ -17,16 +17,17 @@ def test_report_describes_pure_path_position_baseline(tmp_path) -> None:
         "direction_counts": [2, 6, 4],
     }
 
-    write_ablation_report(
+    write_baseline_report(
         path,
-        [{"model_name": "TwoBranchFK", "status": "completed", "metrics": metrics}],
+        [{"model_name": "PathEfficiencyFK", "status": "completed", "metrics": metrics}],
     )
 
     report = path.read_text(encoding="utf-8")
-    assert "纯路径效率" in report
-    assert "多 50% / 平 25% / 空 0%（每条支流）" in report
+    assert "signed_path_efficiency" in report
+    assert "连续四次看平清仓" in report
+    assert "任一支流看空则全部清仓" in report
     assert "平均仓位" in report
     assert "62.50%" in report
     assert "10.00%" in report
-    assert "日内物理特征消融" not in report
+    assert "消融" not in report
     assert "旧四项" not in report

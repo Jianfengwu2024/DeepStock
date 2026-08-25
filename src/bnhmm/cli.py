@@ -174,10 +174,10 @@ def _boundary_flow_walk_forward(args: argparse.Namespace) -> int:
     return 0
 
 
-def _direct_path_walk_forward(args: argparse.Namespace) -> int:
-    from .boundary_fk.direct_experiment import run_direct_path_experiment
+def _boundary_data_build(args: argparse.Namespace) -> int:
+    from .boundary_fk.precompute import run_boundary_data_build
 
-    run_direct_path_experiment(args)
+    run_boundary_data_build(args)
     return 0
 
 
@@ -1407,6 +1407,19 @@ def build_parser() -> argparse.ArgumentParser:
     sector_flow.add_argument("--device", default="cpu")
     sector_flow.set_defaults(handler=_sector_flow_walk_forward)
 
+    boundary_data = subparsers.add_parser("boundary-data-build")
+    boundary_data.add_argument("--duckdb-path", required=True)
+    boundary_data.add_argument("--symbols", required=True)
+    boundary_data.add_argument("--dataset-id", required=True)
+    boundary_data.add_argument("--start", required=True)
+    boundary_data.add_argument("--end", required=True)
+    boundary_data.add_argument(
+        "--cache-root",
+        default="/home/wujianfeng/private/bnhmm-storage/path-efficiency-data",
+    )
+    boundary_data.add_argument("--lookbacks", default="10,20,30,40,60,90")
+    boundary_data.set_defaults(handler=_boundary_data_build)
+
     boundary_flow = subparsers.add_parser("boundary-flow-fk-walk-forward")
     boundary_flow.add_argument("--duckdb-path", required=True)
     boundary_flow.add_argument("--symbols", required=True)
@@ -1414,7 +1427,16 @@ def build_parser() -> argparse.ArgumentParser:
     boundary_flow.add_argument("--start", required=True)
     boundary_flow.add_argument("--end", required=True)
     boundary_flow.add_argument("--output-dir", required=True)
-    boundary_flow.add_argument("--topology-lookback-sessions", type=int, choices=(60,), default=60)
+    boundary_flow.add_argument(
+        "--cache-root",
+        default="/home/wujianfeng/private/bnhmm-storage/path-efficiency-data",
+    )
+    boundary_flow.add_argument(
+        "--topology-lookback-sessions",
+        type=int,
+        choices=(10, 20, 30, 40, 60, 90),
+        default=60,
+    )
     boundary_flow.add_argument("--minimum-train-sessions", type=int, default=120)
     boundary_flow.add_argument("--neutral-sigma", type=float, default=0.35)
     boundary_flow.add_argument("--fk-paths", type=int, default=10_000)
@@ -1426,19 +1448,6 @@ def build_parser() -> argparse.ArgumentParser:
     boundary_flow.add_argument("--seed", type=int, default=7)
     boundary_flow.add_argument("--max-folds", type=int)
     boundary_flow.set_defaults(handler=_boundary_flow_walk_forward)
-
-    direct_path = subparsers.add_parser("path-efficiency-walk-forward")
-    direct_path.add_argument("--duckdb-path", required=True)
-    direct_path.add_argument("--symbols", required=True)
-    direct_path.add_argument("--dataset-id", required=True)
-    direct_path.add_argument("--start", required=True)
-    direct_path.add_argument("--end", required=True)
-    direct_path.add_argument("--output-dir", required=True)
-    direct_path.add_argument(
-        "--topology-lookback-sessions", type=int, choices=(60,), default=60
-    )
-    direct_path.add_argument("--transaction-cost-bps", type=float, default=10.0)
-    direct_path.set_defaults(handler=_direct_path_walk_forward)
 
     train = subparsers.add_parser("train")
     train.add_argument("--duckdb-path", required=True)

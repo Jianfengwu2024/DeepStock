@@ -389,12 +389,17 @@ class WebJobTests(unittest.TestCase):
             training_scope="sector-pooled",
             dataset_id="semiconductor",
             minimum_train_sessions=120,
+            topology_lookback_sessions=30,
         )
 
         command = build_command(request, Path("/tmp/boundary-flow"))
 
         self.assertIn("boundary-flow-fk-walk-forward", command)
         self.assertEqual(command[command.index("--fk-paths") + 1], "10000")
+        self.assertEqual(
+            command[command.index("--topology-lookback-sessions") + 1], "30"
+        )
+        self.assertIn("--cache-root", command)
         self.assertNotIn("--branch-count", command)
         self.assertNotIn("--viscosity-window", command)
         self.assertNotIn("--minimum-raw-bullish-probability", command)
@@ -405,35 +410,13 @@ class WebJobTests(unittest.TestCase):
         self.assertNotIn("--layers", command)
         self.assertNotIn("--latent-states", command)
 
-    def test_direct_path_command_contains_no_model_parameters(self) -> None:
-        request = WalkForwardJobRequest(
-            strategy="path-efficiency-direct",
-            training_scope="sector-pooled",
-            dataset_id="semiconductor",
-        )
-
-        command = build_command(request, Path("/tmp/path-efficiency"))
-
-        self.assertIn("path-efficiency-walk-forward", command)
-        self.assertEqual(
-            command[command.index("--topology-lookback-sessions") + 1], "60"
-        )
-        self.assertEqual(
-            command[command.index("--transaction-cost-bps") + 1], "10.0"
-        )
-        for excluded in (
-            "--minimum-train-sessions",
-            "--neutral-sigma",
-            "--fk-paths",
-            "--drift-half-life-sessions",
-            "--minimum-direction-probability",
-            "--minimum-signal-to-noise",
-            "--minimum-survival-probability",
-            "--seed",
-            "--epochs",
-            "--device",
-        ):
-            self.assertNotIn(excluded, command)
+    def test_direct_path_bypass_is_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(
+                strategy="path-efficiency-direct",
+                training_scope="sector-pooled",
+                dataset_id="semiconductor",
+            )
 
     def test_gpu_memory_is_summed_across_matching_process_rows(self) -> None:
         output = "123, 512\n456, 900\n123, 256\n"

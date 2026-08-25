@@ -24,6 +24,7 @@ def test_boundary_flow_cli_exposes_only_current_model_parameters() -> None:
     )
 
     assert args.topology_lookback_sessions == 60
+    assert args.cache_root.endswith("path-efficiency-data")
     assert args.minimum_train_sessions == 120
     assert args.neutral_sigma == 0.35
     assert args.fk_paths == 10_000
@@ -44,3 +45,25 @@ def test_boundary_flow_cli_exposes_only_current_model_parameters() -> None:
         assert not hasattr(args, obsolete)
     assert not hasattr(args, "epochs")
     assert not hasattr(args, "layers")
+
+
+def test_boundary_data_build_cli_constructs_all_standard_windows() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "boundary-data-build",
+            "--duckdb-path",
+            "/data/semiconductor.duckdb",
+            "--symbols",
+            "000001,000002,000003,000004",
+            "--dataset-id",
+            "semiconductor",
+            "--start",
+            "2024-01-01",
+            "--end",
+            "2025-12-31",
+        ]
+    )
+
+    assert args.lookbacks == "10,20,30,40,60,90"
+    assert args.cache_root.endswith("path-efficiency-data")

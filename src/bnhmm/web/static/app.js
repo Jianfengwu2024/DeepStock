@@ -94,9 +94,6 @@ const strategyParameterFields = {
     "boundary_minimum_direction_probability", "boundary_minimum_signal_to_noise",
     "boundary_minimum_survival_probability", "transaction_cost_bps", "seed",
   ],
-  "path-efficiency-direct": [
-    "topology_lookback_sessions", "transaction_cost_bps", "device",
-  ],
 };
 
 const strategyNamePrefixes = {
@@ -107,8 +104,7 @@ const strategyNamePrefixes = {
   "stock-transformer": "StockTransformer",
   "fk-stock": "FKStock",
   "sector-flow-bayes": "SectorFlow",
-  "boundary-flow-fk": "TwoBranchFK",
-  "path-efficiency-direct": "PathEfficiency",
+  "boundary-flow-fk": "PathEfficiencyFK",
 };
 
 const statusText = {
@@ -153,6 +149,7 @@ function fillForm(defaults) {
   syncStrategySelection();
   syncModelConstraints();
   syncDatasetSelection();
+  if (currentStrategy() === "boundary-flow-fk") refreshBoundaryDataStatus();
 }
 
 function currentStrategy() {
@@ -228,6 +225,7 @@ function changeStrategy() {
   syncStrategySelection();
   syncModelConstraints();
   syncDatasetSelection();
+  if (strategy === "boundary-flow-fk") refreshBoundaryDataStatus();
   icons();
 }
 
@@ -237,14 +235,12 @@ function syncStrategySelection() {
   const fk = strategy === "fk-stock";
   const sectorFlow = strategy === "sector-flow-bayes";
   const boundaryFlow = strategy === "boundary-flow-fk";
-  const directPath = strategy === "path-efficiency-direct";
-  const twoBranch = boundaryFlow || directPath;
   const holoLite = strategy === "holo-bnhmm-lite";
   const repair = strategy === "holo-repair";
   const repairName = document.querySelector("#repair-variant")?.value || "HoloRepair";
   const holo = strategy === "holo-bnhmm" || holoLite || repair;
   const bayesianHmm = strategy === "bnhmm" || holo;
-  const neural = !fk && !sectorFlow && !twoBranch;
+  const neural = !fk && !sectorFlow && !boundaryFlow;
   document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", strategy !== "bnhmm"));
   document.querySelectorAll(".holo-only").forEach(element => element.classList.toggle("hidden", !holo));
   document.querySelectorAll(".repair-only").forEach(element => element.classList.toggle("hidden", !repair));
@@ -254,25 +250,22 @@ function syncStrategySelection() {
   document.querySelectorAll(".fk-only").forEach(element => element.classList.toggle("hidden", !fk));
   document.querySelectorAll(".sector-flow-only").forEach(element => element.classList.toggle("hidden", !sectorFlow));
   document.querySelectorAll(".boundary-flow-only").forEach(element => element.classList.toggle("hidden", !boundaryFlow));
-  document.querySelectorAll(".direct-path-only").forEach(element => element.classList.toggle("hidden", !directPath));
-  document.querySelectorAll(".non-direct-path-only").forEach(element => element.classList.toggle("hidden", directPath));
-  document.querySelectorAll(".non-boundary-flow-only").forEach(element => element.classList.toggle("hidden", twoBranch));
-  document.querySelectorAll(".non-sector-flow-only").forEach(element => element.classList.toggle("hidden", sectorFlow || twoBranch));
-  document.querySelectorAll(".legacy-walk-only").forEach(element => element.classList.toggle("hidden", sectorFlow || twoBranch));
+  document.querySelectorAll(".non-boundary-flow-only").forEach(element => element.classList.toggle("hidden", boundaryFlow));
+  document.querySelectorAll(".non-sector-flow-only").forEach(element => element.classList.toggle("hidden", sectorFlow || boundaryFlow));
+  document.querySelectorAll(".legacy-walk-only").forEach(element => element.classList.toggle("hidden", sectorFlow || boundaryFlow));
   document.querySelectorAll(".neural-only").forEach(element => element.classList.toggle("hidden", !neural));
-  document.querySelectorAll(".compute-only").forEach(element => element.classList.toggle("hidden", fk || twoBranch));
+  document.querySelectorAll(".compute-only").forEach(element => element.classList.toggle("hidden", fk || boundaryFlow));
   const scope = document.querySelector("#training-scope");
   const perSymbol = scope.querySelector('option[value="per-symbol"]');
-  perSymbol.disabled = stock || fk || holo || sectorFlow || twoBranch;
-  if (stock || fk || holo || sectorFlow || twoBranch) scope.value = "sector-pooled";
+  perSymbol.disabled = stock || fk || holo || sectorFlow || boundaryFlow;
+  if (stock || fk || holo || sectorFlow || boundaryFlow) scope.value = "sector-pooled";
   document.querySelector('[name="profile_protocol"]').value = holo
     ? (holoLite
       ? "price-volume-holographic-lite-v1"
       : "price-volume-holographic-flow-v1")
     : "phase-space-10m-local-flow-v8";
-  document.querySelector("#brand-subtitle").textContent = directPath
-    ? "PathEfficiency · direct signed path trading"
-    : boundaryFlow ? "TwoBranchFK · Bayesian drift and potential"
+  document.querySelector("#brand-subtitle").textContent = boundaryFlow
+    ? "PathEfficiencyFK · Bayesian drift and potential"
     : sectorFlow
     ? "SectorFlow · Bayesian sector dynamics"
     : fk
@@ -280,7 +273,7 @@ function syncStrategySelection() {
     : stock ? "StockTransformer · conservation language model"
       : holo ? `${repair ? repairName : holoLite ? "HoloLite" : "HoloBNHMM"} · 2D Bayesian flow field`
         : "BNHMM · Bayesian hidden-state model";
-  document.querySelector("#policy-section-title").textContent = sectorFlow || twoBranch
+  document.querySelector("#policy-section-title").textContent = sectorFlow || boundaryFlow
     ? "评估与成本"
     : "仓位策略";
   document.querySelector("#state-section-title").textContent = stock || fk
@@ -294,10 +287,10 @@ function syncStrategySelection() {
       ? "守恒 Token Transformer"
       : holo ? "二维局部场编码器 + Transformer" : "确定性 Transformer";
   }
-  const noDataset = (stock || fk || holo || sectorFlow || twoBranch) && state.datasets.length === 0;
+  const noDataset = (stock || fk || holo || sectorFlow || boundaryFlow) && state.datasets.length === 0;
   document.querySelector("#run-button").disabled = noDataset;
   document.querySelector("#form-error").textContent = noDataset
-    ? `${directPath ? "路径效率" : boundaryFlow ? "两支流 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
+    ? `${boundaryFlow ? "路径效率 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
     : "";
   syncStrategyControlAvailability();
 }
@@ -366,6 +359,48 @@ function syncDatasetSelection() {
     <span>${dataset.available_member_count} / ${dataset.member_count} 只股票可用</span>
     <span>${escapeHtml(dataset.data_start || "-")} 至 ${escapeHtml(dataset.data_end || "-")}</span>
     <span>${escapeHtml(dataset.source)} · ${escapeHtml(dataset.source_code)}</span>`;
+}
+
+async function refreshBoundaryDataStatus() {
+  const element = document.querySelector("#boundary-data-status");
+  const button = document.querySelector("#boundary-data-build");
+  const datasetId = document.querySelector("#dataset-select")?.value;
+  if (!datasetId || currentStrategy() !== "boundary-flow-fk") return;
+  try {
+    const payload = await api(`/api/boundary-data/status/${encodeURIComponent(datasetId)}`);
+    const variants = payload.cache?.variants || [];
+    const ready = variants.filter(item => item.status === "ready").length;
+    button.disabled = payload.status === "running";
+    if (payload.status === "running") element.textContent = `构造中 · 已就绪 ${ready}/6`;
+    else if (payload.status === "failed") element.textContent = `构造失败 · ${payload.error || "请查看日志"}`;
+    else if (ready === 6) element.textContent = `六套数据已就绪 · ${variants[0]?.start || ""} 至 ${variants[0]?.end || ""}`;
+    else element.textContent = `已就绪 ${ready}/6，请先构造`;
+  } catch (exception) {
+    element.textContent = exception.message;
+    button.disabled = false;
+  }
+}
+
+async function buildBoundaryData() {
+  const form = document.querySelector("#experiment-form");
+  const button = document.querySelector("#boundary-data-build");
+  const status = document.querySelector("#boundary-data-status");
+  button.disabled = true;
+  status.textContent = "正在启动构造任务";
+  try {
+    await api("/api/boundary-data/build", {
+      method: "POST",
+      body: JSON.stringify({
+        dataset_id: form.elements.dataset_id.value,
+        start: form.elements.start.value,
+        end: form.elements.end.value,
+      }),
+    });
+    await refreshBoundaryDataStatus();
+  } catch (exception) {
+    status.textContent = exception.message;
+    button.disabled = false;
+  }
 }
 
 function syncModelConstraints() {
@@ -563,6 +598,7 @@ async function refreshAll() {
       renderEmptyState();
     }
     renderGlobalStatus();
+    if (currentStrategy() === "boundary-flow-fk") await refreshBoundaryDataStatus();
   } catch (exception) {
     document.querySelector("#job-subtitle").textContent = exception.message;
   } finally {
@@ -594,7 +630,7 @@ function renderJobList() {
   list.replaceChildren(...state.jobs.map(job => {
     const strategy = job.request.strategy === "holo-repair"
       ? job.request.repair_variant
-      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow", "boundary-flow-fk": "两支流 FK", "path-efficiency-direct": "路径效率" })[job.request.strategy] || job.request.strategy;
+      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow", "boundary-flow-fk": "路径效率 FK" })[job.request.strategy] || job.request.strategy;
     const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
     if (state.historyEditing) {
       const label = document.createElement("label");
@@ -663,18 +699,14 @@ function renderJob(job) {
   const fk = job.request.strategy === "fk-stock";
   const sectorFlow = job.request.strategy === "sector-flow-bayes";
   const boundaryFlow = job.request.strategy === "boundary-flow-fk";
-  const directPath = job.request.strategy === "path-efficiency-direct";
-  const twoBranch = boundaryFlow || directPath;
   const holoLite = job.request.strategy === "holo-bnhmm-lite";
   const repair = job.request.strategy === "holo-repair";
   const holo = job.request.strategy === "holo-bnhmm" || holoLite || repair;
   const dataset = state.datasets.find(
     item => item.dataset_id === job.request.dataset_id,
   );
-  if (directPath) {
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 路径效率符号直接交易 · 60日支流月度冻结 · CPU`;
-  } else if (boundaryFlow) {
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 两支流月度冻结 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
+  if (boundaryFlow) {
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 路径效率 FK · 两支流月度冻结 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
   } else if (sectorFlow) {
     const water = job.summary?.latest_water_state || {};
     document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 1分钟同步 · 最大滞后 ${job.request.maximum_lag_minutes} 分钟 · 水势 ${formatNumber(water.flow_strength, 3)} · ${job.request.normalization_lookback_sessions}日因果归一化`;
@@ -755,8 +787,8 @@ function renderJob(job) {
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
-    ? (directPath ? "等待路径效率任务" : boundaryFlow ? "等待两支流 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
-    : directPath ? "路径效率直接回测运行中" : boundaryFlow ? "两支流 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
+    ? (boundaryFlow ? "等待路径效率 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
+    : boundaryFlow ? "路径效率 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -810,17 +842,15 @@ function renderResultScope(job) {
 function renderSelectedResult(job) {
   const sectorFlow = job.request.strategy === "sector-flow-bayes";
   const boundaryFlow = job.request.strategy === "boundary-flow-fk";
-  const directPath = job.request.strategy === "path-efficiency-direct";
-  const twoBranch = boundaryFlow || directPath;
   document.querySelector("#sector-flow-results").classList.toggle("hidden", !sectorFlow);
-  document.querySelector("#boundary-flow-results").classList.toggle("hidden", !twoBranch);
+  document.querySelector("#boundary-flow-results").classList.toggle("hidden", !boundaryFlow);
   const activePanel = document.querySelector(".tab.active")?.dataset.tab || "overview";
   document.querySelectorAll(".standard-result-only").forEach(element => {
-    if (sectorFlow || twoBranch) element.classList.add("hidden");
+    if (sectorFlow || boundaryFlow) element.classList.add("hidden");
     else if (element.matches(".tab-panel")) element.classList.toggle("hidden", element.dataset.panel !== activePanel);
     else element.classList.remove("hidden");
   });
-  if (twoBranch) {
+  if (boundaryFlow) {
     renderBoundaryFlowResult(job);
     return;
   }
@@ -883,29 +913,18 @@ function renderSelectedResult(job) {
 
 function renderBoundaryFlowResult(job) {
   const status = document.querySelector("#boundary-flow-result-status");
-  const directPath = job.request.strategy === "path-efficiency-direct";
-  const evaluationName = directPath ? "path-efficiency-evaluation.json" : "boundary-policy-evaluation.json";
-  const predictionsName = directPath ? "path-efficiency-predictions.json" : "feynman-kac-predictions.json";
-  const evaluationUrl = job.artifacts?.[evaluationName];
-  const predictionsUrl = job.artifacts?.[predictionsName];
-  const downloads = directPath
-    ? {
-        "path-efficiency-report.md": "中文报告",
-        "path-efficiency-evaluation.json": "策略评估",
-        "path-efficiency-predictions.json": "样本外预测",
-        "branch-memberships.json": "月度支流成分",
-        "run-summary.json": "运行摘要",
-      }
-    : {
-        "boundary-ablation-report.md": "中文报告",
-        "boundary-policy-evaluation.json": "策略评估",
-        "feynman-kac-predictions.json": "样本外预测",
-        "boundary-model-posterior.json": "模型后验",
-        "boundary-residual-analysis.json": "残差分析",
-        "boundary-daily-states.json": "每日支流状态",
-        "branch-memberships.json": "月度支流成分",
-        "run-summary.json": "运行摘要",
-      };
+  const evaluationUrl = job.artifacts?.["boundary-policy-evaluation.json"];
+  const predictionsUrl = job.artifacts?.["feynman-kac-predictions.json"];
+  const downloads = {
+    "path-efficiency-fk-report.md": "中文报告",
+    "boundary-policy-evaluation.json": "策略评估",
+    "feynman-kac-predictions.json": "样本外预测",
+    "boundary-model-posterior.json": "模型后验",
+    "boundary-residual-analysis.json": "残差分析",
+    "boundary-daily-states.json": "每日支流状态",
+    "branch-memberships.json": "月度支流成分",
+    "run-summary.json": "运行摘要",
+  };
   document.querySelector("#boundary-flow-downloads").innerHTML = Object.entries(downloads)
     .filter(([name]) => job.artifacts?.[name])
     .map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`)
@@ -923,7 +942,7 @@ function renderBoundaryFlowResult(job) {
   if (!evaluationUrl || !predictionsUrl) {
     status.textContent = job.status === "failed"
       ? "运行失败，请查看日志"
-      : ["queued", "running"].includes(job.status) ? `${directPath ? "路径效率" : "两支流"}样本外计算中` : "暂无可读取的结果制品";
+      : ["queued", "running"].includes(job.status) ? "路径效率 FK 样本外计算中" : "暂无可读取的结果制品";
     document.querySelector("#boundary-stage-table").replaceChildren();
     document.querySelector("#boundary-probabilities").replaceChildren();
     document.querySelector("#boundary-dynamics").replaceChildren();
@@ -954,30 +973,13 @@ function renderBoundaryFlowResult(job) {
 }
 
 function paintBoundaryFlowResult(job, stages, predictions) {
-  const directPath = job.request.strategy === "path-efficiency-direct";
   const statusLabels = { completed: "完成", failed: "失败" };
-  document.querySelector("#boundary-result-title").textContent = directPath ? "路径效率基准" : "两支流 FK";
-  document.querySelector("#boundary-direction-title").textContent = directPath ? "两支流路径方向" : "两支流方向概率";
-  document.querySelector("#boundary-dynamics-title").textContent = directPath ? "策略与满仓基准" : "漂移与有效势";
-  document.querySelector("#boundary-table-head").innerHTML = directPath
-    ? "<th>模型</th><th>状态</th><th>信号</th><th>样本</th><th>秩相关</th><th>方向命中</th><th>净收益</th><th>平均仓位</th><th>开仓率</th><th>换手</th>"
-    : "<th>模型</th><th>状态</th><th>漂移输入</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>平均仓位</th><th>开仓率</th><th>换手</th>";
+  document.querySelector("#boundary-result-title").textContent = "路径效率 FK";
+  document.querySelector("#boundary-direction-title").textContent = "两支流方向概率";
+  document.querySelector("#boundary-dynamics-title").textContent = "漂移与有效势";
+  document.querySelector("#boundary-table-head").innerHTML = "<th>模型</th><th>状态</th><th>漂移输入</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>平均仓位</th><th>开仓率</th><th>换手</th>";
   document.querySelector("#boundary-stage-table").innerHTML = stages.map(stage => {
     const metrics = stage.metrics || {};
-    if (directPath) {
-      return `<tr>
-        <td><strong>${escapeHtml(stage.model_name || "PathEfficiency")}</strong></td>
-        <td><span class="status-badge ${stage.status === "completed" ? "completed" : "failed"}">${statusLabels[stage.status] || escapeHtml(stage.status || "未知")}</span></td>
-        <td>路径效率符号</td>
-        <td>${formatInteger(metrics.observations)}</td>
-        <td>${formatNumber(metrics.signal_rank_ic, 4)}</td>
-        <td>${formatPercent(metrics.direction_accuracy)}</td>
-        <td>${formatPercent(metrics.net_total_return)}</td>
-        <td>${formatPercent(metrics.average_exposure)}</td>
-        <td>${formatPercent(metrics.open_rate)}</td>
-        <td>${formatPercent(metrics.average_turnover)}</td>
-      </tr>`;
-    }
     return `<tr>
       <td><strong>${escapeHtml(stage.model_name || "—")}</strong></td>
       <td><span class="status-badge ${stage.status === "completed" ? "completed" : "failed"}">${statusLabels[stage.status] || escapeHtml(stage.status || "未知")}</span></td>
@@ -994,7 +996,7 @@ function paintBoundaryFlowResult(job, stages, predictions) {
 
   const latest = predictions.at(-1);
   document.querySelector("#boundary-flow-result-status").textContent =
-    `${formatInteger(predictions.length)} 个样本外交易日 · 两条支流${directPath ? "按符号交易" : "独立预测"}`;
+    `${formatInteger(predictions.length)} 个样本外交易日 · 任一支流看空即全部清仓`;
 
   if (!latest) {
     document.querySelector("#boundary-probabilities").innerHTML = '<p class="boundary-empty">没有样本外预测。</p>';
@@ -1005,13 +1007,7 @@ function paintBoundaryFlowResult(job, stages, predictions) {
 
   const states = ["空", "平", "多"];
   const branches = latest.branches || [];
-  document.querySelector("#boundary-probabilities").innerHTML = directPath
-    ? branches.map(branch => `<div class="boundary-probability ${branch.direction === "bear" ? "bear" : branch.direction === "bull" ? "bull" : "neutral"}">
-      <strong>支流 ${branch.branch} · ${{ bear: "卖出", bull: "买入", hold: "不动" }[branch.direction] || "—"}</strong>
-      <span>路径效率 ${formatNumber(branch.path_efficiency, 4)}</span>
-      <span>目标仓位 ${formatPercent(branch.target_exposure)}</span>
-    </div>`).join("")
-    : branches.map(branch => {
+  document.querySelector("#boundary-probabilities").innerHTML = branches.map(branch => {
     const probabilities = branch.state_probabilities || [];
     return `<div class="boundary-probability ${branch.direction === "bear" ? "bear" : branch.direction === "bull" ? "bull" : "neutral"}">
       <strong>支流 ${branch.branch} · ${{ bear: "空", flat: "平", bull: "多" }[branch.direction] || "—"}</strong>
@@ -1019,16 +1015,7 @@ function paintBoundaryFlowResult(job, stages, predictions) {
     </div>`;
   }).join("");
 
-  const benchmark = stages[0]?.benchmark || {};
-  const directMetrics = stages[0]?.metrics || {};
-  const dynamics = directPath ? [
-    ["策略净收益", formatPercent(directMetrics.net_total_return)],
-    ["策略最大回撤", formatPercent(directMetrics.maximum_drawdown)],
-    ["满仓基准净收益", formatPercent(benchmark.net_total_return)],
-    ["满仓基准最大回撤", formatPercent(benchmark.maximum_drawdown)],
-    ["正路径次日均值", formatPercent(directMetrics.positive_signal_mean_return)],
-    ["负路径次日均值", formatPercent(directMetrics.negative_signal_mean_return)],
-  ] : branches.flatMap(branch => [
+  const dynamics = branches.flatMap(branch => [
     [`支流 ${branch.branch} 原始漂移`, formatNumber(branch.expected_drift, 6)],
     [`支流 ${branch.branch} 有效势`, formatNumber(branch.expected_effective_potential, 6)],
     [`支流 ${branch.branch} 势可信度`, formatPercent(branch.survival_confidence)],
@@ -1044,8 +1031,8 @@ function paintBoundaryFlowResult(job, stages, predictions) {
   const branchFlatSignalCounts = latest.branch_flat_signal_counts || [0, 0];
   const totalExposure = branchTargetExposures.reduce((total, value) => total + value, 0);
   const holdings = latest.selected_symbols?.length
-    ? `目标仓位 ${formatPercent(totalExposure)} · 支流 ${branchTargetExposures.map(formatPercent).join(" / ")}${directPath ? "" : ` · 连续看平 ${branchFlatSignalCounts.join(" / ")}`} · ${latest.selected_symbols.join("、")}`
-    : `当前空仓${directPath ? "" : ` · 连续看平 ${branchFlatSignalCounts.join(" / ")}`}`;
+    ? `目标仓位 ${formatPercent(totalExposure)} · 支流 ${branchTargetExposures.map(formatPercent).join(" / ")} · 连续看平 ${branchFlatSignalCounts.join(" / ")} · ${latest.selected_symbols.join("、")}`
+    : `当前空仓 · 连续看平 ${branchFlatSignalCounts.join(" / ")}`;
   const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
   document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span>`;
 }
@@ -1210,7 +1197,7 @@ function renderSymbolResult(job, symbol, summary) {
 
 function renderJobGpuMemory(job) {
   const element = document.querySelector("#run-gpu-memory");
-  const isGpu = !["fk-stock", "boundary-flow-fk", "path-efficiency-direct"].includes(job.request.strategy) && String(job.request.device).startsWith("cuda:");
+  const isGpu = !["fk-stock", "boundary-flow-fk"].includes(job.request.strategy) && String(job.request.device).startsWith("cuda:");
   const trackingAvailable = Object.prototype.hasOwnProperty.call(job, "peak_gpu_memory_mib");
   if (isGpu && job.status === "running" && !trackingAvailable) {
     element.classList.remove("hidden");
@@ -1443,6 +1430,7 @@ function setupEvents() {
   document.querySelector("#choose-symbols").addEventListener("click", openSymbolDialog);
   document.querySelector("#training-scope").addEventListener("change", syncDatasetSelection);
   document.querySelector("#dataset-select").addEventListener("change", syncDatasetSelection);
+  document.querySelector("#boundary-data-build").addEventListener("click", buildBoundaryData);
   document.querySelector("#apply-symbols").addEventListener("click", applySymbols);
   document.querySelector("#symbol-search").addEventListener("input", event => renderSymbolOptions(event.target.value));
   document.querySelector("#select-all").addEventListener("click", () => { document.querySelectorAll("#symbol-list input").forEach(item => { item.checked = true; state.dialogSelected.add(item.value); }); updateSelectedCount(); });

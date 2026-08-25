@@ -16,13 +16,12 @@ from .evaluation import (
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
 from .policy import BoundaryPolicy, BoundaryPolicyConfig, BranchPositionState
-from .reporting import write_ablation_report, write_json
+from .reporting import write_baseline_report, write_json
 from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
-BOUNDARY_MODEL_NAMES = ("TwoBranchFK",)
-PRIMARY_POLICY_NAME = "path_efficiency_only"
-PRIMARY_DRIFT_FEATURE_SET = "path_efficiency_only"
+BOUNDARY_MODEL_NAMES = ("PathEfficiencyFK",)
+PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
 
 
@@ -42,13 +41,13 @@ class BoundaryFlowPipelineConfig:
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
-            raise ValueError("TwoBranchFK requires at least 30 training sessions")
+            raise ValueError("PathEfficiencyFK requires at least 30 training sessions")
         if self.max_folds is not None and self.max_folds < 1:
             raise ValueError("maximum folds must be positive")
         if self.neutral_sigma <= 0.0 or self.minimum_neutral_threshold <= 0.0:
             raise ValueError("neutral threshold settings must be positive")
         if self.fk_paths < 1_000:
-            raise ValueError("TwoBranchFK requires at least 1000 FK paths")
+            raise ValueError("PathEfficiencyFK requires at least 1000 FK paths")
         if self.transaction_cost_bps < 0.0:
             raise ValueError("transaction cost cannot be negative")
         BoundaryPolicyConfig(
@@ -96,7 +95,7 @@ class BoundaryFlowPipeline:
         root.mkdir(parents=True, exist_ok=True)
         folds = self._mature_monthly_folds(data)
         if not folds:
-            raise ValueError("no monthly fold has enough mature TwoBranchFK history")
+            raise ValueError("no monthly fold has enough mature PathEfficiencyFK history")
 
         membership_by_month = {item.month: item for item in data.memberships}
         observations: list[TwoBranchForecastObservation] = []
@@ -123,8 +122,6 @@ class BoundaryFlowPipeline:
                         minimum_rows=self.config.minimum_train_sessions,
                         neutral_sigma=self.config.neutral_sigma,
                         drift_half_life_sessions=self.config.drift_half_life_sessions,
-                        potential_target="drift_survival",
-                        drift_feature_set=PRIMARY_DRIFT_FEATURE_SET,
                     )
                 ).fit(
                     data.states,
@@ -223,7 +220,7 @@ class BoundaryFlowPipeline:
                 )
 
         if not observations:
-            raise ValueError("TwoBranchFK produced no sample-out predictions")
+            raise ValueError("PathEfficiencyFK produced no sample-out predictions")
         evaluation_config = BoundaryEvaluationConfig(
             transaction_cost_bps=self.config.transaction_cost_bps
         )
@@ -259,8 +256,8 @@ class BoundaryFlowPipeline:
                 "valid": data.states.valid.tolist(),
             },
         )
-        write_ablation_report(
-            root / "boundary-ablation-report.md",
+        write_baseline_report(
+            root / "path-efficiency-fk-report.md",
             stage_payload,
         )
         return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, (stage,))
@@ -341,7 +338,6 @@ class BoundaryFlowPipeline:
                     "state_probabilities": list(forecast.raw_state_probabilities),
                     "expected_drift": forecast.expected_drift,
                     "effective_drift": forecast.expected_return,
-                    "legacy_attenuated_drift": forecast.expected_attenuated_drift,
                     "expected_effective_potential": forecast.expected_effective_potential,
                     "survival_confidence": forecast.trend_survival_probability,
                     "bullish_drift_probability": forecast.bullish_drift_probability,

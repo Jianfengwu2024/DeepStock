@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.24.1">
+  <link rel="stylesheet" href="/static/styles.css?v=0.25.0">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.24.7" defer></script>
+  <script src="/static/app.js?v=0.25.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -34,8 +34,7 @@
             <label><input type="radio" name="strategy" value="stock-transformer"><span>StockTransformer</span></label>
             <label><input type="radio" name="strategy" value="fk-stock"><span>FKStock</span></label>
             <label><input type="radio" name="strategy" value="sector-flow-bayes"><span>SectorFlow</span></label>
-            <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>两支流 FK</span></label>
-            <label><input type="radio" name="strategy" value="path-efficiency-direct"><span>路径效率</span></label>
+            <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>路径效率 FK</span></label>
           </div>
           <label>训练范围
             <select name="training_scope" id="training-scope">
@@ -77,7 +76,7 @@
           <label class="stock-only hidden">守恒辅助损失权重<input name="conservation_weight" type="number" min="0" max="10" step="0.05"></label>
         </details>
 
-        <details class="form-section non-direct-path-only" open>
+        <details class="form-section" open>
           <summary>滚动样本外验证</summary>
           <div class="two-columns">
             <label>最少训练日<input name="minimum_train_sessions" type="number"></label>
@@ -130,15 +129,30 @@
         </details>
 
         <details class="form-section boundary-flow-only hidden" open>
-          <summary>两支流 FK</summary>
+          <summary>路径效率 FK</summary>
           <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>支流</span><strong>60日同步聚类，每月固定两组</strong></div>
+            <div class="fixed-spec"><span>支流</span><strong>可选历史窗口同步聚类，每月固定两组</strong></div>
             <div class="fixed-spec"><span>后验</span><strong>每组独立估计漂移与有效势</strong></div>
             <div class="fixed-spec"><span>漂移输入</span><strong>纯路径效率</strong></div>
-            <div class="fixed-spec"><span>持仓</span><strong>多 50%；首次平 25%；连续第二次平或空则清仓</strong></div>
+            <div class="fixed-spec"><span>看多</span><strong>看多：满仓</strong></div>
+            <div class="fixed-spec"><span>看平</span><strong>看平：每次减仓 25%，连续四次看平清仓</strong></div>
+            <div class="fixed-spec"><span>看空</span><strong>看空：立即清仓；任一支流看空则全部清仓</strong></div>
+          </div>
+          <div class="boundary-data-control">
+            <div><strong>预计算策略数据</strong><span id="boundary-data-status">尚未检查</span></div>
+            <button class="secondary-button" type="button" id="boundary-data-build"><i data-lucide="database-zap"></i>构造 / 刷新六套数据</button>
           </div>
           <div class="two-columns">
-            <label>支流历史（日）<input name="topology_lookback_sessions" type="number" value="60" readonly></label>
+            <label>支流历史（日）
+              <select name="topology_lookback_sessions">
+                <option value="10">10 日</option>
+                <option value="20">20 日</option>
+                <option value="30">30 日</option>
+                <option value="40">40 日</option>
+                <option value="60" selected>60 日</option>
+                <option value="90">90 日</option>
+              </select>
+            </label>
             <label>评估平区间（波动率倍数）<input name="regime_neutral_sigma" type="number" min="0.01" max="5" step="0.01"></label>
             <label>漂移半衰期（日）<input name="boundary_drift_half_life_sessions" type="number" min="5" max="504" step="1"></label>
             <label>方向最低后验概率<input name="boundary_minimum_direction_probability" type="number" min="0.5" max="1" step="0.01"></label>
@@ -147,20 +161,6 @@
             <label>Feynman-Kac 路径<input name="boundary_fk_paths" type="number" min="1000" max="100000" step="1000"></label>
             <label>交易成本（BP）<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
-          </div>
-        </details>
-
-        <details class="form-section direct-path-only hidden" open>
-          <summary>路径效率基准</summary>
-          <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>支流</span><strong>60日同步聚类，每月固定两组</strong></div>
-            <div class="fixed-spec"><span>看多</span><strong>路径效率正值买入 50%</strong></div>
-            <div class="fixed-spec"><span>看空</span><strong>路径效率负值清仓</strong></div>
-            <div class="fixed-spec"><span>零值</span><strong>零值不动，保持原仓位</strong></div>
-          </div>
-          <div class="two-columns">
-            <label>支流历史（日）<input name="topology_lookback_sessions" type="number" value="60" readonly></label>
-            <label>交易成本（BP）<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
           </div>
         </details>
 
@@ -421,7 +421,7 @@
 
             <section class="boundary-flow-results hidden" id="boundary-flow-results">
               <div class="sector-flow-head">
-                <div><h3 id="boundary-result-title">两支流 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
+                <div><h3 id="boundary-result-title">路径效率 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
                 <span class="scope-badge">月度样本外</span>
               </div>
               <div class="table-scroll"><table><thead><tr id="boundary-table-head"><th>模型</th><th>状态</th><th>漂移输入</th><th>成熟样本</th><th>Brier</th><th>Log Loss</th><th>ECE</th><th>平均仓位</th><th>开仓率</th><th>换手</th></tr></thead><tbody id="boundary-stage-table"></tbody></table></div>

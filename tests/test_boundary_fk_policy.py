@@ -43,10 +43,10 @@ def _forecast(direction: str) -> BoundaryFeynmanKacForecast:
     ("directions", "branch_exposure", "total_exposure"),
     [
         (("bull", "bull"), (0.5, 0.5), 1.0),
-        (("bull", "flat"), (0.5, 0.25), 0.75),
-        (("bull", "bear"), (0.5, 0.0), 0.5),
-        (("flat", "flat"), (0.25, 0.25), 0.5),
-        (("flat", "bear"), (0.25, 0.0), 0.25),
+        (("bull", "flat"), (0.5, 0.375), 0.875),
+        (("bull", "bear"), (0.0, 0.0), 0.0),
+        (("flat", "flat"), (0.375, 0.375), 0.75),
+        (("flat", "bear"), (0.0, 0.0), 0.0),
         (("bear", "bear"), (0.0, 0.0), 0.0),
     ],
 )
@@ -81,7 +81,7 @@ def test_bull_and_flat_allocate_each_branch_budget_across_its_members() -> None:
     )
 
     assert decision.selected_symbols == ("A", "B", "C", "D")
-    assert decision.target_weights == pytest.approx((0.25, 0.25, 0.125, 0.125))
+    assert decision.target_weights == pytest.approx((0.25, 0.25, 0.1875, 0.1875))
 
 
 def test_flat_signal_only_reduces_an_existing_long_position() -> None:
@@ -98,36 +98,42 @@ def test_flat_signal_only_reduces_an_existing_long_position() -> None:
     )
 
 
-def test_second_consecutive_flat_signal_exits_each_branch() -> None:
+def test_four_consecutive_flat_signals_reduce_full_position_by_quarters() -> None:
     policy = BoundaryPolicy()
     bullish = policy.decide(
         (_forecast("bull"), _forecast("bull")),
         branches=(("A", "B"), ("C", "D")),
         neutral_thresholds=(0.002, 0.002),
     )
-    first_flat = policy.decide(
-        (_forecast("flat"), _forecast("flat")),
-        branches=(("A", "B"), ("C", "D")),
-        neutral_thresholds=(0.002, 0.002),
-        previous_branch_states=bullish.branch_position_states,
+    decisions = []
+    previous = bullish.branch_position_states
+    for _ in range(4):
+        decision = policy.decide(
+            (_forecast("flat"), _forecast("flat")),
+            branches=(("A", "B"), ("C", "D")),
+            neutral_thresholds=(0.002, 0.002),
+            previous_branch_states=previous,
+        )
+        decisions.append(decision)
+        previous = decision.branch_position_states
+
+    assert [item.branch_target_exposures for item in decisions] == [
+        (0.375, 0.375),
+        (0.25, 0.25),
+        (0.125, 0.125),
+        (0.0, 0.0),
+    ]
+    assert [sum(item.target_weights) for item in decisions] == pytest.approx(
+        [0.75, 0.5, 0.25, 0.0]
     )
-    second_flat = policy.decide(
-        (_forecast("flat"), _forecast("flat")),
-        branches=(("A", "B"), ("C", "D")),
-        neutral_thresholds=(0.002, 0.002),
-        previous_branch_states=first_flat.branch_position_states,
-    )
-
-    assert first_flat.branch_target_exposures == (0.25, 0.25)
-    assert second_flat.branch_target_exposures == (0.0, 0.0)
-    assert not second_flat.open_position
+    assert not decisions[-1].open_position
 
 
-def test_bull_resets_flat_count_and_bear_exits_immediately() -> None:
+def test_any_bear_signal_exits_both_branches_immediately() -> None:
     policy = BoundaryPolicy()
     prior = (
-        BranchPositionState(exposure=0.25, consecutive_flat_signals=1),
-        BranchPositionState(exposure=0.25, consecutive_flat_signals=1),
+        BranchPositionState(exposure=0.125, consecutive_flat_signals=3),
+        BranchPositionState(exposure=0.125, consecutive_flat_signals=3),
     )
     decision = policy.decide(
         (_forecast("bull"), _forecast("bear")),
@@ -136,9 +142,9 @@ def test_bull_resets_flat_count_and_bear_exits_immediately() -> None:
         previous_branch_states=prior,
     )
 
-    assert decision.branch_target_exposures == (0.5, 0.0)
+    assert decision.branch_target_exposures == (0.0, 0.0)
     assert decision.branch_position_states == (
-        BranchPositionState(exposure=0.5, consecutive_flat_signals=0),
+        BranchPositionState(),
         BranchPositionState(),
     )
 
@@ -150,11 +156,11 @@ def test_two_branch_exit_memory_is_independent() -> None:
         neutral_thresholds=(0.002, 0.002),
         previous_branch_states=(
             BranchPositionState(exposure=0.5),
-            BranchPositionState(exposure=0.25, consecutive_flat_signals=1),
+            BranchPositionState(exposure=0.25, consecutive_flat_signals=2),
         ),
     )
 
-    assert decision.branch_target_exposures == (0.25, 0.0)
+    assert decision.branch_target_exposures == (0.375, 0.125)
 
 
 def test_diffusion_probability_argmax_cannot_force_a_weak_drift_direction() -> None:
@@ -177,7 +183,7 @@ def test_diffusion_probability_argmax_cannot_force_a_weak_drift_direction() -> N
 
     assert decision.branch_directions == ("flat", "flat")
     assert decision.open_position
-    assert sum(decision.target_weights) == pytest.approx(0.5)
+    assert sum(decision.target_weights) == pytest.approx(0.75)
 
 
 def test_label_threshold_does_not_suppress_a_confident_posterior_direction() -> None:
@@ -188,7 +194,7 @@ def test_label_threshold_does_not_suppress_a_confident_posterior_direction() -> 
     )
 
     assert decision.branch_directions == ("bull", "bear")
-    assert decision.held_branches == (True, False)
+    assert decision.held_branches == (False, False)
 
 
 def test_weak_survival_confidence_abstains_even_with_positive_drift() -> None:
