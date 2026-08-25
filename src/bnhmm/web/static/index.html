@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.26.5">
+  <link rel="stylesheet" href="/static/styles.css?v=0.26.6">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.26.5" defer></script>
+  <script src="/static/app.js?v=0.26.6" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -371,7 +371,7 @@
 
           <div id="comparison-view" class="comparison-view hidden">
             <div class="run-toolbar">
-              <div>
+              <div class="run-identity">
                 <div class="run-title-row"><h2 id="comparison-title"></h2><span id="comparison-status" class="status-badge neutral"></span></div>
                 <div id="comparison-meta" class="run-meta"></div>
               </div>
@@ -393,7 +393,7 @@
 
           <div id="job-view" class="job-view hidden">
             <div class="run-toolbar">
-              <div>
+              <div class="run-identity">
                 <div class="run-title-row"><h2 id="run-title"></h2><span id="run-status" class="status-badge neutral"></span></div>
                 <div id="run-meta" class="run-meta"></div>
                 <div id="run-gpu-memory" class="run-gpu-memory hidden"></div>
@@ -481,6 +481,7 @@
               <div class="boundary-result-panel hidden" data-boundary-panel="returns">
                 <div class="boundary-panel-intro"><strong>策略净值与回撤</strong><span>净值已按每日仓位和交易成本累计；回撤表示从历史高点跌落的幅度。</span></div>
                 <div class="boundary-key-metrics" id="boundary-return-metrics"></div>
+                <div class="boundary-return-legend" id="boundary-return-legend"><span><i class="persistence"></i>持续对流净值</span><span><i class="baseline"></i>无门控基线</span></div>
                 <div class="boundary-canvas-wrap"><canvas id="boundary-return-canvas" width="1200" height="320" aria-label="策略净值与回撤"></canvas></div>
               </div>
 

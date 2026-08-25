@@ -1194,6 +1194,7 @@ function paintBoundaryFlowResult(job, payload) {
   const gateModel = "PathEfficiencyFK-60D-ConvectionPersistence";
   const baselineModel = "PathEfficiencyFK-60D-Baseline";
   const predictions = allPredictions.filter(item => item.model_version === gateModel);
+  const baselinePredictions = allPredictions.filter(item => item.model_version === baselineModel);
   const stage = stages.find(item => item.model_name === gateModel) || stages[0] || {};
   const baselineStage = stages.find(item => item.model_name === baselineModel) || {};
   document.querySelector("#boundary-result-title").textContent = "60 日路径效率 + 反向流量集中度";
@@ -1280,7 +1281,7 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("训练成熟样本", formatInteger(stage.minimum_fit_rows), "每支流用于后验估计"),
   ].join("");
 
-  paintBoundaryReturnAnalysis(job, metrics, predictions);
+  paintBoundaryReturnComparison(job, metrics, predictions, baselineMetrics, baselinePredictions);
   const modelResidual = Array.isArray(residual)
     ? residual.find(item => item.model_name === gateModel) || {}
     : residual;
@@ -1297,6 +1298,72 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("运行耗时", `${formatNumber(job.summary?.elapsed_seconds, 2)} 秒`),
   ].join("");
   switchBoundaryResultTab(state.boundaryTabByJob.get(job.id) || "evaluation", job.id);
+}
+
+function boundaryEquitySeries(job, predictions) {
+  const costRate = Number(job.request.transaction_cost_bps || 0) / 10000;
+  let equity = 1;
+  return predictions.map(item => {
+    equity *= 1 + Number(item.gross_strategy_return || 0) - costRate * Number(item.turnover || 0);
+    return equity;
+  });
+}
+
+function paintBoundaryReturnComparison(job, metrics, predictions, baselineMetrics, baselinePredictions) {
+  const strategyEquity = boundaryEquitySeries(job, predictions);
+  const baselineEquity = boundaryEquitySeries(job, baselinePredictions);
+  const wins = predictions.filter(item => Number(item.gross_strategy_return) > 0).length;
+  document.querySelector("#boundary-return-metrics").innerHTML = [
+    boundaryMetric("持续对流收益", formatPercent(metrics.net_total_return)),
+    boundaryMetric("无门控基线", formatPercent(baselineMetrics.net_total_return)),
+    boundaryMetric("相对基线", formatPercent(Number(metrics.net_total_return || 0) - Number(baselineMetrics.net_total_return || 0))),
+    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
+    boundaryMetric("盈利交易日", formatPercent(predictions.length ? wins / predictions.length : 0)),
+    boundaryMetric("平均换手", formatPercent(metrics.average_turnover)),
+  ].join("");
+  drawBoundaryComparison(
+    document.querySelector("#boundary-return-canvas"),
+    [
+      { values: strategyEquity, color: "#176b87" },
+      { values: baselineEquity, color: "#69767c" },
+    ],
+    1,
+  );
+}
+
+function drawBoundaryComparison(canvas, series, baseline) {
+  const allValues = series.flatMap(item => item.values).filter(Number.isFinite);
+  if (!canvas || !allValues.length) return;
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = { left: 58, right: 22, top: 22, bottom: 35 };
+  const minimum = Math.min(...allValues, baseline);
+  const maximum = Math.max(...allValues, baseline);
+  const span = Math.max(maximum - minimum, 1e-9);
+  const y = value => padding.top + (maximum - value) * (height - padding.top - padding.bottom) / span;
+  context.clearRect(0, 0, width, height);
+  context.strokeStyle = "#d9dfe1";
+  context.lineWidth = 1;
+  for (let row = 0; row <= 4; row += 1) {
+    const py = padding.top + row * (height - padding.top - padding.bottom) / 4;
+    context.beginPath(); context.moveTo(padding.left, py); context.lineTo(width - padding.right, py); context.stroke();
+  }
+  context.strokeStyle = "#aab2b6";
+  context.beginPath(); context.moveTo(padding.left, y(baseline)); context.lineTo(width - padding.right, y(baseline)); context.stroke();
+  series.forEach(item => {
+    if (!item.values.length) return;
+    const x = index => padding.left + index * (width - padding.left - padding.right) / Math.max(item.values.length - 1, 1);
+    context.strokeStyle = item.color;
+    context.lineWidth = 3;
+    context.beginPath();
+    item.values.forEach((value, index) => index ? context.lineTo(x(index), y(value)) : context.moveTo(x(index), y(value)));
+    context.stroke();
+  });
+  context.fillStyle = "#34444a";
+  context.font = "16px sans-serif";
+  context.fillText(maximum.toFixed(3), 4, padding.top + 5);
+  context.fillText(minimum.toFixed(3), 4, height - padding.bottom + 5);
 }
 
 function paintBoundaryReturnAnalysis(job, metrics, predictions) {

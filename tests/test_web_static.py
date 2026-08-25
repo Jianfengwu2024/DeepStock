@@ -98,8 +98,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.26.5', html)
-        self.assertIn('/static/styles.css?v=0.26.5', html)
+        self.assertIn('/static/app.js?v=0.26.6', html)
+        self.assertIn('/static/styles.css?v=0.26.6', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
@@ -155,12 +155,18 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "boundary-evaluation-summary",
             "boundary-prediction-table",
             "boundary-return-canvas",
+            "boundary-return-legend",
             "boundary-residual-canvas",
             "boundary-run-summary",
         ):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn("switchBoundaryResultTab", script)
         self.assertIn("paintBoundaryReturnAnalysis", script)
+        self.assertIn("drawBoundaryComparison", script)
+        self.assertIn("baselinePredictions", script)
+        self.assertIn("持续对流净值", html)
+        self.assertIn("无门控基线", html)
+        self.assertIn('class="run-identity"', html)
         self.assertIn("paintBoundaryResidualAnalysis", script)
         self.assertNotIn('id="boundary-table-head"', html)
         self.assertNotIn('id="boundary-stage-table"', html)
