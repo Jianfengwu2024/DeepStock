@@ -71,10 +71,6 @@ class BoundaryPolicy:
         previous_branch_states: tuple[
             BranchPositionState, BranchPositionState
         ] = (BranchPositionState(), BranchPositionState()),
-        branch_exposure_caps: tuple[float, float] = (
-            FULL_BRANCH_EXPOSURE,
-            FULL_BRANCH_EXPOSURE,
-        ),
     ) -> BoundaryPolicyDecision:
         if (
             len(forecasts) != 2
@@ -82,8 +78,6 @@ class BoundaryPolicy:
             or len(neutral_thresholds) != 2
         ):
             raise ValueError("two-branch policy requires exactly two branches")
-        if any(cap not in ALLOWED_BRANCH_EXPOSURES for cap in branch_exposure_caps):
-            raise ValueError("branch exposure caps must use supported exposure steps")
         directions = tuple(
             self._direction(item, threshold)
             for item, threshold in zip(forecasts, neutral_thresholds, strict=True)
@@ -92,13 +86,10 @@ class BoundaryPolicy:
             states = (BranchPositionState(), BranchPositionState())
         else:
             states = tuple(
-                self._apply_exposure_cap(
-                    self._next_position_state(direction, previous), cap
-                )
-                for direction, previous, cap in zip(
+                self._next_position_state(direction, previous)
+                for direction, previous in zip(
                     directions,
                     previous_branch_states,
-                    branch_exposure_caps,
                     strict=True,
                 )
             )
@@ -127,19 +118,6 @@ class BoundaryPolicy:
             held_branches=(exposures[0] > 0.0, exposures[1] > 0.0),
             branch_target_exposures=(exposures[0], exposures[1]),
             branch_position_states=(states[0], states[1]),
-        )
-
-    @staticmethod
-    def _apply_exposure_cap(
-        state: BranchPositionState, cap: float
-    ) -> BranchPositionState:
-        if state.exposure <= cap:
-            return state
-        if cap <= 0.0:
-            return BranchPositionState()
-        return BranchPositionState(
-            exposure=cap,
-            consecutive_flat_signals=state.consecutive_flat_signals,
         )
 
     @staticmethod

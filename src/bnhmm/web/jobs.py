@@ -96,7 +96,6 @@ class WalkForwardJobRequest(BaseModel):
     sector_flow_monte_carlo_samples: int = Field(1000, ge=100, le=100_000)
     sector_index_symbol: str = Field("881121", pattern=r"^[A-Za-z0-9._-]{1,24}$")
     boundary_fk_paths: int = Field(10_000, ge=1_000, le=100_000)
-    convection_lookback_sessions: Literal[1, 2, 3, 5] = 1
     boundary_drift_half_life_sessions: float = Field(60.0, gt=0.0, le=504.0)
     boundary_minimum_direction_probability: float = Field(0.60, ge=0.5, le=1.0)
     boundary_minimum_signal_to_noise: float = Field(0.10, ge=0.0, le=10.0)
@@ -573,8 +572,6 @@ def _build_boundary_flow_command(
         str(request.regime_neutral_sigma),
         "--fk-paths",
         str(request.boundary_fk_paths),
-        "--convection-lookback-sessions",
-        str(request.convection_lookback_sessions),
         "--drift-half-life-sessions",
         str(request.boundary_drift_half_life_sessions),
         "--minimum-direction-probability",

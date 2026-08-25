@@ -97,9 +97,9 @@ class WebJobTests(unittest.TestCase):
             WalkForwardJobRequest(
                 auxiliary_gate_floor=0.8, auxiliary_gate_initial=0.7
             )
-        self.assertEqual(WalkForwardJobRequest().convection_lookback_sessions, 1)
-        with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(convection_lookback_sessions=4)
+        self.assertNotIn(
+            "convection_lookback_sessions", WalkForwardJobRequest.model_fields
+        )
 
     def test_command_contains_model_and_policy_parameters(self) -> None:
         request = WalkForwardJobRequest(
@@ -156,8 +156,7 @@ class WebJobTests(unittest.TestCase):
             dataset_id="semiconductor",
         )
         boundary_command = build_command(boundary, Path("/tmp/boundary-result"))
-        window_index = boundary_command.index("--convection-lookback-sessions") + 1
-        self.assertEqual(boundary_command[window_index], "1")
+        self.assertNotIn("--convection-lookback-sessions", boundary_command)
 
         sector = WalkForwardJobRequest(
             training_scope="sector-pooled", dataset_id="semiconductor"

@@ -6,129 +6,59 @@ import numpy as np
 import pytest
 
 from bnhmm.boundary_fk.convection import (
-    ConvectionGate,
-    ConvectionGateDecision,
-    ConvectionPersistenceGate,
+    CONVECTION_POTENTIAL_FEATURE_NAMES,
+    convection_potential_features,
 )
 from test_boundary_fk_pipeline import _walk_forward_data
 
 
-def test_gate_quantiles_use_only_rows_matured_before_training_cutoff() -> None:
-    base = _walk_forward_data(80)
-    strength = np.full((80, 2, 4), 0.99, dtype=np.float64)
-    training = np.linspace(0.10, 0.49, 40)
-    strength[:40, 0, 2] = training
-    strength[:40, 1, 2] = training[::-1]
-    data = replace(
-        base,
-        convection_strength=strength,
-        convection_valid=np.ones((80, 2, 4), dtype=np.bool_),
+def test_potential_features_use_causal_one_day_persistence_minima() -> None:
+    base = _walk_forward_data(6)
+    strength = np.zeros((6, 2, 4), dtype=np.float64)
+    strength[:, 0, 0] = np.array([0.8, 0.6, 0.9, 0.4, 0.7, 0.5])
+    strength[:, 1, 0] = np.array([0.2, 0.3, 0.1, 0.5, 0.4, 0.6])
+    valid = np.zeros((6, 2, 4), dtype=np.bool_)
+    valid[:, :, 0] = True
+    data = replace(base, convection_strength=strength, convection_valid=valid)
+
+    names, values, feature_valid = convection_potential_features(data, branch=0)
+
+    assert names == CONVECTION_POTENTIAL_FEATURE_NAMES
+    assert values[2] == pytest.approx([0.9, 0.6, 0.6])
+    assert values[4] == pytest.approx([0.7, 0.4, 0.4])
+    assert feature_valid.tolist() == [False, False, True, True, True, True]
+
+
+def test_potential_features_do_not_read_future_convection() -> None:
+    base = _walk_forward_data(6)
+    strength = np.full((6, 2, 4), 0.4, dtype=np.float64)
+    valid = np.zeros((6, 2, 4), dtype=np.bool_)
+    valid[:, :, 0] = True
+    original = replace(base, convection_strength=strength, convection_valid=valid)
+    changed_strength = strength.copy()
+    changed_strength[4:, 0, 0] = 0.99
+    changed = replace(original, convection_strength=changed_strength)
+
+    _, original_values, original_valid = convection_potential_features(
+        original, branch=0
     )
+    _, changed_values, changed_valid = convection_potential_features(changed, branch=0)
 
-    gate = ConvectionGate.fit(
-        data,
-        training_cutoff=base.labels.target_time[39],
-        minimum_rows=30,
+    np.testing.assert_allclose(
+        changed_values[:4], original_values[:4], equal_nan=True
     )
-
-    expected = tuple(float(item) for item in np.quantile(training, (0.50, 0.75, 0.90)))
-    assert gate.thresholds[0] == pytest.approx(expected)
-    assert gate.thresholds[1] == pytest.approx(expected)
-    assert gate.training_rows == (40, 40)
-    assert gate.lookback_sessions == 3
+    assert np.array_equal(changed_valid[:4], original_valid[:4])
 
 
-@pytest.mark.parametrize(
-    ("strength", "band", "cap"),
-    [
-        (0.20, "low", 0.5),
-        (0.55, "elevated", 0.375),
-        (0.75, "high", 0.25),
-        (0.95, "extreme", 0.0),
-    ],
-)
-def test_gate_maps_convection_to_fixed_exposure_caps(
-    strength: float, band: str, cap: float
-) -> None:
-    base = _walk_forward_data(40)
-    values = np.full((40, 2, 4), strength, dtype=np.float64)
-    data = replace(
-        base,
-        convection_strength=values,
-        convection_valid=np.ones((40, 2, 4), dtype=np.bool_),
-    )
-    gate = ConvectionGate(
-        thresholds=((0.50, 0.70, 0.90), (0.50, 0.70, 0.90)),
-        training_rows=(40, 40),
-        lookback_sessions=3,
-    )
+def test_potential_features_invalidate_windows_with_missing_history() -> None:
+    base = _walk_forward_data(6)
+    strength = np.full((6, 2, 4), 0.5, dtype=np.float64)
+    valid = np.zeros((6, 2, 4), dtype=np.bool_)
+    valid[:, :, 0] = True
+    valid[2, 0, 0] = False
+    data = replace(base, convection_strength=strength, convection_valid=valid)
 
-    decision = gate.decide(data, row=20, branch=0)
+    _, values, feature_valid = convection_potential_features(data, branch=0)
 
-    assert decision.band == band
-    assert decision.exposure_cap == cap
-    assert decision.strength == strength
-
-
-def test_invalid_or_uncalibrated_convection_does_not_limit_exposure() -> None:
-    base = _walk_forward_data(40)
-    gate = ConvectionGate(
-        thresholds=(None, None), training_rows=(0, 0), lookback_sessions=3
-    )
-
-    decision = gate.decide(base, row=20, branch=0)
-
-    assert decision.band == "unavailable"
-    assert decision.exposure_cap == 0.5
-    assert decision.strength is None
-
-
-def test_gate_selects_requested_precomputed_window() -> None:
-    base = _walk_forward_data(40)
-    values = np.full((40, 2, 4), 0.2, dtype=np.float64)
-    values[:, :, 0] = 0.95
-    data = replace(
-        base,
-        convection_strength=values,
-        convection_valid=np.ones((40, 2, 4), dtype=np.bool_),
-    )
-    gate = ConvectionGate(
-        thresholds=((0.50, 0.70, 0.90), (0.50, 0.70, 0.90)),
-        training_rows=(40, 40),
-        lookback_sessions=1,
-    )
-
-    decision = gate.decide(data, row=20, branch=0)
-
-    assert decision.strength == 0.95
-    assert decision.band == "extreme"
-
-
-def test_persistence_gate_waits_for_two_days_then_exits_on_three() -> None:
-    gate = ConvectionPersistenceGate()
-    event = ConvectionGateDecision(0.8, "high", 0.25, "above_q75")
-    quiet = ConvectionGateDecision(0.2, "low", 0.5, "below_median")
-
-    first = gate.apply((event, quiet))
-    second = gate.apply((event, quiet))
-    third = gate.apply((event, quiet))
-
-    assert first[0].exposure_cap == 0.5
-    assert second[0].exposure_cap == 0.25
-    assert third[0].exposure_cap == 0.0
-    assert first[1].exposure_cap == second[1].exposure_cap == 0.5
-
-
-def test_persistence_gate_resets_after_convection_disappears() -> None:
-    gate = ConvectionPersistenceGate()
-    event = ConvectionGateDecision(0.8, "high", 0.25, "above_q75")
-    quiet = ConvectionGateDecision(0.2, "low", 0.5, "below_median")
-
-    gate.apply((event, quiet))
-    reduced = gate.apply((event, quiet))
-    reset = gate.apply((quiet, quiet))
-    restarted = gate.apply((event, quiet))
-
-    assert reduced[0].exposure_cap == 0.25
-    assert reset[0].exposure_cap == 0.5
-    assert restarted[0].exposure_cap == 0.5
+    assert feature_valid.tolist() == [False, False, False, False, False, True]
+    assert np.isnan(values[2:5]).all()

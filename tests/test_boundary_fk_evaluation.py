@@ -6,9 +6,7 @@ import pytest
 from bnhmm.boundary_fk.evaluation import (
     BoundaryEvaluationConfig,
     BoundaryForecastObservation,
-    ConvectionDiagnosticObservation,
     evaluate_boundary_forecasts,
-    evaluate_convection_diagnostics,
 )
 from bnhmm.boundary_fk.feynman_kac import BoundaryFeynmanKacForecast
 from bnhmm.boundary_fk.policy import BoundaryPolicyDecision
@@ -93,20 +91,3 @@ def test_evaluation_rejects_noncausal_prediction_trace() -> None:
 
     with pytest.raises(ValueError, match="training_cutoff"):
         evaluate_boundary_forecasts((invalid,))
-
-
-def test_convection_diagnostics_report_conditional_trend_survival() -> None:
-    observations = (
-        ConvectionDiagnosticObservation(0.2, "low", 0.8, 0.01, 0.5),
-        ConvectionDiagnosticObservation(0.6, "elevated", 0.7, 0.02, 0.375),
-        ConvectionDiagnosticObservation(0.8, "high", -0.6, 0.01, 0.25),
-        ConvectionDiagnosticObservation(0.95, "extreme", -0.7, -0.02, 0.0),
-    )
-
-    metrics = evaluate_convection_diagnostics(observations)
-
-    assert metrics.gate_triggers == 3
-    assert metrics.bands["low"]["continuation_rate"] == 1.0
-    assert metrics.bands["high"]["reversal_rate"] == 1.0
-    assert metrics.bands["extreme"]["mean_next_return"] == -0.02
-    assert np.isfinite(metrics.path_efficiency_rank_correlation)

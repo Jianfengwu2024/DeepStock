@@ -98,16 +98,14 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.26.6', html)
-        self.assertIn('/static/styles.css?v=0.26.6', html)
+        self.assertIn('/static/app.js?v=0.26.7', html)
+        self.assertIn('/static/styles.css?v=0.26.7', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
         self.assertIn('id="boundary-data-status"', html)
         self.assertIn('type="hidden" name="topology_lookback_sessions" value="60"', html)
-        self.assertIn('name="convection_lookback_sessions"', html)
-        for value in (1, 2, 3, 5):
-            self.assertIn(f'<option value="{value}"', html)
+        self.assertNotIn('name="convection_lookback_sessions"', html)
         self.assertNotIn('<select name="topology_lookback_sessions">', html)
         self.assertIn('api("/api/boundary-data/build"', script)
         for field in (
@@ -164,8 +162,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("paintBoundaryReturnAnalysis", script)
         self.assertIn("drawBoundaryComparison", script)
         self.assertIn("baselinePredictions", script)
-        self.assertIn("持续对流净值", html)
-        self.assertIn("无门控基线", html)
+        self.assertIn("对流势能 FK 净值", html)
+        self.assertIn("纯路径效率基线", html)
         self.assertIn('class="run-identity"', html)
         self.assertIn("paintBoundaryResidualAnalysis", script)
         self.assertNotIn('id="boundary-table-head"', html)
@@ -180,25 +178,25 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("路径效率 FK", html)
         for artifact in (
             "path-efficiency-fk-report.md",
-            "path-efficiency-convection-gate-report.md",
+            "path-efficiency-convection-potential-report.md",
             "boundary-policy-evaluation.json",
-            "convection-gate-evaluation.json",
+            "convection-potential-evaluation.json",
             "feynman-kac-predictions.json",
         ):
             self.assertIn(artifact, script)
-        self.assertIn("PathEfficiencyFK-60D-ConvectionPersistence", script)
-        self.assertIn('<option value="1" selected>', html)
+        self.assertIn("PathEfficiencyFK-60D-ConvectionPotential", script)
         for field in (
-            "convection_strength",
-            "convection_band",
-            "convection_exposure_cap",
-            "convection_gate_reason",
+            "convection_potential_features",
+            "expected_effective_potential",
+            "survival_confidence",
         ):
             self.assertIn(field, script)
-        self.assertIn("反向流量集中度", script)
-        self.assertIn("股票 × 分钟二维集中度", html)
-        self.assertIn("反向流量集中度 / 档位", html)
-        self.assertIn("convection_lookback_sessions", script)
+        self.assertIn("反向流量集中度", html)
+        self.assertIn("股票 × 分钟二维反向流量集中度", html)
+        self.assertIn("C1 / C2 / C3", html)
+        self.assertNotIn("convection_lookback_sessions", script)
+        self.assertNotIn("convection_exposure_cap", script)
+        self.assertNotIn("convection_gate_reason", script)
         self.assertNotIn("对流强度", script)
         for field in (
             "branches",

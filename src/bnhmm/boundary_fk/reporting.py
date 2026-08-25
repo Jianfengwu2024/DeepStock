@@ -61,11 +61,12 @@ def write_convection_report(
     diagnostics: dict[str, Any],
 ) -> None:
     lines = [
-        f"本次使用 {int(diagnostics.get('convection_lookback_sessions', 1))} 日反向流量集中度。",
-        "持续规则：首次出现不动作，连续 2 日减半，连续 3 日清仓；中断后重新计数。",
-        "# PathEfficiencyFK 60 日对流门控报告",
+        "# PathEfficiencyFK 60 日对流势能报告",
         "",
-        "方向仍然只由路径效率和 FK 漂移决定。对流使用股票 × 分钟二维平面上的反向流量集中度，只能减仓或清仓，不能反向开仓。",
+        "路径效率是唯一漂移输入，决定趋势方向。对流不在策略外部直接改仓位，而是进入 Feynman-Kac 有效势，判断这股趋势还能否延续。",
+        "",
+        "对流来自股票 × 分钟二维反向流量集中度：C1 是当日值，C2 是当日与前一日的最小值，C3 是最近三日的最小值。数值越大且持续越久，漂移中断概率越高。",
+        "贝叶斯逻辑回归先估计漂移中断概率，再令有效势 V = softplus(z)，趋势存活率为 exp(-V)。有效势只能削弱趋势，不能制造反向信号。",
         "",
         "## 策略结果",
         "",
@@ -86,38 +87,17 @@ def write_convection_report(
     lines.extend(
         (
             "",
-            "## 反向流量集中度统计",
+            "## 对流势能统计",
             "",
-            f"门控触发 {int(diagnostics.get('gate_triggers', 0))} 次。",
+            f"样本数：{int(diagnostics.get('observations', 0))}",
+            f"平均有效势：{float(diagnostics.get('mean_effective_potential', 0.0)):.4f}",
+            f"中位有效势：{float(diagnostics.get('median_effective_potential', 0.0)):.4f}",
+            "平均趋势存活率："
+            f"{_percent(diagnostics.get('mean_trend_survival_probability'))}",
+            "最低趋势存活率："
+            f"{_percent(diagnostics.get('minimum_trend_survival_probability'))}",
             "",
-            "| 集中度档位 | 样本数 | 下一日平均收益 | 趋势延续率 | 反转率 |",
-            "| --- | ---: | ---: | ---: | ---: |",
-        )
-    )
-    labels = {
-        "low": "较弱",
-        "elevated": "偏强",
-        "high": "很强",
-        "extreme": "极强",
-    }
-    for name in ("low", "elevated", "high", "extreme"):
-        item = (diagnostics.get("bands") or {}).get(name, {})
-        lines.append(
-            "| {label} | {count} | {ret} | {continuation} | {reversal} |".format(
-                label=labels[name],
-                count=int(item.get("count", 0)),
-                ret=_percent(item.get("mean_next_return")),
-                continuation=_percent(item.get("continuation_rate")),
-                reversal=_percent(item.get("reversal_rate")),
-            )
-        )
-    lines.extend(
-        (
-            "",
-            "反向流量集中度与路径效率绝对值的 Rank 相关系数："
-            f"{float(diagnostics.get('path_efficiency_rank_correlation', 0.0)):.4f}。",
-            "",
-            "只有真实样本外收益和回撤同时改善，才能认为对流门控有效。",
+            "只有严格样本外收益、回撤和换手的综合结果优于纯路径效率基线，才能认为对流势能有实际价值。",
             "",
         )
     )

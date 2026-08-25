@@ -8,29 +8,22 @@ from pathlib import Path
 import numpy as np
 
 from .branch_model import BayesianBranchModel, BayesianBranchModelConfig
-from .convection import (
-    ConvectionGate,
-    ConvectionGateDecision,
-    ConvectionPersistenceGate,
-)
+from .convection import convection_potential_features
 from .evaluation import (
     BoundaryEvaluationConfig,
     BoundaryEvaluationMetrics,
-    ConvectionDiagnosticObservation,
     TwoBranchForecastObservation,
-    evaluate_convection_diagnostics,
     evaluate_two_branch_forecasts,
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
 from .policy import BoundaryPolicy, BoundaryPolicyConfig, BranchPositionState
 from .reporting import write_baseline_report, write_convection_report, write_json
 from .types import MonthlyBranchMembership, TwoBranchDataset
-from .types import CONVECTION_LOOKBACKS
 
 
 BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Baseline",
-    "PathEfficiencyFK-60D-ConvectionPersistence",
+    "PathEfficiencyFK-60D-ConvectionPotential",
 )
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
@@ -49,7 +42,6 @@ class BoundaryFlowPipelineConfig:
     minimum_direction_probability: float = 0.60
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
-    convection_lookback_sessions: int = 1
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -62,10 +54,6 @@ class BoundaryFlowPipelineConfig:
             raise ValueError("PathEfficiencyFK requires at least 1000 FK paths")
         if self.transaction_cost_bps < 0.0:
             raise ValueError("transaction cost cannot be negative")
-        if self.convection_lookback_sessions not in CONVECTION_LOOKBACKS:
-            raise ValueError(
-                f"convection lookback must be one of {CONVECTION_LOOKBACKS}"
-            )
         BoundaryPolicyConfig(
             minimum_direction_probability=self.minimum_direction_probability,
             minimum_signal_to_noise=self.minimum_signal_to_noise,
@@ -119,7 +107,6 @@ class BoundaryFlowPipeline:
         }
         prediction_payloads: list[dict[str, object]] = []
         posterior_payloads: list[dict[str, object]] = []
-        convection_records: list[ConvectionDiagnosticObservation] = []
         fit_rows: list[int] = []
         previous_weights = {name: {} for name in BOUNDARY_MODEL_NAMES}
         previous_branch_states = {
@@ -133,18 +120,16 @@ class BoundaryFlowPipeline:
                 minimum_survival_probability=self.config.minimum_survival_probability,
             )
         )
-        convection_persistence = ConvectionPersistenceGate()
         drift_names: tuple[str, ...] = ()
+        potential_inputs = tuple(
+            convection_potential_features(data, branch) for branch in range(2)
+        )
 
         for fold_index, test_start, training_rows, test_rows in folds:
             cutoff = test_start - np.timedelta64(1, "ns")
-            convection_gate = ConvectionGate.fit(
-                data,
-                training_cutoff=cutoff,
-                lookback_sessions=self.config.convection_lookback_sessions,
-            )
             posteriors = []
             for branch in range(2):
+                _, potential_values, potential_valid = potential_inputs[branch]
                 posterior = BayesianBranchModel(
                     BayesianBranchModelConfig(
                         minimum_rows=self.config.minimum_train_sessions,
@@ -154,6 +139,8 @@ class BoundaryFlowPipeline:
                 ).fit(
                     data.states,
                     data.labels,
+                    potential_features=potential_values,
+                    potential_valid=potential_valid,
                     branch=branch,
                     training_cutoff=cutoff,
                 )
@@ -162,7 +149,7 @@ class BoundaryFlowPipeline:
                 drift_names = posterior.drift_feature_names
                 posterior_payloads.append(
                     {
-                        "model_name": BOUNDARY_MODEL_NAMES[0],
+                        "model_name": BOUNDARY_MODEL_NAMES[1],
                         "policy": PRIMARY_POLICY_NAME,
                         "fold": fold_index,
                         "branch": branch + 1,
@@ -173,7 +160,7 @@ class BoundaryFlowPipeline:
                         ),
                         "drift_mean": posterior.drift_mean.tolist(),
                         "drift_half_life_sessions": self.config.drift_half_life_sessions,
-                        "potential_target": "drift_survival",
+                        "potential_target": "drift_disruption",
                         "diffusion_variance": posterior.diffusion_variance,
                         "potential_mean": posterior.potential_mean.tolist(),
                     }
@@ -181,7 +168,11 @@ class BoundaryFlowPipeline:
 
             for row in test_rows:
                 membership = membership_by_month.get(data.states.topology_months[row])
-                if membership is None or not data.labels.valid[row].all():
+                if (
+                    membership is None
+                    or not data.labels.valid[row].all()
+                    or not all(item[2][row] for item in potential_inputs)
+                ):
                     continue
                 thresholds = tuple(
                     max(
@@ -191,58 +182,30 @@ class BoundaryFlowPipeline:
                     )
                     for branch in range(2)
                 )
-                forecasts = tuple(
-                    BranchFeynmanKacForecaster(
-                        BoundaryFeynmanKacConfig(
-                            paths=self.config.fk_paths,
-                            seed=self.config.seed + fold_index * 2 + branch,
-                        )
-                    ).predict(
-                        posteriors[branch],
-                        data.states,
-                        int(row),
-                        neutral_threshold=float(thresholds[branch]),
-                    )
-                    for branch in range(2)
-                )
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
-                raw_convection_decisions = tuple(
-                    convection_gate.decide(data, row=int(row), branch=branch)
-                    for branch in range(2)
-                )
-                convection_decisions = convection_persistence.apply(
-                    (raw_convection_decisions[0], raw_convection_decisions[1])
-                )
-                for branch, convection in enumerate(convection_decisions):
-                    if convection.strength is not None:
-                        convection_records.append(
-                            ConvectionDiagnosticObservation(
-                                strength=convection.strength,
-                                band=convection.band,
-                                path_efficiency=float(
-                                    data.states.feature("signed_path_efficiency")[
-                                        row, branch
-                                    ]
-                                ),
-                                actual_return=float(
-                                    data.labels.next_return[row, branch]
-                                ),
-                                exposure_cap=convection.exposure_cap,
-                            )
-                        )
                 for model_index, model_name in enumerate(BOUNDARY_MODEL_NAMES):
-                    gated = model_index == 1
-                    caps = (
-                        tuple(item.exposure_cap for item in convection_decisions)
-                        if gated
-                        else (0.5, 0.5)
+                    use_potential = model_index == 1
+                    forecasts = tuple(
+                        BranchFeynmanKacForecaster(
+                            BoundaryFeynmanKacConfig(
+                                paths=self.config.fk_paths,
+                                seed=self.config.seed + fold_index * 2 + branch,
+                                use_effective_potential=use_potential,
+                            )
+                        ).predict(
+                            posteriors[branch],
+                            data.states,
+                            int(row),
+                            potential_features=potential_inputs[branch][1][row],
+                            neutral_threshold=float(thresholds[branch]),
+                        )
+                        for branch in range(2)
                     )
                     decision = policy.decide(
                         (forecasts[0], forecasts[1]),
                         branches=membership.branches,
                         neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
                         previous_branch_states=previous_branch_states[model_name],
-                        branch_exposure_caps=(float(caps[0]), float(caps[1])),
                     )
                     current_weights = dict(
                         zip(
@@ -283,11 +246,9 @@ class BoundaryFlowPipeline:
                         self._prediction_payload(
                             observation,
                             fold_index,
-                            convection_decisions,
-                            convection_applied=gated,
-                            convection_lookback_sessions=(
-                                self.config.convection_lookback_sessions
-                            ),
+                            int(row),
+                            potential_inputs,
+                            effective_potential_enabled=use_potential,
                         )
                     )
 
@@ -314,15 +275,34 @@ class BoundaryFlowPipeline:
             for model_name in BOUNDARY_MODEL_NAMES
         )
         stage_payload = [self._stage_payload(stage) for stage in stages]
-        convection_metrics = evaluate_convection_diagnostics(tuple(convection_records))
-        convection_payload = asdict(convection_metrics)
-        convection_payload["convection_lookback_sessions"] = (
-            self.config.convection_lookback_sessions
+        potential_observations = observations_by_model[BOUNDARY_MODEL_NAMES[1]]
+        potentials = np.asarray(
+            [
+                forecast.expected_effective_potential
+                for item in potential_observations
+                for forecast in item.forecasts
+            ],
+            dtype=np.float64,
         )
+        survivals = np.asarray(
+            [
+                forecast.trend_survival_probability
+                for item in potential_observations
+                for forecast in item.forecasts
+            ],
+            dtype=np.float64,
+        )
+        convection_payload = {
+            "observations": int(len(potentials)),
+            "mean_effective_potential": float(np.mean(potentials)),
+            "median_effective_potential": float(np.median(potentials)),
+            "mean_trend_survival_probability": float(np.mean(survivals)),
+            "minimum_trend_survival_probability": float(np.min(survivals)),
+        }
         write_json(root / "boundary-model-posterior.json", posterior_payloads)
         write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
-        write_json(root / "convection-gate-evaluation.json", convection_payload)
+        write_json(root / "convection-potential-evaluation.json", convection_payload)
         write_json(
             root / "boundary-residual-analysis.json",
             [
@@ -348,7 +328,7 @@ class BoundaryFlowPipeline:
             stage_payload,
         )
         write_convection_report(
-            root / "path-efficiency-convection-gate-report.md",
+            root / "path-efficiency-convection-potential-report.md",
             stage_payload,
             convection_payload,
         )
@@ -413,29 +393,32 @@ class BoundaryFlowPipeline:
     def _prediction_payload(
         observation: TwoBranchForecastObservation,
         fold: int,
-        convection_decisions: tuple[ConvectionGateDecision, ConvectionGateDecision],
+        row: int,
+        potential_inputs: tuple[
+            tuple[tuple[str, str, str], np.ndarray, np.ndarray],
+            tuple[tuple[str, str, str], np.ndarray, np.ndarray],
+        ],
         *,
-        convection_applied: bool,
-        convection_lookback_sessions: int,
+        effective_potential_enabled: bool,
     ) -> dict[str, object]:
         branches = []
-        for branch, (forecast, actual, threshold, direction, convection) in enumerate(
+        for branch, (forecast, actual, threshold, direction) in enumerate(
             zip(
                 observation.forecasts,
                 observation.actual_returns,
                 observation.neutral_thresholds,
                 observation.decision.branch_directions,
-                convection_decisions,
                 strict=True,
             )
         ):
+            names, values, _ = potential_inputs[branch]
             branches.append(
                 {
                     "branch": branch + 1,
                     "direction": direction,
                     "state_probabilities": list(forecast.raw_state_probabilities),
                     "expected_drift": forecast.expected_drift,
-                    "effective_drift": forecast.expected_return,
+                    "effective_drift": forecast.expected_attenuated_drift,
                     "expected_effective_potential": forecast.expected_effective_potential,
                     "survival_confidence": forecast.trend_survival_probability,
                     "bullish_drift_probability": forecast.bullish_drift_probability,
@@ -443,16 +426,10 @@ class BoundaryFlowPipeline:
                     "expected_diffusion_variance": forecast.expected_diffusion_variance,
                     "actual_return": actual,
                     "neutral_threshold": threshold,
-                    "convection_strength": convection.strength,
-                    "convection_band": (
-                        convection.band if convection_applied else "not_applied"
+                    "convection_potential_features": dict(
+                        zip(names, (float(item) for item in values[row]), strict=True)
                     ),
-                    "convection_exposure_cap": (
-                        convection.exposure_cap if convection_applied else 0.5
-                    ),
-                    "convection_gate_reason": (
-                        convection.reason if convection_applied else "baseline"
-                    ),
+                    "effective_potential_enabled": effective_potential_enabled,
                 }
             )
         return {
@@ -461,7 +438,6 @@ class BoundaryFlowPipeline:
             "target_time": str(observation.target_time),
             "training_cutoff": str(observation.training_cutoff),
             "model_version": observation.model_version,
-            "convection_lookback_sessions": convection_lookback_sessions,
             "fold": fold,
             "branches": branches,
             "held_branches": list(observation.decision.held_branches),

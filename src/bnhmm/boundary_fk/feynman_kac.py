@@ -142,6 +142,7 @@ class BranchFeynmanKacForecaster:
         states: TwoBranchDailyStates,
         row: int,
         *,
+        potential_features: np.ndarray | None = None,
         neutral_threshold: float,
     ) -> BoundaryFeynmanKacForecast:
         if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
@@ -158,22 +159,30 @@ class BranchFeynmanKacForecaster:
             posterior.drift_covariance,
             size=self.config.paths,
         )
-        potential_coefficients = rng.multivariate_normal(
-            posterior.potential_mean,
-            posterior.potential_covariance,
-            size=self.config.paths,
-        )
         drift = drift_coefficients @ posterior.drift_design(states, resolved_row)
-        potential = np.logaddexp(
-            0.0,
-            potential_coefficients @ posterior.potential_design(states, resolved_row),
-        )
-        survival = np.exp(-potential)
+        return_shocks = rng.standard_normal(self.config.paths)
+        if self.config.use_effective_potential:
+            if potential_features is None:
+                raise ValueError("convection potential features are required")
+            potential_coefficients = rng.multivariate_normal(
+                posterior.potential_mean,
+                posterior.potential_covariance,
+                size=self.config.paths,
+            )
+            potential_coefficients[:, 1:] = np.maximum(
+                potential_coefficients[:, 1:], 0.0
+            )
+            potential = np.logaddexp(
+                0.0,
+                potential_coefficients @ posterior.potential_design(potential_features),
+            )
+            survival = np.exp(-potential)
+        else:
+            potential = np.zeros(self.config.paths, dtype=np.float64)
+            survival = np.ones(self.config.paths, dtype=np.float64)
         attenuated_drift = drift * survival
         diffusion = posterior.diffusion_variance
-        returns = drift + np.sqrt(diffusion) * rng.standard_normal(
-            self.config.paths
-        )
+        returns = drift + np.sqrt(diffusion) * return_shocks
         classes = (
             returns < -neutral_threshold,
             np.abs(returns) <= neutral_threshold,

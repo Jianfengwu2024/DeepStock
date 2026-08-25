@@ -3,7 +3,7 @@ from __future__ import annotations
 from bnhmm.boundary_fk.reporting import write_baseline_report, write_convection_report
 
 
-def test_convection_report_explains_gate_in_plain_chinese(tmp_path) -> None:
+def test_convection_report_explains_effective_potential_in_plain_chinese(tmp_path) -> None:
     path = tmp_path / "convection.md"
 
     write_convection_report(
@@ -14,31 +14,28 @@ def test_convection_report_explains_gate_in_plain_chinese(tmp_path) -> None:
                 "metrics": {"net_total_return": 0.02, "maximum_drawdown": 0.03},
             },
             {
-                "model_name": "PathEfficiencyFK-60D-ConvectionPersistence",
+                "model_name": "PathEfficiencyFK-60D-ConvectionPotential",
                 "metrics": {"net_total_return": 0.03, "maximum_drawdown": 0.02},
             },
         ],
         {
-            "gate_triggers": 12,
-            "convection_lookback_sessions": 1,
-            "path_efficiency_rank_correlation": -0.4,
-            "bands": {
-                "low": {"count": 3, "mean_next_return": 0.01},
-                "elevated": {"count": 3, "mean_next_return": 0.0},
-                "high": {"count": 3, "mean_next_return": -0.01},
-                "extreme": {"count": 3, "mean_next_return": -0.02},
-            },
+            "observations": 12,
+            "mean_effective_potential": 0.42,
+            "median_effective_potential": 0.35,
+            "mean_trend_survival_probability": 0.67,
+            "minimum_trend_survival_probability": 0.22,
         },
     )
 
     report = path.read_text(encoding="utf-8")
     assert "反向流量集中度" in report
     assert "股票 × 分钟" in report
-    assert "1 日" in report
-    assert "连续 2 日减半，连续 3 日清仓" in report
-    assert "反向流量占比" not in report
-    assert "只能减仓或清仓" in report
-    assert "PathEfficiencyFK-60D-ConvectionPersistence" in report
+    assert "C1" in report and "C2" in report and "C3" in report
+    assert "有效势" in report
+    assert "趋势存活率" in report
+    assert "连续 2 日减半" not in report
+    assert "门控" not in report
+    assert "PathEfficiencyFK-60D-ConvectionPotential" in report
     assert "12" in report
 
 

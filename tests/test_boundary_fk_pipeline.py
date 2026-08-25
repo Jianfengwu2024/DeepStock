@@ -37,6 +37,11 @@ def _walk_forward_data(rows: int = 180) -> TwoBranchDataset:
         )
         for month in np.unique(states.topology_months)
     )
+    convection_shape = (rows, 2, 4)
+    convection_strength = np.zeros(convection_shape, dtype=np.float64)
+    convection_strength[:, :, 0] = np.linspace(0.1, 0.9, rows)[:, None]
+    convection_valid = np.zeros(convection_shape, dtype=np.bool_)
+    convection_valid[:, :, 0] = True
     return TwoBranchDataset(
         states=states,
         labels=labels,
@@ -44,10 +49,12 @@ def _walk_forward_data(rows: int = 180) -> TwoBranchDataset:
         symbols=symbols,
         member_next_returns=member_returns,
         member_next_valid=member_valid,
+        convection_strength=convection_strength,
+        convection_valid=convection_valid,
     )
 
 
-def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_path) -> None:
+def test_pipeline_compares_baseline_with_convection_potential_fk(tmp_path) -> None:
     base = _walk_forward_data()
     shape = (len(base.states.sessions), 2, 4)
     data = replace(
@@ -60,13 +67,12 @@ def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_pa
             minimum_train_sessions=60,
             max_folds=1,
             fk_paths=1000,
-            convection_lookback_sessions=1,
         )
     ).run(data, tmp_path)
 
     assert result.model_names == BOUNDARY_MODEL_NAMES == (
         "PathEfficiencyFK-60D-Baseline",
-        "PathEfficiencyFK-60D-ConvectionPersistence",
+        "PathEfficiencyFK-60D-ConvectionPotential",
     )
     assert len(result.stages) == 2
     assert result.stages[0].status == "completed"
@@ -76,17 +82,17 @@ def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_pa
     assert predictions
     assert len(predictions[0]["branches"]) == 2
     assert "effective_drift" in predictions[0]["branches"][0]
+    assert (
+        predictions[0]["branches"][0]["effective_drift"]
+        == predictions[0]["branches"][0]["expected_drift"]
+    )
     assert {
         "bullish_drift_probability",
         "drift_signal_to_noise",
         "survival_confidence",
     }.issubset(predictions[0]["branches"][0])
-    assert {
-        "convection_strength",
-        "convection_band",
-        "convection_exposure_cap",
-        "convection_gate_reason",
-    }.issubset(predictions[0]["branches"][0])
+    assert "convection_potential_features" in predictions[0]["branches"][0]
+    assert "expected_effective_potential" in predictions[0]["branches"][0]
     assert {
         "signal_time",
         "available_at",
@@ -114,32 +120,36 @@ def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_pa
     )
     assert result.stages[0].drift_feature_names == ("signed_path_efficiency",)
     assert (tmp_path / "path-efficiency-fk-report.md").exists()
-    assert (tmp_path / "path-efficiency-convection-gate-report.md").exists()
+    assert (tmp_path / "path-efficiency-convection-potential-report.md").exists()
     diagnostics = json.loads(
-        (tmp_path / "convection-gate-evaluation.json").read_text(encoding="utf-8")
+        (tmp_path / "convection-potential-evaluation.json").read_text(encoding="utf-8")
     )
-    assert set(diagnostics["bands"]) == {"low", "elevated", "high", "extreme"}
-    assert "path_efficiency_rank_correlation" in diagnostics
-    assert diagnostics["convection_lookback_sessions"] == 1
+    assert "mean_effective_potential" in diagnostics
+    assert "mean_trend_survival_probability" in diagnostics
     assert not (tmp_path / "boundary-ablation-report.md").exists()
     assert 0.0 <= result.stages[0].metrics.average_exposure <= 1.0
-    assert all(item["convection_lookback_sessions"] == 1 for item in predictions)
 
     grouped: dict[str, list[dict[str, object]]] = {
         model: [item for item in predictions if item["model_version"] == model]
         for model in BOUNDARY_MODEL_NAMES
     }
     assert len(grouped[BOUNDARY_MODEL_NAMES[0]]) == len(grouped[BOUNDARY_MODEL_NAMES[1]])
-    for baseline, gated in zip(
+    for baseline, potential in zip(
         grouped[BOUNDARY_MODEL_NAMES[0]],
         grouped[BOUNDARY_MODEL_NAMES[1]],
         strict=True,
     ):
-        assert baseline["signal_time"] == gated["signal_time"]
+        assert baseline["signal_time"] == potential["signal_time"]
         assert [item["expected_drift"] for item in baseline["branches"]] == [
-            item["expected_drift"] for item in gated["branches"]
+            item["expected_drift"] for item in potential["branches"]
         ]
-        assert sum(gated["target_weights"]) <= sum(baseline["target_weights"]) + 1e-12
+        assert all(
+            item["survival_confidence"] == 1.0 for item in baseline["branches"]
+        )
+        assert all(
+            0.0 <= item["survival_confidence"] <= 1.0
+            for item in potential["branches"]
+        )
 
 
 def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) -> None:

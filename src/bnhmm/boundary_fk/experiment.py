@@ -46,9 +46,6 @@ def run_boundary_flow_experiment(args: Any) -> None:
         evaluation_start=start.isoformat(),
         evaluation_end=end.isoformat(),
     )
-    convection_lookback_sessions = int(
-        getattr(args, "convection_lookback_sessions", 1)
-    )
     result = BoundaryFlowPipeline(
         BoundaryFlowPipelineConfig(
             minimum_train_sessions=args.minimum_train_sessions,
@@ -61,7 +58,6 @@ def run_boundary_flow_experiment(args: Any) -> None:
             minimum_signal_to_noise=args.minimum_signal_to_noise,
             minimum_survival_probability=args.minimum_survival_probability,
             transaction_cost_bps=args.transaction_cost_bps,
-            convection_lookback_sessions=convection_lookback_sessions,
         )
     ).run(data, output)
     summary = {
@@ -71,7 +67,6 @@ def run_boundary_flow_experiment(args: Any) -> None:
         "symbols": len(symbols),
         "data_source": "precomputed",
         "topology_lookback_sessions": args.topology_lookback_sessions,
-        "convection_lookback_sessions": convection_lookback_sessions,
         "elapsed_seconds": time.perf_counter() - started,
         "model_names": list(result.model_names),
         "stages": [

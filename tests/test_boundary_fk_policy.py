@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 
 import pytest
@@ -214,47 +215,17 @@ def test_weak_survival_confidence_abstains_even_with_positive_drift() -> None:
     assert decision.branch_directions == ("flat", "flat")
 
 
-def test_convection_caps_can_only_reduce_each_branch_exposure() -> None:
-    decision = BoundaryPolicy().decide(
-        (_forecast("bull"), _forecast("bull")),
-        branches=(("A", "B"), ("C", "D")),
-        neutral_thresholds=(0.002, 0.002),
-        branch_exposure_caps=(0.375, 0.25),
-    )
-
-    assert decision.branch_target_exposures == (0.375, 0.25)
-    assert sum(decision.target_weights) == pytest.approx(0.625)
+def test_policy_has_no_external_convection_exposure_cap() -> None:
+    assert "branch_exposure_caps" not in inspect.signature(
+        BoundaryPolicy.decide
+    ).parameters
 
 
-def test_convection_cannot_reopen_an_empty_branch() -> None:
-    decision = BoundaryPolicy().decide(
-        (_forecast("flat"), _forecast("flat")),
-        branches=(("A", "B"), ("C", "D")),
-        neutral_thresholds=(0.002, 0.002),
-        branch_exposure_caps=(0.5, 0.5),
-    )
-
-    assert decision.branch_target_exposures == (0.0, 0.0)
-
-
-def test_extreme_convection_clears_only_its_branch() -> None:
-    decision = BoundaryPolicy().decide(
-        (_forecast("bull"), _forecast("bull")),
-        branches=(("A", "B"), ("C", "D")),
-        neutral_thresholds=(0.002, 0.002),
-        branch_exposure_caps=(0.0, 0.5),
-    )
-
-    assert decision.branch_target_exposures == (0.0, 0.5)
-    assert decision.selected_symbols == ("C", "D")
-
-
-def test_bear_global_exit_overrides_convection_caps() -> None:
+def test_bear_global_exit_clears_both_branches() -> None:
     decision = BoundaryPolicy().decide(
         (_forecast("bull"), _forecast("bear")),
         branches=(("A", "B"), ("C", "D")),
         neutral_thresholds=(0.002, 0.002),
-        branch_exposure_caps=(0.5, 0.5),
         previous_branch_states=(
             BranchPositionState(exposure=0.5),
             BranchPositionState(exposure=0.5),

@@ -66,7 +66,7 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         self.assertEqual(defaults["boundary_minimum_direction_probability"], 0.60)
         self.assertEqual(defaults["boundary_minimum_signal_to_noise"], 0.10)
         self.assertEqual(defaults["boundary_minimum_survival_probability"], 0.35)
-        self.assertEqual(defaults["convection_lookback_sessions"], 1)
+        self.assertNotIn("convection_lookback_sessions", defaults)
         self.assertEqual(defaults["device"], "cpu")
         for obsolete in (
             "boundary_branch_count",
@@ -155,14 +155,14 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         self.assertIn("sector-regime-evaluation.json", payload["artifacts"])
         self.assertIn("sector-policy-evaluation.json", payload["artifacts"])
 
-    def test_job_payload_discovers_convection_gate_artifacts(self) -> None:
+    def test_job_payload_discovers_convection_potential_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manager = JobManager(directory, Path.cwd())
             output = Path(directory, "boundary")
             output.mkdir()
             for name in (
-                "path-efficiency-convection-gate-report.md",
-                "convection-gate-evaluation.json",
+                "path-efficiency-convection-potential-report.md",
+                "convection-potential-evaluation.json",
             ):
                 (output / name).write_text("test", encoding="utf-8")
             request = WalkForwardJobRequest(
@@ -184,9 +184,9 @@ class WebSectorFlowConfigTests(unittest.TestCase):
             manager.close()
 
         self.assertIn(
-            "path-efficiency-convection-gate-report.md", payload["artifacts"]
+            "path-efficiency-convection-potential-report.md", payload["artifacts"]
         )
-        self.assertIn("convection-gate-evaluation.json", payload["artifacts"])
+        self.assertIn("convection-potential-evaluation.json", payload["artifacts"])
 
 
 if __name__ == "__main__":

@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import numpy as np
+from scipy.optimize import minimize
+from scipy.special import expit
 
+from .convection import CONVECTION_POTENTIAL_FEATURE_NAMES
 from .types import TwoBranchDailyStates, TwoBranchLabels
 
 
 DRIFT_FEATURE_NAMES = ("signed_path_efficiency",)
-POTENTIAL_FEATURE_NAMES = (
-    "abs_return_1d",
-    "volatility_20",
-    "low_coherence_1d",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,8 +67,10 @@ class BayesianBranchPosterior:
         )
         return np.concatenate((np.ones(1), (raw - self.drift_center) / self.drift_scale))
 
-    def potential_design(self, states: TwoBranchDailyStates, row: int) -> np.ndarray:
-        raw = _potential_matrix(states, self.branch)[row]
+    def potential_design(self, raw_features: np.ndarray) -> np.ndarray:
+        raw = np.asarray(raw_features, dtype=np.float64)
+        if raw.shape != self.potential_center.shape or np.any(~np.isfinite(raw)):
+            raise ValueError("convection potential features are invalid")
         return np.concatenate(
             (np.ones(1), (raw - self.potential_center) / self.potential_scale)
         )
@@ -85,6 +85,8 @@ class BayesianBranchModel:
         states: TwoBranchDailyStates,
         labels: TwoBranchLabels,
         *,
+        potential_features: np.ndarray,
+        potential_valid: np.ndarray,
         branch: int,
         training_cutoff: np.datetime64,
     ) -> BayesianBranchPosterior:
@@ -92,6 +94,18 @@ class BayesianBranchModel:
             raise ValueError("branch must be zero or one")
         if not np.array_equal(states.sessions, labels.signal_sessions):
             raise ValueError("branch states and labels must align")
+        potential_features = np.asarray(potential_features, dtype=np.float64)
+        potential_valid = np.asarray(potential_valid, dtype=np.bool_)
+        expected_shape = (
+            len(states.sessions),
+            len(CONVECTION_POTENTIAL_FEATURE_NAMES),
+        )
+        if potential_features.shape != expected_shape:
+            raise ValueError(
+                f"convection potential features must have shape {expected_shape}"
+            )
+        if potential_valid.shape != (len(states.sessions),):
+            raise ValueError("convection potential validity must align with sessions")
         cutoff = np.datetime64(training_cutoff, "ns")
         selected = (
             states.valid[:, branch]
@@ -119,26 +133,31 @@ class BayesianBranchModel:
             self.config.variance_floor,
         )
 
-        potential_raw = _potential_matrix(states, branch)
         selected_rows = np.flatnonzero(selected)
         calibration_positions, causal_direction = self._causal_drift_predictions(
             drift_raw[selected], target
         )
         calibration_rows = selected_rows[calibration_positions]
+        usable = potential_valid[calibration_rows]
+        calibration_rows = calibration_rows[usable]
+        causal_direction = causal_direction[usable]
+        if len(calibration_rows) < 5:
+            raise ValueError("insufficient matured convection rows for potential fit")
         potential_x, potential_center, potential_scale = _standardized_design(
-            potential_raw[calibration_rows]
+            potential_features[calibration_rows]
         )
         threshold = self.config.neutral_sigma * labels.historical_volatility[
             calibration_rows, branch
         ]
         calibration_target = labels.next_return[calibration_rows, branch]
-        survival = (
+        drift_survival = (
             (np.sign(calibration_target) == np.sign(causal_direction))
             & (np.abs(calibration_target) > threshold)
             & (np.abs(causal_direction) > 1e-12)
         ).astype(np.float64)
-        survival_beta, potential_covariance = self._logistic_fit(
-            potential_x, survival
+        disruption = 1.0 - drift_survival
+        potential_mean, potential_covariance = self._constrained_logistic_fit(
+            potential_x, disruption
         )
 
         return BayesianBranchPosterior(
@@ -149,10 +168,10 @@ class BayesianBranchModel:
             drift_mean=drift_mean,
             drift_covariance=drift_covariance,
             diffusion_variance=diffusion_variance,
-            potential_feature_names=POTENTIAL_FEATURE_NAMES,
+            potential_feature_names=CONVECTION_POTENTIAL_FEATURE_NAMES,
             potential_center=potential_center,
             potential_scale=potential_scale,
-            potential_mean=-survival_beta,
+            potential_mean=potential_mean,
             potential_covariance=potential_covariance,
             training_cutoff=cutoff,
             fit_rows=int(selected.sum()),
@@ -217,34 +236,41 @@ class BayesianBranchModel:
             predictions[output_row] = float(current @ mean)
         return positions, predictions
 
-    def _logistic_fit(
+    def _constrained_logistic_fit(
         self, design: np.ndarray, target: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
-        coefficient = np.zeros(design.shape[1], dtype=np.float64)
         prior = np.eye(design.shape[1]) * self.config.prior_precision
         prior[0, 0] *= 1e-4
-        hessian = prior.copy()
-        for _ in range(self.config.maximum_newton_steps):
-            linear = np.clip(design @ coefficient, -30.0, 30.0)
-            probability = 1.0 / (1.0 + np.exp(-linear))
-            weights = np.maximum(probability * (1.0 - probability), 1e-8)
-            hessian = design.T @ (design * weights[:, None]) + prior
-            gradient = design.T @ (target - probability) - prior @ coefficient
-            step = np.linalg.solve(hessian, gradient)
-            coefficient += step
-            if float(np.max(np.abs(step))) < self.config.convergence_tolerance:
-                break
-        return coefficient, _inverse_positive_definite(hessian)
 
+        def objective(coefficient: np.ndarray) -> tuple[float, np.ndarray]:
+            linear = design @ coefficient
+            probability = expit(linear)
+            loss = float(
+                np.sum(np.logaddexp(0.0, linear) - target * linear)
+                + 0.5 * coefficient @ prior @ coefficient
+            )
+            gradient = design.T @ (probability - target) + prior @ coefficient
+            return loss, gradient
 
-def _potential_matrix(states: TwoBranchDailyStates, branch: int) -> np.ndarray:
-    return np.column_stack(
-        (
-            np.abs(states.feature("return_1d")[:, branch]),
-            states.feature("volatility_20")[:, branch],
-            1.0 - states.feature("coherence_1d")[:, branch],
+        result = minimize(
+            objective,
+            np.zeros(design.shape[1], dtype=np.float64),
+            method="L-BFGS-B",
+            jac=True,
+            bounds=[(None, None), *[(0.0, None)] * (design.shape[1] - 1)],
+            options={
+                "maxiter": self.config.maximum_newton_steps,
+                "ftol": self.config.convergence_tolerance,
+            },
         )
-    )
+        if not result.success:
+            raise ValueError(f"convection potential fit failed: {result.message}")
+        coefficient = np.asarray(result.x, dtype=np.float64)
+        linear = design @ coefficient
+        probability = expit(linear)
+        weights = np.maximum(probability * (1.0 - probability), 1e-8)
+        hessian = design.T @ (design * weights[:, None]) + prior
+        return coefficient, _inverse_positive_definite(hessian)
 
 
 def _standardized_design(
