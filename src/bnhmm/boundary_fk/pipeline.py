@@ -15,12 +15,13 @@ from .evaluation import (
     evaluate_two_branch_forecasts,
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
-from .policy import BoundaryPolicy
+from .policy import BoundaryPolicy, BoundaryPolicyConfig
 from .reporting import write_ablation_report, write_json
 from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
 BOUNDARY_MODEL_NAMES = ("TwoBranchFK",)
+POLICY_ABLATION_NAMES = ("posterior_signal", "legacy_attenuated")
 BoundaryWalkForwardData = TwoBranchDataset
 
 
@@ -33,6 +34,10 @@ class BoundaryFlowPipelineConfig:
     neutral_sigma: float = 0.35
     minimum_neutral_threshold: float = 0.002
     transaction_cost_bps: float = 10.0
+    drift_half_life_sessions: float | None = 60.0
+    minimum_direction_probability: float = 0.60
+    minimum_signal_to_noise: float = 0.10
+    minimum_survival_probability: float = 0.35
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -45,6 +50,16 @@ class BoundaryFlowPipelineConfig:
             raise ValueError("TwoBranchFK requires at least 1000 FK paths")
         if self.transaction_cost_bps < 0.0:
             raise ValueError("transaction cost cannot be negative")
+        BoundaryPolicyConfig(
+            minimum_direction_probability=self.minimum_direction_probability,
+            minimum_signal_to_noise=self.minimum_signal_to_noise,
+            minimum_survival_probability=self.minimum_survival_probability,
+        )
+        if (
+            self.drift_half_life_sessions is not None
+            and self.drift_half_life_sessions <= 0.0
+        ):
+            raise ValueError("drift half-life must be positive when provided")
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,13 +98,26 @@ class BoundaryFlowPipeline:
             raise ValueError("no monthly fold has enough mature TwoBranchFK history")
 
         membership_by_month = {item.month: item for item in data.memberships}
-        observations: list[TwoBranchForecastObservation] = []
+        observations_by_policy: dict[str, list[TwoBranchForecastObservation]] = {
+            name: [] for name in POLICY_ABLATION_NAMES
+        }
         prediction_payloads: list[dict[str, object]] = []
         posterior_payloads: list[dict[str, object]] = []
         fit_rows: list[int] = []
-        held_branches = (False, False)
-        previous_weights: dict[str, float] = {}
-        policy = BoundaryPolicy()
+        held_by_policy = {name: (False, False) for name in POLICY_ABLATION_NAMES}
+        previous_weights_by_policy = {name: {} for name in POLICY_ABLATION_NAMES}
+        policies = {
+            "posterior_signal": BoundaryPolicy(
+                BoundaryPolicyConfig(
+                    minimum_direction_probability=self.config.minimum_direction_probability,
+                    minimum_signal_to_noise=self.config.minimum_signal_to_noise,
+                    minimum_survival_probability=self.config.minimum_survival_probability,
+                )
+            ),
+            "legacy_attenuated": BoundaryPolicy(
+                BoundaryPolicyConfig(mode="legacy_attenuated")
+            ),
+        }
         drift_names: tuple[str, ...] = ()
 
         for fold_index, test_start, training_rows, test_rows in folds:
@@ -100,6 +128,7 @@ class BoundaryFlowPipeline:
                     BayesianBranchModelConfig(
                         minimum_rows=self.config.minimum_train_sessions,
                         neutral_sigma=self.config.neutral_sigma,
+                        drift_half_life_sessions=self.config.drift_half_life_sessions,
                     )
                 ).fit(
                     data.states,
@@ -119,6 +148,7 @@ class BoundaryFlowPipeline:
                         "drift_feature_names": list(posterior.drift_feature_names),
                         "potential_feature_names": list(posterior.potential_feature_names),
                         "drift_mean": posterior.drift_mean.tolist(),
+                        "drift_half_life_sessions": self.config.drift_half_life_sessions,
                         "diffusion_variance": posterior.diffusion_variance,
                         "potential_mean": posterior.potential_mean.tolist(),
                     }
@@ -150,49 +180,68 @@ class BoundaryFlowPipeline:
                     )
                     for branch in range(2)
                 )
-                decision = policy.decide(
-                    (forecasts[0], forecasts[1]),
-                    branches=membership.branches,
-                    held_branches=held_branches,
-                    neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
-                )
-                current_weights = dict(
-                    zip(decision.selected_symbols, decision.target_weights, strict=True)
-                )
-                turnover = self._turnover(previous_weights, current_weights)
-                gross_return = self._portfolio_return(data, int(row), current_weights)
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
-                observation = TwoBranchForecastObservation(
-                    signal_time=signal,
-                    available_at=signal + np.timedelta64(1, "ns"),
-                    target_time=data.labels.target_time[row],
-                    training_cutoff=cutoff,
-                    model_version=BOUNDARY_MODEL_NAMES[0],
-                    forecasts=(forecasts[0], forecasts[1]),
-                    actual_returns=(
-                        float(data.labels.next_return[row, 0]),
-                        float(data.labels.next_return[row, 1]),
-                    ),
-                    neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
-                    decision=decision,
-                    gross_strategy_return=gross_return,
-                    turnover=turnover,
-                )
-                observations.append(observation)
-                prediction_payloads.append(
-                    self._prediction_payload(observation, fold_index)
-                )
-                held_branches = decision.held_branches
-                previous_weights = current_weights
+                for policy_name, policy in policies.items():
+                    decision = policy.decide(
+                        (forecasts[0], forecasts[1]),
+                        branches=membership.branches,
+                        held_branches=held_by_policy[policy_name],
+                        neutral_thresholds=(
+                            float(thresholds[0]),
+                            float(thresholds[1]),
+                        ),
+                    )
+                    current_weights = dict(
+                        zip(
+                            decision.selected_symbols,
+                            decision.target_weights,
+                            strict=True,
+                        )
+                    )
+                    turnover = self._turnover(
+                        previous_weights_by_policy[policy_name], current_weights
+                    )
+                    gross_return = self._portfolio_return(
+                        data, int(row), current_weights
+                    )
+                    observation = TwoBranchForecastObservation(
+                        signal_time=signal,
+                        available_at=signal + np.timedelta64(1, "ns"),
+                        target_time=data.labels.target_time[row],
+                        training_cutoff=cutoff,
+                        model_version=BOUNDARY_MODEL_NAMES[0],
+                        forecasts=(forecasts[0], forecasts[1]),
+                        actual_returns=(
+                            float(data.labels.next_return[row, 0]),
+                            float(data.labels.next_return[row, 1]),
+                        ),
+                        neutral_thresholds=(
+                            float(thresholds[0]),
+                            float(thresholds[1]),
+                        ),
+                        decision=decision,
+                        gross_strategy_return=gross_return,
+                        turnover=turnover,
+                    )
+                    observations_by_policy[policy_name].append(observation)
+                    held_by_policy[policy_name] = decision.held_branches
+                    previous_weights_by_policy[policy_name] = current_weights
+                    if policy_name == "posterior_signal":
+                        prediction_payloads.append(
+                            self._prediction_payload(observation, fold_index)
+                        )
 
+        observations = observations_by_policy["posterior_signal"]
         if not observations:
             raise ValueError("TwoBranchFK produced no sample-out predictions")
-        metrics = evaluate_two_branch_forecasts(
-            tuple(observations),
-            BoundaryEvaluationConfig(
-                transaction_cost_bps=self.config.transaction_cost_bps
-            ),
+        evaluation_config = BoundaryEvaluationConfig(
+            transaction_cost_bps=self.config.transaction_cost_bps
         )
+        policy_metrics = {
+            name: evaluate_two_branch_forecasts(tuple(items), evaluation_config)
+            for name, items in observations_by_policy.items()
+        }
+        metrics = policy_metrics["posterior_signal"]
         test_months = tuple(
             str(test_start.astype("datetime64[M]")) for _, test_start, _, _ in folds
         )
@@ -209,6 +258,10 @@ class BoundaryFlowPipeline:
         write_json(root / "boundary-model-posterior.json", posterior_payloads)
         write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
+        write_json(
+            root / "boundary-policy-ablation.json",
+            {name: asdict(value) for name, value in policy_metrics.items()},
+        )
         write_json(
             root / "boundary-residual-analysis.json",
             {
@@ -303,7 +356,11 @@ class BoundaryFlowPipeline:
                     "state_probabilities": list(forecast.raw_state_probabilities),
                     "expected_drift": forecast.expected_drift,
                     "effective_drift": forecast.expected_return,
+                    "legacy_attenuated_drift": forecast.expected_attenuated_drift,
                     "expected_effective_potential": forecast.expected_effective_potential,
+                    "survival_confidence": forecast.trend_survival_probability,
+                    "bullish_drift_probability": forecast.bullish_drift_probability,
+                    "drift_signal_to_noise": forecast.drift_signal_to_noise,
                     "expected_diffusion_variance": forecast.expected_diffusion_variance,
                     "actual_return": actual,
                     "neutral_threshold": threshold,

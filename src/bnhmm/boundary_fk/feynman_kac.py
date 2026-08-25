@@ -39,9 +39,9 @@ class BoundaryFeynmanKacForecast:
     expected_diffusion_variance: float
     expected_effective_potential: float
     bullish_probability_std: float
-    expected_attenuated_drift: float
-    bullish_drift_probability: float
-    drift_signal_to_noise: float
+    expected_attenuated_drift: float = 0.0
+    bullish_drift_probability: float = 0.5
+    drift_signal_to_noise: float = 0.0
 
 
 class BoundaryFeynmanKacForecaster:

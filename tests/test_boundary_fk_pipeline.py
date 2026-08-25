@@ -66,6 +66,12 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
     assert len(predictions[0]["branches"]) == 2
     assert "effective_drift" in predictions[0]["branches"][0]
     assert {
+        "legacy_attenuated_drift",
+        "bullish_drift_probability",
+        "drift_signal_to_noise",
+        "survival_confidence",
+    }.issubset(predictions[0]["branches"][0])
+    assert {
         "signal_time",
         "available_at",
         "target_time",
@@ -74,6 +80,12 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
         "selected_symbols",
         "gross_strategy_return",
     }.issubset(predictions[0])
+    ablation = json.loads(
+        (tmp_path / "boundary-policy-ablation.json").read_text(encoding="utf-8")
+    )
+    assert set(ablation) == {"posterior_signal", "legacy_attenuated"}
+    assert len(ablation["posterior_signal"]["direction_counts"]) == 3
+    assert len(ablation["legacy_attenuated"]["direction_counts"]) == 3
 
 
 def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) -> None:

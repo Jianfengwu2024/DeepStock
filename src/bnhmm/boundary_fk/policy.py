@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
@@ -11,7 +12,20 @@ from .feynman_kac import BoundaryFeynmanKacForecast
 
 @dataclass(frozen=True, slots=True)
 class BoundaryPolicyConfig:
-    """The two-branch policy intentionally has no probability gates."""
+    mode: Literal["posterior_signal", "legacy_attenuated"] = "posterior_signal"
+    minimum_direction_probability: float = 0.60
+    minimum_signal_to_noise: float = 0.10
+    minimum_survival_probability: float = 0.35
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("posterior_signal", "legacy_attenuated"):
+            raise ValueError("unknown two-branch policy mode")
+        if not 0.5 <= self.minimum_direction_probability <= 1.0:
+            raise ValueError("direction probability must lie in [0.5, 1]")
+        if self.minimum_signal_to_noise < 0.0:
+            raise ValueError("signal-to-noise gate must be non-negative")
+        if not 0.0 <= self.minimum_survival_probability <= 1.0:
+            raise ValueError("survival probability must lie in [0, 1]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,14 +93,33 @@ class BoundaryPolicy:
             held_branches=resolved_held,
         )
 
-    @staticmethod
     def _direction(
-        forecast: BoundaryFeynmanKacForecast, neutral_threshold: float
+        self,
+        forecast: BoundaryFeynmanKacForecast,
+        neutral_threshold: float,
     ) -> str:
         if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
             raise ValueError("neutral threshold must be finite and non-negative")
-        if forecast.expected_return > neutral_threshold:
+        if self.config.mode == "legacy_attenuated":
+            if forecast.expected_attenuated_drift > neutral_threshold:
+                return "bull"
+            if forecast.expected_attenuated_drift < -neutral_threshold:
+                return "bear"
+            return "flat"
+        if (
+            forecast.drift_signal_to_noise < self.config.minimum_signal_to_noise
+            or forecast.trend_survival_probability
+            < self.config.minimum_survival_probability
+        ):
+            return "flat"
+        if (
+            forecast.bullish_drift_probability
+            >= self.config.minimum_direction_probability
+        ):
             return "bull"
-        if forecast.expected_return < -neutral_threshold:
+        if (
+            forecast.bullish_drift_probability
+            <= 1.0 - self.config.minimum_direction_probability
+        ):
             return "bear"
         return "flat"

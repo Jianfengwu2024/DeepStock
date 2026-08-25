@@ -73,6 +73,7 @@ class BoundaryEvaluationMetrics:
     average_turnover: float
     open_rate: float
     profit_concentration: float
+    direction_counts: tuple[int, int, int]
 
 
 def evaluate_boundary_forecasts(
@@ -147,6 +148,9 @@ def evaluate_boundary_forecasts(
         average_turnover=float(np.mean(turnover)),
         open_rate=float(np.mean(opened)),
         profit_concentration=_profit_concentration(net_returns[opened]),
+        direction_counts=tuple(
+            int(np.sum(predicted_classes == label)) for label in range(3)
+        ),
     )
 
 
@@ -175,7 +179,14 @@ def evaluate_two_branch_forecasts(
     actual_classes = np.asarray(
         [_return_class(value, threshold) for value, threshold in zip(actual_returns, thresholds, strict=True)]
     )
-    predicted_classes = np.argmax(probabilities, axis=1)
+    predicted_classes = np.asarray(
+        [
+            _direction_class(direction)
+            for item in observations
+            for direction in item.decision.branch_directions
+        ],
+        dtype=np.int64,
+    )
     one_hot = np.eye(3, dtype=np.float64)[actual_classes]
     selected_probability = probabilities[np.arange(len(probabilities)), actual_classes]
     log_loss = -float(np.mean(np.log(np.clip(selected_probability, 1e-12, 1.0))))
@@ -233,6 +244,9 @@ def evaluate_two_branch_forecasts(
         average_turnover=float(np.mean(turnover)),
         open_rate=float(np.mean(opened)),
         profit_concentration=_profit_concentration(net_returns[opened]),
+        direction_counts=tuple(
+            int(np.sum(predicted_classes == label)) for label in range(3)
+        ),
     )
 
 
@@ -281,6 +295,13 @@ def _return_class(value: float, threshold: float) -> int:
     if value > threshold:
         return 2
     return 1
+
+
+def _direction_class(direction: str) -> int:
+    try:
+        return {"bear": 0, "flat": 1, "bull": 2}[direction]
+    except KeyError as error:
+        raise ValueError(f"unknown branch direction: {direction}") from error
 
 
 def _expected_calibration_error(
