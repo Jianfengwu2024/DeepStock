@@ -63,7 +63,7 @@ def write_convection_report(
     lines = [
         "# PathEfficiencyFK 60 日对流门控报告",
         "",
-        "方向仍然只由路径效率和 FK 漂移决定。对流使用成分股分钟速度中的反向微观流量占比，只能减仓或清仓，不能反向开仓。",
+        "方向仍然只由路径效率和 FK 漂移决定。对流使用股票 × 分钟二维平面上的反向流量集中度，只能减仓或清仓，不能反向开仓。",
         "",
         "## 策略结果",
         "",
@@ -84,11 +84,11 @@ def write_convection_report(
     lines.extend(
         (
             "",
-            "## 对流条件统计",
+            "## 反向流量集中度统计",
             "",
             f"门控触发 {int(diagnostics.get('gate_triggers', 0))} 次。",
             "",
-            "| 对流档位 | 样本数 | 下一日平均收益 | 趋势延续率 | 反转率 |",
+            "| 集中度档位 | 样本数 | 下一日平均收益 | 趋势延续率 | 反转率 |",
             "| --- | ---: | ---: | ---: | ---: |",
         )
     )
@@ -112,7 +112,7 @@ def write_convection_report(
     lines.extend(
         (
             "",
-            "对流与路径效率绝对值的 Rank 相关系数："
+            "反向流量集中度与路径效率绝对值的 Rank 相关系数："
             f"{float(diagnostics.get('path_efficiency_rank_correlation', 0.0)):.4f}。",
             "",
             "只有真实样本外收益和回撤同时改善，才能认为对流门控有效。",

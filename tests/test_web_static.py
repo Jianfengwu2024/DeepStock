@@ -98,8 +98,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.26.2', html)
-        self.assertIn('/static/styles.css?v=0.26.2', html)
+        self.assertIn('/static/app.js?v=0.26.3', html)
+        self.assertIn('/static/styles.css?v=0.26.3', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
@@ -185,6 +185,9 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "convection_gate_reason",
         ):
             self.assertIn(field, script)
+        self.assertIn("反向流量集中度", script)
+        self.assertIn("股票 × 分钟二维集中度", html)
+        self.assertNotIn("对流强度", script)
         for field in (
             "branches",
             "state_probabilities",

@@ -31,7 +31,9 @@ def test_convection_report_explains_gate_in_plain_chinese(tmp_path) -> None:
     )
 
     report = path.read_text(encoding="utf-8")
-    assert "反向微观流量" in report
+    assert "反向流量集中度" in report
+    assert "股票 × 分钟" in report
+    assert "反向流量占比" not in report
     assert "只能减仓或清仓" in report
     assert "PathEfficiencyFK-60D-ConvectionGate" in report
     assert "12" in report

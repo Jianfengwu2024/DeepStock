@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from bnhmm.boundary_fk.cache import (
+    CACHE_CONSTRUCTION_VERSION,
     CACHE_LOOKBACKS,
     BoundaryDataCache,
     BoundaryDataCacheKey,
@@ -61,7 +62,6 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
         convection_total_flow=np.full(shape, 0.08),
         convection_observations=np.full(shape, 6, dtype=np.int64),
     )
-
     cache.save(key, original)
     restored = cache.load(key)
 
@@ -70,6 +70,13 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
     np.testing.assert_allclose(restored.convection_total_flow, original.convection_total_flow)
     np.testing.assert_array_equal(
         restored.convection_observations, original.convection_observations
+    )
+
+
+def test_boundary_cache_uses_reverse_flow_concentration_version() -> None:
+    assert (
+        CACHE_CONSTRUCTION_VERSION
+        == "path-efficiency-two-branch-v3-reverse-flow-concentration"
     )
 
 

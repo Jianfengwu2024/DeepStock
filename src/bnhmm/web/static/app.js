@@ -1195,7 +1195,7 @@ function paintBoundaryFlowResult(job, payload) {
   const predictions = allPredictions.filter(item => item.model_version === gateModel);
   const stage = stages.find(item => item.model_name === gateModel) || stages[0] || {};
   const baselineStage = stages.find(item => item.model_name === baselineModel) || {};
-  document.querySelector("#boundary-result-title").textContent = "60 日路径效率 + 对流门控";
+  document.querySelector("#boundary-result-title").textContent = "60 日路径效率 + 反向流量集中度";
   const metrics = stage.metrics || {};
   const baselineMetrics = baselineStage.metrics || {};
   const latest = predictions.at(-1);
@@ -1216,7 +1216,7 @@ function paintBoundaryFlowResult(job, payload) {
   document.querySelector("#boundary-evaluation-metrics").innerHTML = [
     boundaryMetric("基线成本后收益", formatPercent(baselineMetrics.net_total_return), "60 日纯路径效率 FK"),
     boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return), "扣除换手成本"),
-    boundaryMetric("对流门控触发", formatInteger(convection?.gate_triggers), "只能减仓或清仓"),
+    boundaryMetric("集中度门控触发", formatInteger(convection?.gate_triggers), "只能减仓或清仓"),
     boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown), "历史高点后的最大跌幅"),
     boundaryMetric("方向判断正确率", formatPercent(metrics.drift_direction_accuracy), "上涨或下跌方向"),
     boundaryMetric("平均实际仓位", formatPercent(metrics.average_exposure), "整个测试期平均"),
@@ -1245,7 +1245,7 @@ function paintBoundaryFlowResult(job, payload) {
     [`支流 ${branch.branch} 趋势延续可信度`, formatPercent(branch.survival_confidence)],
     [`支流 ${branch.branch} 看多概率`, formatPercent(branch.bullish_drift_probability)],
     [`支流 ${branch.branch} 趋势强度`, formatNumber(branch.drift_signal_to_noise, 3)],
-    [`支流 ${branch.branch} 对流强度`, formatPercent(branch.convection_strength)],
+    [`支流 ${branch.branch} 反向流量集中度`, formatPercent(branch.convection_strength)],
     [`支流 ${branch.branch} 仓位上限`, formatPercent(branch.convection_exposure_cap)],
   ]);
   document.querySelector("#boundary-dynamics").innerHTML = dynamics
