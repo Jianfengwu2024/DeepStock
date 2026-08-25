@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
@@ -31,6 +32,9 @@ class BayesianBranchModelConfig:
     convergence_tolerance: float = 1e-8
     neutral_sigma: float = 0.35
     drift_half_life_sessions: float | None = 60.0
+    potential_target: Literal[
+        "drift_survival", "momentum_continuation"
+    ] = "drift_survival"
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -44,6 +48,11 @@ class BayesianBranchModelConfig:
             and self.drift_half_life_sessions <= 0.0
         ):
             raise ValueError("drift half-life must be positive when provided")
+        if self.potential_target not in (
+            "drift_survival",
+            "momentum_continuation",
+        ):
+            raise ValueError("unknown branch potential target")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,10 +135,14 @@ class BayesianBranchModel:
 
         potential_raw = _potential_matrix(states, branch)
         selected_rows = np.flatnonzero(selected)
-        calibration_positions, causal_drift = self._causal_drift_predictions(
-            drift_raw[selected], target
-        )
-        calibration_rows = selected_rows[calibration_positions]
+        if self.config.potential_target == "drift_survival":
+            calibration_positions, causal_direction = (
+                self._causal_drift_predictions(drift_raw[selected], target)
+            )
+            calibration_rows = selected_rows[calibration_positions]
+        else:
+            calibration_rows = selected_rows
+            causal_direction = states.feature("return_mean_5")[selected, branch]
         potential_x, potential_center, potential_scale = _standardized_design(
             potential_raw[calibration_rows]
         )
@@ -138,9 +151,9 @@ class BayesianBranchModel:
         ]
         calibration_target = labels.next_return[calibration_rows, branch]
         survival = (
-            (np.sign(calibration_target) == np.sign(causal_drift))
+            (np.sign(calibration_target) == np.sign(causal_direction))
             & (np.abs(calibration_target) > threshold)
-            & (np.abs(causal_drift) > 1e-12)
+            & (np.abs(causal_direction) > 1e-12)
         ).astype(np.float64)
         survival_beta, potential_covariance = self._logistic_fit(
             potential_x, survival

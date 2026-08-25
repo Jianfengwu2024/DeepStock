@@ -182,7 +182,23 @@ def test_potential_confidence_tracks_the_fitted_drift_not_momentum_proxy() -> No
     forecast = BranchFeynmanKacForecaster(
         BoundaryFeynmanKacConfig(paths=5000, seed=23)
     ).predict(posterior, states, row=90, neutral_threshold=0.002)
+    legacy = BayesianBranchModel(
+        BayesianBranchModelConfig(
+            minimum_rows=30,
+            drift_half_life_sessions=None,
+            potential_target="momentum_continuation",
+        )
+    ).fit(
+        states,
+        labels,
+        branch=1,
+        training_cutoff=labels.target_time[100],
+    )
+    legacy_forecast = BranchFeynmanKacForecaster(
+        BoundaryFeynmanKacConfig(paths=5000, seed=23)
+    ).predict(legacy, states, row=90, neutral_threshold=0.002)
 
     # Branch 2 is deliberately contrarian to return_mean_5 in this fixture.
     # Its accurate drift forecast must therefore receive high survival confidence.
     assert forecast.trend_survival_probability > 0.65
+    assert legacy_forecast.trend_survival_probability < 0.5

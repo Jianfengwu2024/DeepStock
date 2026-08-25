@@ -122,37 +122,65 @@ class BoundaryFlowPipeline:
 
         for fold_index, test_start, training_rows, test_rows in folds:
             cutoff = test_start - np.timedelta64(1, "ns")
-            posteriors = []
+            posteriors_by_policy: dict[str, list] = {
+                name: [] for name in POLICY_ABLATION_NAMES
+            }
             for branch in range(2):
-                posterior = BayesianBranchModel(
-                    BayesianBranchModelConfig(
-                        minimum_rows=self.config.minimum_train_sessions,
-                        neutral_sigma=self.config.neutral_sigma,
-                        drift_half_life_sessions=self.config.drift_half_life_sessions,
+                for policy_name in POLICY_ABLATION_NAMES:
+                    legacy = policy_name == "legacy_attenuated"
+                    posterior = BayesianBranchModel(
+                        BayesianBranchModelConfig(
+                            minimum_rows=self.config.minimum_train_sessions,
+                            neutral_sigma=self.config.neutral_sigma,
+                            drift_half_life_sessions=(
+                                None
+                                if legacy
+                                else self.config.drift_half_life_sessions
+                            ),
+                            potential_target=(
+                                "momentum_continuation"
+                                if legacy
+                                else "drift_survival"
+                            ),
+                        )
+                    ).fit(
+                        data.states,
+                        data.labels,
+                        branch=branch,
+                        training_cutoff=cutoff,
                     )
-                ).fit(
-                    data.states,
-                    data.labels,
-                    branch=branch,
-                    training_cutoff=cutoff,
-                )
-                posteriors.append(posterior)
-                fit_rows.append(posterior.fit_rows)
-                drift_names = posterior.drift_feature_names
-                posterior_payloads.append(
-                    {
-                        "model_name": BOUNDARY_MODEL_NAMES[0],
-                        "fold": fold_index,
-                        "branch": branch + 1,
-                        "training_cutoff": str(cutoff),
-                        "drift_feature_names": list(posterior.drift_feature_names),
-                        "potential_feature_names": list(posterior.potential_feature_names),
-                        "drift_mean": posterior.drift_mean.tolist(),
-                        "drift_half_life_sessions": self.config.drift_half_life_sessions,
-                        "diffusion_variance": posterior.diffusion_variance,
-                        "potential_mean": posterior.potential_mean.tolist(),
-                    }
-                )
+                    posteriors_by_policy[policy_name].append(posterior)
+                    if not legacy:
+                        fit_rows.append(posterior.fit_rows)
+                        drift_names = posterior.drift_feature_names
+                    posterior_payloads.append(
+                        {
+                            "model_name": BOUNDARY_MODEL_NAMES[0],
+                            "policy": policy_name,
+                            "fold": fold_index,
+                            "branch": branch + 1,
+                            "training_cutoff": str(cutoff),
+                            "drift_feature_names": list(
+                                posterior.drift_feature_names
+                            ),
+                            "potential_feature_names": list(
+                                posterior.potential_feature_names
+                            ),
+                            "drift_mean": posterior.drift_mean.tolist(),
+                            "drift_half_life_sessions": (
+                                None
+                                if legacy
+                                else self.config.drift_half_life_sessions
+                            ),
+                            "potential_target": (
+                                "momentum_continuation"
+                                if legacy
+                                else "drift_survival"
+                            ),
+                            "diffusion_variance": posterior.diffusion_variance,
+                            "potential_mean": posterior.potential_mean.tolist(),
+                        }
+                    )
 
             for row in test_rows:
                 membership = membership_by_month.get(data.states.topology_months[row])
@@ -166,22 +194,26 @@ class BoundaryFlowPipeline:
                     )
                     for branch in range(2)
                 )
-                forecasts = tuple(
-                    BranchFeynmanKacForecaster(
-                        BoundaryFeynmanKacConfig(
-                            paths=self.config.fk_paths,
-                            seed=self.config.seed + fold_index * 2 + branch,
+                forecasts_by_policy = {
+                    policy_name: tuple(
+                        BranchFeynmanKacForecaster(
+                            BoundaryFeynmanKacConfig(
+                                paths=self.config.fk_paths,
+                                seed=self.config.seed + fold_index * 2 + branch,
+                            )
+                        ).predict(
+                            posteriors_by_policy[policy_name][branch],
+                            data.states,
+                            int(row),
+                            neutral_threshold=float(thresholds[branch]),
                         )
-                    ).predict(
-                        posteriors[branch],
-                        data.states,
-                        int(row),
-                        neutral_threshold=float(thresholds[branch]),
+                        for branch in range(2)
                     )
-                    for branch in range(2)
-                )
+                    for policy_name in POLICY_ABLATION_NAMES
+                }
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
                 for policy_name, policy in policies.items():
+                    forecasts = forecasts_by_policy[policy_name]
                     decision = policy.decide(
                         (forecasts[0], forecasts[1]),
                         branches=membership.branches,
