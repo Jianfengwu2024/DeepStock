@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 CACHE_FORMAT_VERSION = 1
-CACHE_CONSTRUCTION_VERSION = "path-efficiency-two-branch-v5-limit-execution"
+CACHE_CONSTRUCTION_VERSION = "path-efficiency-two-branch-v6-close-to-close-execution"
 CACHE_LOOKBACKS = (10, 20, 30, 40, 60, 90, 120)
 
 
@@ -119,6 +119,7 @@ class BoundaryDataCache:
                 symbols=np.asarray(data.symbols, dtype=np.str_),
                 member_next_returns=data.member_next_returns,
                 member_next_valid=data.member_next_valid,
+                member_next_hold_returns=data.member_next_hold_returns,
                 member_next_buy_returns=data.member_next_buy_returns,
                 member_next_buy_executable=data.member_next_buy_executable,
                 member_next_sell_returns=data.member_next_sell_returns,
@@ -208,6 +209,7 @@ class BoundaryDataCache:
                 symbols=tuple(str(item) for item in payload["symbols"]),
                 member_next_returns=payload["member_next_returns"].copy(),
                 member_next_valid=payload["member_next_valid"].copy(),
+                member_next_hold_returns=payload["member_next_hold_returns"].copy(),
                 member_next_buy_returns=payload["member_next_buy_returns"].copy(),
                 member_next_buy_executable=payload["member_next_buy_executable"].copy(),
                 member_next_sell_returns=payload["member_next_sell_returns"].copy(),

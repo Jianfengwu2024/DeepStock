@@ -122,6 +122,7 @@ def build_boundary_experiment_data(
         symbols=built.symbols,
         member_next_returns=built.member_next_returns,
         member_next_valid=built.member_next_valid,
+        member_next_hold_returns=execution.hold_returns,
         member_next_buy_returns=execution.buy_returns,
         member_next_buy_executable=execution.buy_executable,
         member_next_sell_returns=execution.sell_returns,

@@ -290,6 +290,7 @@ class TwoBranchDataset:
     symbols: tuple[str, ...]
     member_next_returns: NDArray[np.float64]
     member_next_valid: NDArray[np.bool_]
+    member_next_hold_returns: NDArray[np.float64] | None = None
     member_next_buy_returns: NDArray[np.float64] | None = None
     member_next_buy_executable: NDArray[np.bool_] | None = None
     member_next_sell_returns: NDArray[np.float64] | None = None
@@ -305,6 +306,8 @@ class TwoBranchDataset:
     def __post_init__(self) -> None:
         rows = len(self.states.sessions)
         expected = (rows, len(self.symbols))
+        if self.member_next_hold_returns is None:
+            object.__setattr__(self, "member_next_hold_returns", self.member_next_returns.copy())
         if self.member_next_buy_returns is None:
             object.__setattr__(self, "member_next_buy_returns", self.member_next_returns.copy())
         if self.member_next_buy_executable is None:
@@ -345,6 +348,7 @@ class TwoBranchDataset:
         if self.member_next_returns.shape != expected or self.member_next_valid.shape != expected:
             raise ValueError("member next returns must align with sessions and symbols")
         execution_arrays = (
+            self.member_next_hold_returns,
             self.member_next_buy_returns,
             self.member_next_buy_executable,
             self.member_next_sell_returns,
@@ -357,6 +361,8 @@ class TwoBranchDataset:
         if np.any(self.member_next_valid & ~np.isfinite(self.member_next_returns)):
             raise ValueError("valid member next returns must be finite")
         if np.any(
+            self.member_next_valid & ~np.isfinite(self.member_next_hold_returns)
+        ) or np.any(
             self.member_next_buy_executable & ~np.isfinite(self.member_next_buy_returns)
         ) or np.any(
             self.member_next_sell_executable & ~np.isfinite(self.member_next_sell_returns)

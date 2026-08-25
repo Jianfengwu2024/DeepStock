@@ -433,7 +433,9 @@ class BoundaryFlowPipeline:
             if retained:
                 if not data.member_next_valid[row, column]:
                     raise ValueError(f"missing next-session return for held symbol {symbol}")
-                gross_return += retained * float(data.member_next_returns[row, column])
+                gross_return += retained * float(
+                    data.member_next_hold_returns[row, column]
+                )
             if after > before:
                 gross_return += (after - before) * float(
                     data.member_next_buy_returns[row, column]

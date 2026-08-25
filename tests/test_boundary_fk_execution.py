@@ -54,6 +54,7 @@ def test_limit_up_that_opens_intraday_can_be_bought_at_first_open() -> None:
 
     assert constraints.buy_executable[0, 0]
     np.testing.assert_allclose(constraints.buy_returns[0, 0], 10.9 / 10.8 - 1.0)
+    np.testing.assert_allclose(constraints.hold_returns[0, 0], 10.9 / 10.0 - 1.0)
 
 
 def test_all_day_limit_down_rejects_sale_and_keeps_position() -> None:
@@ -90,7 +91,7 @@ def test_limit_down_that_opens_intraday_can_be_sold_at_first_open() -> None:
     )
 
     assert constraints.sell_executable[0, 0]
-    np.testing.assert_allclose(constraints.sell_returns[0, 0], 9.2 / 9.0 - 1.0)
+    np.testing.assert_allclose(constraints.sell_returns[0, 0], 9.2 / 10.0 - 1.0)
 
 
 def test_turnover_and_cost_use_only_executed_orders() -> None:
@@ -119,3 +120,21 @@ def test_turnover_and_cost_use_only_executed_orders() -> None:
     np.testing.assert_allclose(
         execution.gross_return, 0.5 * data.member_next_buy_returns[row, 1]
     )
+
+
+def test_existing_position_uses_previous_close_to_current_close_return() -> None:
+    data = _walk_forward_data(180)
+    row = 120
+    data = replace(
+        data,
+        member_next_hold_returns=np.full_like(data.member_next_returns, 0.04),
+    )
+
+    execution = BoundaryFlowPipeline._execute_portfolio(
+        data,
+        row,
+        previous={"A": 0.5},
+        target={"A": 0.5},
+    )
+
+    np.testing.assert_allclose(execution.gross_return, 0.02)

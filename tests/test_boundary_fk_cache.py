@@ -46,6 +46,11 @@ def test_boundary_cache_round_trips_dataset_without_pickle(tmp_path: Path) -> No
     np.testing.assert_allclose(restored.labels.next_return, original.labels.next_return, equal_nan=True)
     np.testing.assert_allclose(restored.member_next_returns, original.member_next_returns, equal_nan=True)
     np.testing.assert_allclose(
+        restored.member_next_hold_returns,
+        original.member_next_hold_returns,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
         restored.member_next_buy_returns,
         original.member_next_buy_returns,
         equal_nan=True,
@@ -95,7 +100,7 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
 def test_boundary_cache_uses_reverse_flow_concentration_version() -> None:
     assert (
         CACHE_CONSTRUCTION_VERSION
-        == "path-efficiency-two-branch-v5-limit-execution"
+        == "path-efficiency-two-branch-v6-close-to-close-execution"
     )
 
 
@@ -189,6 +194,7 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
             (),
             {
                 "sessions": _walk_forward_data(180).states.sessions,
+                "hold_returns": _walk_forward_data(180).member_next_returns,
                 "buy_returns": _walk_forward_data(180).member_next_returns,
                 "buy_executable": _walk_forward_data(180).member_next_valid,
                 "sell_returns": np.zeros_like(_walk_forward_data(180).member_next_returns),

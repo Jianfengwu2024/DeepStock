@@ -14,6 +14,7 @@ from ..sector_flow.types import SectorMinutePanel
 @dataclass(frozen=True, slots=True)
 class MemberExecutionConstraints:
     sessions: NDArray[np.datetime64]
+    hold_returns: NDArray[np.float64]
     buy_returns: NDArray[np.float64]
     buy_executable: NDArray[np.bool_]
     sell_returns: NDArray[np.float64]
@@ -25,6 +26,7 @@ def build_member_execution_constraints(
 ) -> MemberExecutionConstraints:
     sessions = np.unique(panel.timestamps.astype("datetime64[D]"))
     shape = (len(sessions), len(panel.symbols))
+    hold_returns = np.zeros(shape, dtype=np.float64)
     buy_returns = np.full(shape, np.nan, dtype=np.float64)
     sell_returns = np.full(shape, np.nan, dtype=np.float64)
     buy_executable = np.zeros(shape, dtype=np.bool_)
@@ -37,11 +39,13 @@ def build_member_execution_constraints(
         for column, symbol in enumerate(panel.symbols):
             previous_valid = previous_rows[panel.valid[previous_rows, column]]
             target_valid = target_rows[panel.valid[target_rows, column]]
-            if not len(previous_valid) or not len(target_valid):
+            if not len(previous_valid):
                 continue
             previous_close = float(panel.close[previous_valid[-1], column])
-            first_close = float(panel.close[target_valid[0], column])
+            if not len(target_valid):
+                continue
             last_close = float(panel.close[target_valid[-1], column])
+            hold_returns[row, column] = last_close / previous_close - 1.0
             upper_limits, lower_limits = _limit_candidates(symbol, previous_close)
 
             buy_index = _first_executable_row(
@@ -62,10 +66,11 @@ def build_member_execution_constraints(
                 sell_price = _execution_price(
                     panel, sell_index, column, lower_limits, upper=False
                 )
-                sell_returns[row, column] = sell_price / first_close - 1.0
+                sell_returns[row, column] = sell_price / previous_close - 1.0
 
     return MemberExecutionConstraints(
         sessions=sessions,
+        hold_returns=hold_returns,
         buy_returns=buy_returns,
         buy_executable=buy_executable,
         sell_returns=sell_returns,
