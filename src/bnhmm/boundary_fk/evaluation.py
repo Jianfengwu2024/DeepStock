@@ -71,6 +71,7 @@ class BoundaryEvaluationMetrics:
     net_total_return: float
     maximum_drawdown: float
     average_turnover: float
+    average_exposure: float
     open_rate: float
     profit_concentration: float
     direction_counts: tuple[int, int, int]
@@ -124,7 +125,10 @@ def evaluate_boundary_forecasts(
         for item in observations
     ]
 
-    opened = np.asarray([item.decision.open_position for item in observations])
+    exposure = np.asarray(
+        [sum(item.decision.target_weights) for item in observations], dtype=np.float64
+    )
+    opened = exposure > 0.0
     gross_returns = np.asarray(
         [item.gross_strategy_return if is_open else 0.0 for item, is_open in zip(observations, opened)]
     )
@@ -151,6 +155,7 @@ def evaluate_boundary_forecasts(
         net_total_return=float(net_equity[-1] - 1.0),
         maximum_drawdown=_maximum_drawdown(net_equity),
         average_turnover=float(np.mean(turnover)),
+        average_exposure=float(np.mean(exposure)),
         open_rate=float(np.mean(opened)),
         profit_concentration=_profit_concentration(net_returns[opened]),
         direction_counts=tuple(
@@ -234,7 +239,10 @@ def evaluate_two_branch_forecasts(
     net_returns = gross_returns - turnover * settings.transaction_cost_bps / 10_000.0
     gross_equity = np.cumprod(1.0 + gross_returns)
     net_equity = np.cumprod(1.0 + net_returns)
-    opened = np.asarray([item.decision.open_position for item in observations])
+    exposure = np.asarray(
+        [sum(item.decision.target_weights) for item in observations], dtype=np.float64
+    )
+    opened = exposure > 0.0
     probability_residual = one_hot[:, 2] - probabilities[:, 2]
     expected_drift = np.asarray(
         [forecast.expected_drift for item in observations for forecast in item.forecasts],
@@ -255,6 +263,7 @@ def evaluate_two_branch_forecasts(
         net_total_return=float(net_equity[-1] - 1.0),
         maximum_drawdown=_maximum_drawdown(net_equity),
         average_turnover=float(np.mean(turnover)),
+        average_exposure=float(np.mean(exposure)),
         open_rate=float(np.mean(opened)),
         profit_concentration=_profit_concentration(net_returns[opened]),
         direction_counts=tuple(

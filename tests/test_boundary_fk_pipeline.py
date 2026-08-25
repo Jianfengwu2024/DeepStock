@@ -78,39 +78,24 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
         "training_cutoff",
         "model_version",
         "selected_symbols",
+        "branch_target_exposures",
         "gross_strategy_return",
     }.issubset(predictions[0])
-    ablation = json.loads(
-        (tmp_path / "boundary-policy-ablation.json").read_text(encoding="utf-8")
+    assert not (tmp_path / "boundary-policy-ablation.json").exists()
+    assert all(
+        round(sum(item["target_weights"]), 8) in {0.0, 0.25, 0.5, 0.75, 1.0}
+        for item in predictions
     )
-    assert set(ablation) == {
-        "posterior_signal",
-        "legacy_features",
-        "path_efficiency_only",
-        "path_efficiency",
-        "shock_recovery",
-        "all_intraday",
-        "legacy_attenuated",
-    }
     posteriors = json.loads(
         (tmp_path / "boundary-model-posterior.json").read_text(encoding="utf-8")
     )
-    pure_path = [
-        item for item in posteriors if item["policy"] == "path_efficiency_only"
-    ]
-    assert pure_path
+    assert {item["policy"] for item in posteriors} == {"path_efficiency_only"}
     assert all(
         item["drift_feature_names"] == ["signed_path_efficiency"]
-        for item in pure_path
+        for item in posteriors
     )
-    assert result.stages[0].drift_feature_names[-1] == "closing_flow"
-    assert len(ablation["posterior_signal"]["direction_counts"]) == 3
-    assert len(ablation["legacy_attenuated"]["direction_counts"]) == 3
-    assert -1.0 <= ablation["posterior_signal"]["drift_rank_ic"] <= 1.0
-    assert 0.0 <= ablation["posterior_signal"]["drift_direction_accuracy"] <= 1.0
-    report = (tmp_path / "boundary-ablation-report.md").read_text(encoding="utf-8")
-    assert "日内物理特征消融" in report
-    assert "漂移秩相关" in report
+    assert result.stages[0].drift_feature_names == ("signed_path_efficiency",)
+    assert 0.0 <= result.stages[0].metrics.average_exposure <= 1.0
 
 
 def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) -> None:
@@ -132,7 +117,11 @@ def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) ->
             == np.datetime64(opened["signal_time"], "D")
         )[0]
     )
-    columns = [data.symbols.index(symbol) for symbol in opened["selected_symbols"]]
-    expected = float(np.mean(data.member_next_returns[row, columns]))
+    expected = sum(
+        weight * float(data.member_next_returns[row, data.symbols.index(symbol)])
+        for symbol, weight in zip(
+            opened["selected_symbols"], opened["target_weights"], strict=True
+        )
+    )
 
-    assert opened["gross_strategy_return"] == expected
+    np.testing.assert_allclose(opened["gross_strategy_return"], expected)

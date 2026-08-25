@@ -17,74 +17,33 @@ def write_json(path: Path, payload: Any) -> None:
 def write_ablation_report(
     path: Path,
     stages: list[dict[str, Any]],
-    policy_ablations: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     lines = [
         "# 两支流 FK 样本外报告",
         "",
-        "模型每月固定两条支流，分别估计下一日漂移和有效势。预测多时买入整条支流，预测平时保持，预测空时清仓。",
-        "本轮新增三项低参数日内路径信息：路径效率、尾盘流向和冲击恢复度。交易门槛没有降低。",
+        "正式漂移输入固定为纯路径效率（signed_path_efficiency），不再混入其他信号。",
+        "仓位规则：多 50% / 平 25% / 空 0%（每条支流）。两条支流合计仓位为 0%、25%、50%、75% 或 100%。",
         "",
-        "| 模型 | 状态 | Brier | Log Loss | ECE | 样本数 | 开仓率 | 换手 | 净收益 | 最大回撤 |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| 模型 | 漂移输入 | 仓位规则 | 样本数 | 平均仓位 | 开仓率 | 换手 | 净收益 | 最大回撤 |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for stage in stages:
         metrics = stage.get("metrics") or {}
         lines.append(
-            "| {model} | {status} | {brier} | {log_loss} | {ece} | {count} | {open_rate} | {turnover} | {net_return} | {drawdown} |".format(
+            "| {model} | 纯路径效率 | 多50% / 平25% / 空0% | {count} | {exposure} | {open_rate} | {turnover} | {net_return} | {drawdown} |".format(
                 model=stage["model_name"],
-                status=stage["status"],
-                brier=_number(metrics.get("brier_score")),
-                log_loss=_number(metrics.get("log_loss")),
-                ece=_number(metrics.get("ece")),
                 count=metrics.get("observations", "-"),
+                exposure=_percent(metrics.get("average_exposure")),
                 open_rate=_percent(metrics.get("open_rate")),
                 turnover=_percent(metrics.get("average_turnover")),
                 net_return=_percent(metrics.get("net_total_return")),
                 drawdown=_percent(metrics.get("maximum_drawdown")),
             )
         )
-    if policy_ablations:
-        labels = {
-            "posterior_signal": "尾盘流向（近期后验信号，正式）",
-            "legacy_features": "旧4项输入",
-            "path_efficiency_only": "纯路径效率",
-            "path_efficiency": "旧四项 + 路径效率",
-            "shock_recovery": "仅加冲击恢复",
-            "all_intraday": "三项全加",
-            "legacy_attenuated": "旧衰减漂移",
-        }
-        lines.extend(
-            (
-                "",
-                "## 日内物理特征消融",
-                "",
-                "除旧衰减算法外，其余各组使用相同的近期贝叶斯后验、有效势、月份和交易成本，只改变漂移输入。",
-                "",
-                "| 方法 | 空 / 平 / 多 | 漂移方向命中 | 漂移秩相关 | Balanced Accuracy | Macro F1 | 开仓率 | 换手 | 净收益 | 最大回撤 |",
-                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-            )
-        )
-        for name, metrics in policy_ablations.items():
-            counts = metrics.get("direction_counts") or (0, 0, 0)
-            lines.append(
-                "| {name} | {counts} | {direction} | {rank_ic} | {balanced} | {macro_f1} | {open_rate} | {turnover} | {net_return} | {drawdown} |".format(
-                    name=labels.get(name, name),
-                    counts=" / ".join(str(int(value)) for value in counts),
-                    direction=_percent(metrics.get("drift_direction_accuracy")),
-                    rank_ic=_number(metrics.get("drift_rank_ic")),
-                    balanced=_percent(metrics.get("balanced_accuracy")),
-                    macro_f1=_percent(metrics.get("macro_f1")),
-                    open_rate=_percent(metrics.get("open_rate")),
-                    turnover=_percent(metrics.get("average_turnover")),
-                    net_return=_percent(metrics.get("net_total_return")),
-                    drawdown=_percent(metrics.get("maximum_drawdown")),
-                )
-            )
     lines.extend(
         (
             "",
-            "判断新输入是否有效，优先看漂移方向命中和漂移秩相关，不能只看一次回测收益。",
+            "判断策略是否有效，仍要同时看漂移方向命中、漂移秩相关、换手和回撤，不能只看一次回测收益。",
             "该报告只说明样本外结果，不代表策略已经具有稳定交易价值。",
             "",
         )

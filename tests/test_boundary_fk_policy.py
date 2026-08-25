@@ -35,50 +35,56 @@ def _forecast(direction: str) -> BoundaryFeynmanKacForecast:
     )
 
 
-def test_bull_opens_and_bear_closes_each_branch_independently() -> None:
-    policy = BoundaryPolicy()
-    opened = policy.decide(
+@pytest.mark.parametrize(
+    ("directions", "branch_exposure", "total_exposure"),
+    [
+        (("bull", "bull"), (0.5, 0.5), 1.0),
+        (("bull", "flat"), (0.5, 0.25), 0.75),
+        (("bull", "bear"), (0.5, 0.0), 0.5),
+        (("flat", "flat"), (0.25, 0.25), 0.5),
+        (("flat", "bear"), (0.25, 0.0), 0.25),
+        (("bear", "bear"), (0.0, 0.0), 0.0),
+    ],
+)
+def test_branch_directions_map_to_absolute_capital_exposure(
+    directions: tuple[str, str],
+    branch_exposure: tuple[float, float],
+    total_exposure: float,
+) -> None:
+    decision = BoundaryPolicy().decide(
+        (_forecast(directions[0]), _forecast(directions[1])),
+        branches=(("A", "B"), ("C", "D")),
+        neutral_thresholds=(0.002, 0.002),
+    )
+
+    assert decision.branch_target_exposures == pytest.approx(branch_exposure)
+    assert sum(decision.target_weights) == pytest.approx(total_exposure)
+
+
+def test_bull_and_flat_allocate_each_branch_budget_across_its_members() -> None:
+    decision = BoundaryPolicy().decide(
         (_forecast("bull"), _forecast("flat")),
         branches=(("A", "B"), ("C", "D")),
-        held_branches=(False, False),
-        neutral_thresholds=(0.002, 0.002),
-    )
-    closed = policy.decide(
-        (_forecast("bear"), _forecast("bull")),
-        branches=(("A", "B"), ("C", "D")),
-        held_branches=opened.held_branches,
-        neutral_thresholds=(0.002, 0.002),
-    )
-
-    assert opened.held_branches == (True, False)
-    assert opened.selected_symbols == ("A", "B")
-    assert closed.held_branches == (False, True)
-    assert closed.selected_symbols == ("C", "D")
-
-
-def test_flat_keeps_existing_position_but_does_not_open_a_new_one() -> None:
-    decision = BoundaryPolicy().decide(
-        (_forecast("flat"), _forecast("flat")),
-        branches=(("A", "B"), ("C", "D")),
-        held_branches=(True, False),
-        neutral_thresholds=(0.002, 0.002),
-    )
-
-    assert decision.branch_directions == ("flat", "flat")
-    assert decision.held_branches == (True, False)
-    assert decision.selected_symbols == ("A", "B")
-
-
-def test_all_held_symbols_receive_one_equal_portfolio_weight() -> None:
-    decision = BoundaryPolicy().decide(
-        (_forecast("bull"), _forecast("bull")),
-        branches=(("A", "B"), ("C", "D")),
-        held_branches=(False, False),
         neutral_thresholds=(0.002, 0.002),
     )
 
     assert decision.selected_symbols == ("A", "B", "C", "D")
-    assert decision.target_weights == pytest.approx((0.25, 0.25, 0.25, 0.25))
+    assert decision.target_weights == pytest.approx((0.25, 0.25, 0.125, 0.125))
+
+
+def test_repeated_flat_signal_stays_at_fixed_half_position() -> None:
+    decisions = [
+        BoundaryPolicy().decide(
+            (_forecast("flat"), _forecast("flat")),
+            branches=(("A", "B"), ("C", "D")),
+            neutral_thresholds=(0.002, 0.002),
+        )
+        for _ in range(2)
+    ]
+
+    assert decisions[0].branch_target_exposures == (0.25, 0.25)
+    assert decisions[1].branch_target_exposures == (0.25, 0.25)
+    assert sum(decisions[1].target_weights) == pytest.approx(0.5)
 
 
 def test_diffusion_probability_argmax_cannot_force_a_weak_drift_direction() -> None:
@@ -92,19 +98,18 @@ def test_diffusion_probability_argmax_cannot_force_a_weak_drift_direction() -> N
     decision = BoundaryPolicy().decide(
         (noisy, noisy),
         branches=(("A", "B"), ("C", "D")),
-        held_branches=(False, False),
         neutral_thresholds=(0.002, 0.002),
     )
 
     assert decision.branch_directions == ("flat", "flat")
-    assert not decision.open_position
+    assert decision.open_position
+    assert sum(decision.target_weights) == pytest.approx(0.5)
 
 
 def test_label_threshold_does_not_suppress_a_confident_posterior_direction() -> None:
     decision = BoundaryPolicy().decide(
         (_forecast("bull"), _forecast("bear")),
         branches=(("A", "B"), ("C", "D")),
-        held_branches=(False, True),
         neutral_thresholds=(1.0, 1.0),
     )
 
@@ -123,7 +128,6 @@ def test_weak_survival_confidence_abstains_even_with_positive_drift() -> None:
     ).decide(
         (weak_survival, weak_survival),
         branches=(("A", "B"), ("C", "D")),
-        held_branches=(False, False),
         neutral_thresholds=(0.002, 0.002),
     )
 

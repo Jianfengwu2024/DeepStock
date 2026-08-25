@@ -867,11 +867,9 @@ function renderBoundaryFlowResult(job) {
   const status = document.querySelector("#boundary-flow-result-status");
   const evaluationUrl = job.artifacts?.["boundary-policy-evaluation.json"];
   const predictionsUrl = job.artifacts?.["feynman-kac-predictions.json"];
-  const ablationUrl = job.artifacts?.["boundary-policy-ablation.json"];
   const downloads = {
     "boundary-ablation-report.md": "中文报告",
     "boundary-policy-evaluation.json": "策略评估",
-    "boundary-policy-ablation.json": "新旧信号消融",
     "feynman-kac-predictions.json": "样本外预测",
     "boundary-model-posterior.json": "模型后验",
     "boundary-residual-analysis.json": "残差分析",
@@ -890,7 +888,7 @@ function renderBoundaryFlowResult(job) {
     return;
   }
   if (cached?.stages && cached?.predictions) {
-    paintBoundaryFlowResult(job, cached.stages, cached.predictions, cached.ablation || {});
+    paintBoundaryFlowResult(job, cached.stages, cached.predictions);
     return;
   }
   if (!evaluationUrl || !predictionsUrl) {
@@ -898,7 +896,6 @@ function renderBoundaryFlowResult(job) {
       ? "运行失败，请查看日志"
       : ["queued", "running"].includes(job.status) ? "两支流样本外计算中" : "暂无可读取的结果制品";
     document.querySelector("#boundary-stage-table").replaceChildren();
-    document.querySelector("#boundary-ablation-table").replaceChildren();
     document.querySelector("#boundary-probabilities").replaceChildren();
     document.querySelector("#boundary-dynamics").replaceChildren();
     document.querySelector("#boundary-gate-reason").textContent = "";
@@ -914,59 +911,36 @@ function renderBoundaryFlowResult(job) {
   Promise.all([
     api(evaluationUrl),
     api(predictionsUrl),
-    ablationUrl ? api(ablationUrl) : Promise.resolve({}),
-  ]).then(([stages, predictions, ablation]) => {
+  ]).then(([stages, predictions]) => {
     const payload = {
       stages: Array.isArray(stages) ? stages : [],
       predictions: Array.isArray(predictions) ? predictions : [],
-      ablation: ablation && typeof ablation === "object" ? ablation : {},
     };
     state.boundaryResultCache.set(job.id, payload);
-    if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload.stages, payload.predictions, payload.ablation);
+    if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload.stages, payload.predictions);
   }).catch(exception => {
     state.boundaryResultCache.set(job.id, { error: exception.message });
     if (state.selectedId === job.id) status.textContent = `结果读取失败：${exception.message}`;
   });
 }
 
-function paintBoundaryFlowResult(job, stages, predictions, ablation = {}) {
+function paintBoundaryFlowResult(job, stages, predictions) {
   const statusLabels = { completed: "完成", failed: "失败" };
   document.querySelector("#boundary-stage-table").innerHTML = stages.map(stage => {
     const metrics = stage.metrics || {};
     return `<tr>
       <td><strong>${escapeHtml(stage.model_name || "—")}</strong></td>
       <td><span class="status-badge ${stage.status === "completed" ? "completed" : "failed"}">${statusLabels[stage.status] || escapeHtml(stage.status || "未知")}</span></td>
+      <td>纯路径效率</td>
       <td>${formatInteger(stage.minimum_fit_rows)}</td>
       <td>${formatNumber(metrics.brier_score, 4)}</td>
       <td>${formatNumber(metrics.log_loss, 4)}</td>
       <td>${formatNumber(metrics.ece, 4)}</td>
+      <td>${formatPercent(metrics.average_exposure)}</td>
       <td>${formatPercent(metrics.open_rate)}</td>
       <td>${formatPercent(metrics.average_turnover)}</td>
     </tr>`;
   }).join("");
-
-  const ablationLabels = {
-    posterior_signal: "尾盘流向（正式）",
-    legacy_features: "旧4项输入",
-    path_efficiency_only: "纯路径效率",
-    path_efficiency: "旧四项 + 路径效率",
-    shock_recovery: "仅加冲击恢复",
-    all_intraday: "三项全加",
-    legacy_attenuated: "旧衰减漂移",
-  };
-  document.querySelector("#boundary-ablation-table").innerHTML = Object.entries(ablation)
-    .map(([name, metrics]) => `<tr>
-      <td><strong>${escapeHtml(ablationLabels[name] || name)}</strong></td>
-      <td>${(metrics.direction_counts || [0, 0, 0]).map(formatInteger).join(" / ")}</td>
-      <td>${formatPercent(metrics.drift_direction_accuracy)}</td>
-      <td>${formatNumber(metrics.drift_rank_ic, 4)}</td>
-      <td>${formatPercent(metrics.balanced_accuracy)}</td>
-      <td>${formatPercent(metrics.macro_f1)}</td>
-      <td>${formatPercent(metrics.open_rate)}</td>
-      <td>${formatPercent(metrics.average_turnover)}</td>
-      <td>${formatPercent(metrics.net_total_return)}</td>
-      <td>${formatPercent(metrics.maximum_drawdown)}</td>
-    </tr>`).join("");
 
   const latest = predictions.at(-1);
   document.querySelector("#boundary-flow-result-status").textContent =
@@ -995,16 +969,16 @@ function paintBoundaryFlowResult(job, stages, predictions, ablation = {}) {
     [`支流 ${branch.branch} 势可信度`, formatPercent(branch.survival_confidence)],
     [`支流 ${branch.branch} 看多后验`, formatPercent(branch.bullish_drift_probability)],
     [`支流 ${branch.branch} 漂移信噪比`, formatNumber(branch.drift_signal_to_noise, 3)],
-    [`支流 ${branch.branch} 旧衰减漂移`, formatNumber(branch.legacy_attenuated_drift, 6)],
     [`支流 ${branch.branch} 扩散`, formatNumber(branch.expected_diffusion_variance, 6)],
   ]);
   document.querySelector("#boundary-dynamics").innerHTML = dynamics
     .map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`)
     .join("");
 
-  const heldBranches = latest.held_branches || [false, false];
+  const branchTargetExposures = latest.branch_target_exposures || [0, 0];
+  const totalExposure = branchTargetExposures.reduce((total, value) => total + value, 0);
   const holdings = latest.selected_symbols?.length
-    ? `持有支流 ${heldBranches.map((held, index) => held ? index + 1 : null).filter(Boolean).join("、")} · ${latest.selected_symbols.join("、")} · 全组合等权`
+    ? `目标仓位 ${formatPercent(totalExposure)} · 支流 ${branchTargetExposures.map(formatPercent).join(" / ")} · ${latest.selected_symbols.join("、")}`
     : "当前空仓";
   const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
   document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span>`;

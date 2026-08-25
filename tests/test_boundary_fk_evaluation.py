@@ -66,6 +66,7 @@ def test_evaluation_reports_probability_and_strategy_metrics() -> None:
     assert metrics.balanced_accuracy == pytest.approx(1.0)
     assert metrics.macro_f1 == pytest.approx(1.0)
     assert metrics.open_rate == pytest.approx(2 / 3)
+    assert metrics.average_exposure == pytest.approx(2 / 3)
     assert metrics.average_turnover == pytest.approx(4 / 3)
     assert metrics.net_total_return == pytest.approx((1.018 * 0.988) - 1.0)
     assert metrics.maximum_drawdown == pytest.approx(0.012)

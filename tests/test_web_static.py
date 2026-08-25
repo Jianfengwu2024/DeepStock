@@ -29,7 +29,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.24.3', html)
+        self.assertIn('/static/app.js?v=0.24.5', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         for field in (
@@ -59,15 +59,19 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn("renderBoundaryFlowResult", script)
         self.assertIn(
-            "<th>开仓率</th><th>换手</th><th>成本后收益</th>",
+            "<th>平均仓位</th><th>开仓率</th><th>换手</th>",
             html,
         )
+        self.assertNotIn('id="boundary-ablation-table"', html)
+        self.assertNotIn("boundary-policy-ablation.json", script)
+        self.assertNotIn("ablationLabels", script)
+        self.assertIn("纯路径效率", html)
+        self.assertIn("metrics.average_exposure", script)
         self.assertIn("metrics.average_turnover", script)
         self.assertIn('"boundary-flow-fk"', script)
         self.assertIn("两支流 FK", html)
         for artifact in (
             "boundary-policy-evaluation.json",
-            "boundary-policy-ablation.json",
             "feynman-kac-predictions.json",
         ):
             self.assertIn(artifact, script)
@@ -79,22 +83,11 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "bullish_drift_probability",
             "drift_signal_to_noise",
             "survival_confidence",
-            "legacy_attenuated_drift",
             "selected_symbols",
-            "held_branches",
+            "branch_target_exposures",
         ):
             self.assertIn(field, script)
-        for label in (
-            "尾盘流向（正式）",
-            "旧4项输入",
-            "纯路径效率",
-            "旧四项 + 路径效率",
-            "仅加冲击恢复",
-            "三项全加",
-            "漂移方向命中",
-            "漂移秩相关",
-        ):
-            self.assertIn(label, html + script)
+        self.assertNotIn("旧衰减漂移", script)
 
     def test_river_workspace_has_four_views_and_stock_inspector(self) -> None:
         html = (ROOT / "river.html").read_text(encoding="utf-8")
