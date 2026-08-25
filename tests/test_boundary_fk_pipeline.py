@@ -86,11 +86,23 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
     assert set(ablation) == {
         "posterior_signal",
         "legacy_features",
+        "path_efficiency_only",
         "path_efficiency",
         "shock_recovery",
         "all_intraday",
         "legacy_attenuated",
     }
+    posteriors = json.loads(
+        (tmp_path / "boundary-model-posterior.json").read_text(encoding="utf-8")
+    )
+    pure_path = [
+        item for item in posteriors if item["policy"] == "path_efficiency_only"
+    ]
+    assert pure_path
+    assert all(
+        item["drift_feature_names"] == ["signed_path_efficiency"]
+        for item in pure_path
+    )
     assert result.stages[0].drift_feature_names[-1] == "closing_flow"
     assert len(ablation["posterior_signal"]["direction_counts"]) == 3
     assert len(ablation["legacy_attenuated"]["direction_counts"]) == 3

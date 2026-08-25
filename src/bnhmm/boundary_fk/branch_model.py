@@ -23,6 +23,7 @@ DRIFT_FEATURE_NAMES = LEGACY_DRIFT_FEATURE_NAMES + (
 )
 DRIFT_FEATURE_SETS = {
     "legacy": LEGACY_DRIFT_FEATURE_NAMES,
+    "path_efficiency_only": ("signed_path_efficiency",),
     "path_efficiency": LEGACY_DRIFT_FEATURE_NAMES + ("signed_path_efficiency",),
     "closing_flow": LEGACY_DRIFT_FEATURE_NAMES + ("closing_flow",),
     "shock_recovery": LEGACY_DRIFT_FEATURE_NAMES + ("shock_recovery",),
@@ -50,6 +51,7 @@ class BayesianBranchModelConfig:
     drift_feature_set: Literal[
         "intraday_path",
         "legacy",
+        "path_efficiency_only",
         "path_efficiency",
         "closing_flow",
         "shock_recovery",

@@ -48,7 +48,8 @@ def write_ablation_report(
         labels = {
             "posterior_signal": "尾盘流向（近期后验信号，正式）",
             "legacy_features": "旧4项输入",
-            "path_efficiency": "仅加路径效率",
+            "path_efficiency_only": "纯路径效率",
+            "path_efficiency": "旧四项 + 路径效率",
             "shock_recovery": "仅加冲击恢复",
             "all_intraday": "三项全加",
             "legacy_attenuated": "旧衰减漂移",
@@ -60,14 +61,14 @@ def write_ablation_report(
                 "",
                 "除旧衰减算法外，其余各组使用相同的近期贝叶斯后验、有效势、月份和交易成本，只改变漂移输入。",
                 "",
-                "| 方法 | 空 / 平 / 多 | 漂移方向命中 | 漂移秩相关 | Balanced Accuracy | Macro F1 | 开仓率 | 净收益 | 最大回撤 |",
-                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                "| 方法 | 空 / 平 / 多 | 漂移方向命中 | 漂移秩相关 | Balanced Accuracy | Macro F1 | 开仓率 | 换手 | 净收益 | 最大回撤 |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             )
         )
         for name, metrics in policy_ablations.items():
             counts = metrics.get("direction_counts") or (0, 0, 0)
             lines.append(
-                "| {name} | {counts} | {direction} | {rank_ic} | {balanced} | {macro_f1} | {open_rate} | {net_return} | {drawdown} |".format(
+                "| {name} | {counts} | {direction} | {rank_ic} | {balanced} | {macro_f1} | {open_rate} | {turnover} | {net_return} | {drawdown} |".format(
                     name=labels.get(name, name),
                     counts=" / ".join(str(int(value)) for value in counts),
                     direction=_percent(metrics.get("drift_direction_accuracy")),
@@ -75,6 +76,7 @@ def write_ablation_report(
                     balanced=_percent(metrics.get("balanced_accuracy")),
                     macro_f1=_percent(metrics.get("macro_f1")),
                     open_rate=_percent(metrics.get("open_rate")),
+                    turnover=_percent(metrics.get("average_turnover")),
                     net_return=_percent(metrics.get("net_total_return")),
                     drawdown=_percent(metrics.get("maximum_drawdown")),
                 )

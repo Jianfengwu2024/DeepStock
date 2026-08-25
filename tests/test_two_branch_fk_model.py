@@ -9,6 +9,7 @@ from bnhmm.boundary_fk.branch_model import (
     BayesianBranchModel,
     BayesianBranchModelConfig,
     BayesianBranchPosterior,
+    DRIFT_FEATURE_SETS,
 )
 from bnhmm.boundary_fk.feynman_kac import (
     BoundaryFeynmanKacConfig,
@@ -92,6 +93,27 @@ def test_closing_flow_profile_is_default_and_legacy_profile_stays_four_dimension
         "return_mean_20",
         "coherence_1d",
     )
+
+
+def test_path_efficiency_only_profile_excludes_all_legacy_drift_inputs() -> None:
+    states, labels = _intraday_dataset()
+
+    posterior = BayesianBranchModel(
+        BayesianBranchModelConfig(
+            minimum_rows=30,
+            drift_feature_set="path_efficiency_only",
+        )
+    ).fit(
+        states,
+        labels,
+        branch=0,
+        training_cutoff=labels.target_time[59],
+    )
+
+    assert DRIFT_FEATURE_SETS["path_efficiency_only"] == (
+        "signed_path_efficiency",
+    )
+    assert posterior.drift_feature_names == ("signed_path_efficiency",)
 
 
 @pytest.mark.parametrize(

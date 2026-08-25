@@ -24,6 +24,7 @@ BOUNDARY_MODEL_NAMES = ("TwoBranchFK",)
 POLICY_ABLATION_NAMES = (
     "posterior_signal",
     "legacy_features",
+    "path_efficiency_only",
     "path_efficiency",
     "shock_recovery",
     "all_intraday",
@@ -32,6 +33,7 @@ POLICY_ABLATION_NAMES = (
 DRIFT_FEATURE_SET_BY_POLICY = {
     "posterior_signal": "closing_flow",
     "legacy_features": "legacy",
+    "path_efficiency_only": "path_efficiency_only",
     "path_efficiency": "path_efficiency",
     "shock_recovery": "shock_recovery",
     "all_intraday": "intraday_path",

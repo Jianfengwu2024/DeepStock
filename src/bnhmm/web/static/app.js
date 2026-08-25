@@ -948,7 +948,8 @@ function paintBoundaryFlowResult(job, stages, predictions, ablation = {}) {
   const ablationLabels = {
     posterior_signal: "尾盘流向（正式）",
     legacy_features: "旧4项输入",
-    path_efficiency: "仅加路径效率",
+    path_efficiency_only: "纯路径效率",
+    path_efficiency: "旧四项 + 路径效率",
     shock_recovery: "仅加冲击恢复",
     all_intraday: "三项全加",
     legacy_attenuated: "旧衰减漂移",
@@ -962,6 +963,7 @@ function paintBoundaryFlowResult(job, stages, predictions, ablation = {}) {
       <td>${formatPercent(metrics.balanced_accuracy)}</td>
       <td>${formatPercent(metrics.macro_f1)}</td>
       <td>${formatPercent(metrics.open_rate)}</td>
+      <td>${formatPercent(metrics.average_turnover)}</td>
       <td>${formatPercent(metrics.net_total_return)}</td>
       <td>${formatPercent(metrics.maximum_drawdown)}</td>
     </tr>`).join("");

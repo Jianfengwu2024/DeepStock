@@ -29,7 +29,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.24.1', html)
+        self.assertIn('/static/app.js?v=0.24.3', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         for field in (
@@ -58,6 +58,11 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         ):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn("renderBoundaryFlowResult", script)
+        self.assertIn(
+            "<th>开仓率</th><th>换手</th><th>成本后收益</th>",
+            html,
+        )
+        self.assertIn("metrics.average_turnover", script)
         self.assertIn('"boundary-flow-fk"', script)
         self.assertIn("两支流 FK", html)
         for artifact in (
@@ -82,7 +87,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         for label in (
             "尾盘流向（正式）",
             "旧4项输入",
-            "仅加路径效率",
+            "纯路径效率",
+            "旧四项 + 路径效率",
             "仅加冲击恢复",
             "三项全加",
             "漂移方向命中",
