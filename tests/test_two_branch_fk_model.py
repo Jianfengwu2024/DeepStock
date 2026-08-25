@@ -87,6 +87,31 @@ def test_future_labels_do_not_change_posterior_before_cutoff() -> None:
     assert original.diffusion_variance == repeated.diffusion_variance
 
 
+def test_recent_weighted_drift_follows_the_new_market_regime() -> None:
+    states, labels = _dataset(rows=140)
+    changed_returns = labels.next_return.copy()
+    driver = states.feature("return_mean_5")[:, 0]
+    changed_returns[:70, 0] = driver[:70]
+    changed_returns[70:139, 0] = -driver[70:139]
+    changed = replace(labels, next_return=changed_returns)
+    cutoff = labels.target_time[138]
+
+    equal_weight = BayesianBranchModel(
+        BayesianBranchModelConfig(
+            minimum_rows=30,
+            drift_half_life_sessions=None,
+        )
+    ).fit(states, changed, branch=0, training_cutoff=cutoff)
+    recent_weight = BayesianBranchModel(
+        BayesianBranchModelConfig(
+            minimum_rows=30,
+            drift_half_life_sessions=20.0,
+        )
+    ).fit(states, changed, branch=0, training_cutoff=cutoff)
+
+    assert recent_weight.drift_mean[2] < equal_weight.drift_mean[2] - 0.001
+
+
 def test_effective_potential_attenuates_drift_toward_noise() -> None:
     states, labels = _dataset()
     base = BayesianBranchPosterior(

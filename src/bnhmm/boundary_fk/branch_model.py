@@ -30,6 +30,7 @@ class BayesianBranchModelConfig:
     maximum_newton_steps: int = 50
     convergence_tolerance: float = 1e-8
     neutral_sigma: float = 0.35
+    drift_half_life_sessions: float | None = 60.0
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -38,6 +39,11 @@ class BayesianBranchModelConfig:
             raise ValueError("branch Bayesian fitting budget is invalid")
         if self.convergence_tolerance <= 0.0 or self.neutral_sigma <= 0.0:
             raise ValueError("branch Bayesian tolerances must be positive")
+        if (
+            self.drift_half_life_sessions is not None
+            and self.drift_half_life_sessions <= 0.0
+        ):
+            raise ValueError("drift half-life must be positive when provided")
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,10 +114,14 @@ class BayesianBranchModel:
             drift_raw[selected]
         )
         target = labels.next_return[selected, branch]
-        drift_mean, drift_covariance = self._gaussian_fit(drift_x, target)
+        sample_weight = self._recent_weights(len(target))
+        drift_mean, drift_covariance = self._gaussian_fit(
+            drift_x, target, sample_weight
+        )
         residual = target - drift_x @ drift_mean
         diffusion_variance = max(
-            float(np.mean(np.square(residual))), self.config.variance_floor
+            float(np.average(np.square(residual), weights=sample_weight)),
+            self.config.variance_floor,
         )
 
         potential_raw = _potential_matrix(states, branch)
@@ -149,17 +159,35 @@ class BayesianBranchModel:
         )
 
     def _gaussian_fit(
-        self, design: np.ndarray, target: np.ndarray
+        self,
+        design: np.ndarray,
+        target: np.ndarray,
+        sample_weight: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
+        weighted_design = design * sample_weight[:, None]
         prior = np.eye(design.shape[1]) * self.config.prior_precision
         prior[0, 0] *= 1e-4
-        initial = np.linalg.solve(design.T @ design + prior, design.T @ target)
+        initial = np.linalg.solve(
+            design.T @ weighted_design + prior,
+            weighted_design.T @ target,
+        )
         residual = target - design @ initial
-        noise = max(float(np.mean(np.square(residual))), self.config.variance_floor)
-        precision = design.T @ design / noise + prior
+        noise = max(
+            float(np.average(np.square(residual), weights=sample_weight)),
+            self.config.variance_floor,
+        )
+        precision = design.T @ weighted_design / noise + prior
         covariance = _inverse_positive_definite(precision)
-        mean = covariance @ (design.T @ target / noise)
+        mean = covariance @ (weighted_design.T @ target / noise)
         return mean, covariance
+
+    def _recent_weights(self, rows: int) -> np.ndarray:
+        half_life = self.config.drift_half_life_sessions
+        if half_life is None:
+            return np.ones(rows, dtype=np.float64)
+        age = (rows - 1) - np.arange(rows, dtype=np.float64)
+        weights = np.exp2(-age / half_life)
+        return weights / float(np.mean(weights))
 
     def _logistic_fit(
         self, design: np.ndarray, target: np.ndarray
