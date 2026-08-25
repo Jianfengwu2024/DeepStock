@@ -2,7 +2,9 @@ const state = {
   config: null,
   devices: [],
   jobs: [],
+  comparisons: [],
   selectedId: null,
+  selectedComparisonId: null,
   symbols: [],
   datasets: [],
   dialogSelected: new Set(),
@@ -568,6 +570,7 @@ async function submitExperiment(event) {
   try {
     const job = await api("/api/jobs", { method: "POST", body: JSON.stringify(formPayload()) });
     state.selectedId = job.id;
+    state.selectedComparisonId = null;
     await refreshAll();
     setNextExperimentName();
     document.querySelector("#config-panel").classList.remove("open");
@@ -582,17 +585,26 @@ async function refreshAll() {
   if (state.polling) return;
   state.polling = true;
   try {
-    const [jobs, gpuPayload] = await Promise.all([
+    const [jobs, comparisons, gpuPayload] = await Promise.all([
       api("/api/jobs"),
+      api("/api/comparisons"),
       api("/api/gpus").catch(() => api("/api/config").then(config => ({ devices: config.devices }))),
     ]);
     state.jobs = jobs;
+    state.comparisons = comparisons;
     updateDevices(gpuPayload.devices);
-    if (!state.jobs.some(job => job.id === state.selectedId)) {
+    if (state.selectedComparisonId && !state.comparisons.some(item => item.id === state.selectedComparisonId)) {
+      state.selectedComparisonId = null;
+    }
+    if (!state.selectedComparisonId && !state.jobs.some(job => job.id === state.selectedId)) {
       state.selectedId = state.jobs[0]?.id || null;
     }
     renderJobList();
-    if (state.selectedId) {
+    renderComparisonList();
+    if (state.selectedComparisonId) {
+      const comparison = await api(`/api/comparisons/${encodeURIComponent(state.selectedComparisonId)}`);
+      renderComparison(comparison);
+    } else if (state.selectedId) {
       const job = await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`);
       renderJob(job);
     } else {
@@ -610,6 +622,7 @@ async function refreshAll() {
 function renderEmptyState() {
   document.querySelector("#empty-state").classList.remove("hidden");
   document.querySelector("#job-view").classList.add("hidden");
+  document.querySelector("#comparison-view").classList.add("hidden");
   document.querySelector("#job-subtitle").textContent = "开始新的实验";
 }
 
@@ -650,10 +663,34 @@ function renderJobList() {
     button.type = "button";
     button.className = `job-item${job.id === state.selectedId ? " active" : ""}`;
     button.innerHTML = content;
-    button.addEventListener("click", () => { state.selectedId = job.id; refreshAll(); });
+    button.addEventListener("click", () => {
+      state.selectedId = job.id;
+      state.selectedComparisonId = null;
+      refreshAll();
+    });
     return button;
   }));
   icons();
+}
+
+function renderComparisonList() {
+  document.querySelector("#comparison-count").textContent = state.comparisons.length;
+  const list = document.querySelector("#comparison-list");
+  list.replaceChildren(...state.comparisons.map(comparison => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `job-item comparison-item${comparison.id === state.selectedComparisonId ? " active" : ""}`;
+    const label = comparison.status === "completed"
+      ? "已完成"
+      : comparison.status === "running" ? "运行中" : comparison.status === "queued" ? "排队中" : "失败";
+    button.innerHTML = `<div class="job-item-head"><strong>${escapeHtml(comparison.name)}</strong><span class="status-badge ${comparison.status}">${label}</span></div><div class="job-item-meta">${comparison.completed_count}/6 完成 · ${formatDate(comparison.created_at)}</div>`;
+    button.addEventListener("click", () => {
+      state.selectedComparisonId = comparison.id;
+      state.selectedId = null;
+      refreshAll();
+    });
+    return button;
+  }));
 }
 
 function renderHistoryEditor(activeIds) {
@@ -681,6 +718,153 @@ function renderHistoryEditor(activeIds) {
   document.querySelector("#history-selected-count").textContent = `已选 ${selectedEligible.length}`;
 }
 
+function nextComparisonName() {
+  const pattern = /^PathEfficiencyFK-Compare-(\d+)$/i;
+  const maximum = state.comparisons.reduce((value, item) => {
+    const match = String(item.name || "").match(pattern);
+    return match ? Math.max(value, Number(match[1])) : value;
+  }, 0);
+  return `PathEfficiencyFK-Compare-${String(maximum + 1).padStart(3, "0")}`;
+}
+
+async function submitWindowComparison() {
+  const error = document.querySelector("#form-error");
+  const button = document.querySelector("#run-window-comparison");
+  error.textContent = "";
+  button.disabled = true;
+  try {
+    const comparison = await api("/api/comparisons", {
+      method: "POST",
+      body: JSON.stringify({ name: nextComparisonName(), request: formPayload() }),
+    });
+    state.selectedComparisonId = comparison.id;
+    state.selectedId = null;
+    await refreshAll();
+    document.querySelector("#config-panel").classList.remove("open");
+  } catch (exception) {
+    error.textContent = exception.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function comparisonStatusLabel(status) {
+  return ({ completed: "已完成", running: "运行中", queued: "排队中", failed: "失败", cancelled: "已停止", interrupted: "已中断" })[status] || status;
+}
+
+function renderComparison(comparison) {
+  document.querySelector("#empty-state").classList.add("hidden");
+  document.querySelector("#job-view").classList.add("hidden");
+  document.querySelector("#comparison-view").classList.remove("hidden");
+  document.querySelector("#comparison-title").textContent = comparison.name;
+  document.querySelector("#job-subtitle").textContent = comparison.id;
+  const badge = document.querySelector("#comparison-status");
+  badge.className = `status-badge ${comparison.status}`;
+  badge.textContent = comparisonStatusLabel(comparison.status);
+  document.querySelector("#comparison-meta").textContent = `PathEfficiencyFK · 90 / 60 / 40 / 30 / 20 / 10 日 · ${formatDate(comparison.created_at)}`;
+  document.querySelector("#comparison-progress").innerHTML = `<strong>${comparison.completed_count}/6 个窗口完成</strong><span>${comparison.finished_count}/6 个窗口已经结束</span>`;
+
+  const completed = comparison.windows.filter(item => item.status === "completed" && Object.keys(item.metrics || {}).length);
+  const byMetric = (field, direction) => [...completed].sort((left, right) => direction * (Number(right.metrics[field]) - Number(left.metrics[field])))[0];
+  const bestReturn = byMetric("net_total_return", 1);
+  const lowestDrawdown = byMetric("maximum_drawdown", -1);
+  const bestDirection = byMetric("drift_direction_accuracy", 1);
+  const bestBalanced = byMetric("balanced_accuracy", 1);
+  const conclusion = document.querySelector("#comparison-conclusion");
+  if (!completed.length) {
+    conclusion.className = "boundary-evaluation-summary caution";
+    conclusion.innerHTML = `<span>当前进度</span><strong>正在等待窗口结果</strong><p>六个窗口按顺序运行，完成一个就会立即出现在下方表格和净值图中。</p>`;
+  } else {
+    const positive = Number(bestReturn.metrics.net_total_return) > 0;
+    const weakPrediction = Number(bestBalanced.metrics.balanced_accuracy) < 0.36
+      || Number(bestDirection.metrics.drift_direction_accuracy) < 0.55;
+    conclusion.className = `boundary-evaluation-summary ${positive && weakPrediction ? "caution" : positive ? "positive" : "negative"}`;
+    const title = positive && weakPrediction
+      ? `${bestReturn.window_sessions} 日收益较好，但预测优势仍弱`
+      : `${bestReturn.window_sessions} 日窗口的成本后收益最高`;
+    conclusion.innerHTML = `<span>当前结论</span><strong>${title}</strong><p>已完成 ${completed.length} 个窗口；最高收益 ${formatPercent(bestReturn.metrics.net_total_return)}，最高均衡正确率 ${formatPercent(bestBalanced.metrics.balanced_accuracy)}。均衡正确率接近 33% 时，不能只凭收益认定模型已经稳定。</p>`;
+  }
+  document.querySelector("#comparison-summary-metrics").innerHTML = [
+    boundaryMetric("最高成本后收益", bestReturn ? `${bestReturn.window_sessions} 日 · ${formatPercent(bestReturn.metrics.net_total_return)}` : "等待结果"),
+    boundaryMetric("最低最大回撤", lowestDrawdown ? `${lowestDrawdown.window_sessions} 日 · ${formatPercent(lowestDrawdown.metrics.maximum_drawdown)}` : "等待结果"),
+    boundaryMetric("最高方向正确率", bestDirection ? `${bestDirection.window_sessions} 日 · ${formatPercent(bestDirection.metrics.drift_direction_accuracy)}` : "等待结果"),
+    boundaryMetric("最高均衡正确率", bestBalanced ? `${bestBalanced.window_sessions} 日 · ${formatPercent(bestBalanced.metrics.balanced_accuracy)}` : "等待结果"),
+  ].join("");
+
+  document.querySelector("#comparison-window-table").innerHTML = comparison.windows.map(item => {
+    const metrics = item.metrics || {};
+    const action = item.status === "completed"
+      ? `<button class="mini-button" type="button" data-comparison-job="${escapeHtml(item.job_id)}">查看完整结果</button>`
+      : item.error ? `<span class="negative-text">${escapeHtml(item.error)}</span>` : "—";
+    return `<tr><td><strong>${item.window_sessions} 日</strong></td><td><span class="status-badge ${item.status}">${comparisonStatusLabel(item.status)}</span></td><td>${formatPercent(metrics.net_total_return)}</td><td>${formatPercent(metrics.maximum_drawdown)}</td><td>${formatPercent(metrics.drift_direction_accuracy)}</td><td>${formatPercent(metrics.balanced_accuracy)}</td><td>${formatPercent(metrics.average_exposure)}</td><td>${formatPercent(metrics.average_turnover)}</td><td>${action}</td></tr>`;
+  }).join("");
+  document.querySelectorAll("[data-comparison-job]").forEach(button => {
+    button.addEventListener("click", () => openComparisonChild(button.dataset.comparisonJob));
+  });
+  drawComparisonEquity(comparison.windows);
+  icons();
+}
+
+async function openComparisonChild(jobId) {
+  state.selectedId = jobId;
+  state.selectedComparisonId = null;
+  const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+  renderJobList();
+  renderComparisonList();
+  renderJob(job);
+}
+
+async function deleteSelectedComparison() {
+  if (!state.selectedComparisonId) return;
+  if (!window.confirm("确定删除这组窗口对比吗？六个原始回测结果会继续保留。")) return;
+  await api(`/api/comparisons/${encodeURIComponent(state.selectedComparisonId)}`, { method: "DELETE" });
+  state.selectedComparisonId = null;
+  await refreshAll();
+}
+
+function drawComparisonEquity(windows) {
+  const canvas = document.querySelector("#comparison-equity-canvas");
+  const context = canvas.getContext("2d");
+  const colors = { 90: "#176b87", 60: "#2f7d4f", 40: "#a96f16", 30: "#7a5aa6", 20: "#b64b45", 10: "#52636a" };
+  const series = windows
+    .filter(item => item.equity_curve?.length)
+    .map(item => ({ window: item.window_sessions, values: item.equity_curve.map(point => Number(point.value)) }));
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  document.querySelector("#comparison-equity-legend").innerHTML = series
+    .map(item => `<span><i style="background:${colors[item.window]}"></i>${item.window} 日</span>`)
+    .join("");
+  if (!series.length) {
+    context.fillStyle = "#6d787d";
+    context.font = "20px sans-serif";
+    context.fillText("等待窗口净值结果", 40, 60);
+    return;
+  }
+  const padding = { left: 62, right: 24, top: 30, bottom: 38 };
+  const allValues = series.flatMap(item => item.values);
+  const minimum = Math.min(1, ...allValues);
+  const maximum = Math.max(1, ...allValues);
+  const span = Math.max(maximum - minimum, 1e-9);
+  const y = value => padding.top + (maximum - value) * (canvas.height - padding.top - padding.bottom) / span;
+  context.strokeStyle = "#d9dfe1";
+  context.lineWidth = 1;
+  for (let row = 0; row <= 4; row += 1) {
+    const py = padding.top + row * (canvas.height - padding.top - padding.bottom) / 4;
+    context.beginPath(); context.moveTo(padding.left, py); context.lineTo(canvas.width - padding.right, py); context.stroke();
+  }
+  for (const item of series) {
+    const x = index => padding.left + index * (canvas.width - padding.left - padding.right) / Math.max(item.values.length - 1, 1);
+    context.strokeStyle = colors[item.window];
+    context.lineWidth = 3;
+    context.beginPath();
+    item.values.forEach((value, index) => index ? context.lineTo(x(index), y(value)) : context.moveTo(x(index), y(value)));
+    context.stroke();
+  }
+  context.fillStyle = "#34444a";
+  context.font = "16px sans-serif";
+  context.fillText(maximum.toFixed(3), 8, padding.top + 5);
+  context.fillText(minimum.toFixed(3), 8, canvas.height - padding.bottom + 5);
+}
+
 function renderGlobalStatus() {
   const active = state.jobs.filter(job => ["queued", "running"].includes(job.status)).length;
   const badge = document.querySelector("#global-status");
@@ -690,6 +874,7 @@ function renderGlobalStatus() {
 
 function renderJob(job) {
   document.querySelector("#empty-state").classList.add("hidden");
+  document.querySelector("#comparison-view").classList.add("hidden");
   document.querySelector("#job-view").classList.remove("hidden");
   document.querySelector("#run-title").textContent = job.request.name;
   document.querySelector("#job-subtitle").textContent = job.id;
@@ -1525,6 +1710,8 @@ function applySymbols() {
 
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
+  document.querySelector("#run-window-comparison").addEventListener("click", submitWindowComparison);
+  document.querySelector("#delete-comparison-button").addEventListener("click", deleteSelectedComparison);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
   document.querySelectorAll("[name=strategy]").forEach(field => field.addEventListener("change", changeStrategy));
   document.querySelector("#repair-variant").addEventListener("change", () => {

@@ -8,6 +8,40 @@ ROOT = Path(__file__).parents[1] / "src" / "bnhmm" / "web" / "static"
 
 
 class SectorFlowStaticContractTests(unittest.TestCase):
+    def test_window_comparison_has_submit_entry_and_dedicated_result_view(self) -> None:
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        for identifier in (
+            "run-window-comparison",
+            "comparison-list",
+            "comparison-view",
+            "comparison-summary-metrics",
+            "comparison-window-table",
+            "comparison-equity-canvas",
+            "delete-comparison-button",
+        ):
+            self.assertIn(f'id="{identifier}"', html)
+        for label in (
+            "运行六窗口对比",
+            "窗口对比",
+            "成本后收益",
+            "最大回撤",
+            "方向正确率",
+            "均衡正确率",
+            "平均仓位",
+            "平均换手",
+        ):
+            self.assertIn(label, html)
+        self.assertIn('api("/api/comparisons"', script)
+        self.assertIn("submitWindowComparison", script)
+        self.assertIn("renderComparison", script)
+        self.assertIn("drawComparisonEquity", script)
+        self.assertIn("openComparisonChild", script)
+        self.assertIn("async function openComparisonChild", script)
+        self.assertIn("deleteSelectedComparison", script)
+        self.assertIn("收益较好，但预测优势仍弱", script)
+
     def test_history_management_actions_stay_inside_history_panel(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")

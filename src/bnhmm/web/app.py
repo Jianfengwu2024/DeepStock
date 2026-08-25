@@ -32,6 +32,11 @@ from .jobs import (
     WalkForwardJobRequest,
 )
 from .boundary_data import BoundaryDataBuildManager
+from .comparisons import (
+    ComparisonManager,
+    DuplicateComparisonNameError,
+    WindowComparisonRequest,
+)
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -49,11 +54,13 @@ DEFAULT_BOUNDARY_CACHE_ROOT = (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    job_root = os.getenv("BNHMM_WEB_JOB_ROOT", DEFAULT_JOB_ROOT)
     manager = JobManager(
-        os.getenv("BNHMM_WEB_JOB_ROOT", DEFAULT_JOB_ROOT),
+        job_root,
         os.getenv("BNHMM_PROJECT_ROOT", str(PROJECT_ROOT)),
     )
     app.state.jobs = manager
+    app.state.comparisons = ComparisonManager(job_root, manager)
     app.state.sector_datasets = SectorDatasetCatalog(
         os.getenv("BNHMM_SECTOR_DATASET_ROOT", DEFAULT_SECTOR_DATASET_ROOT)
     )
@@ -83,6 +90,10 @@ async def disable_ui_cache(request: Request, call_next):
 
 def manager(request: Request) -> JobManager:
     return request.app.state.jobs
+
+
+def comparison_manager(request: Request) -> ComparisonManager:
+    return request.app.state.comparisons
 
 
 @app.get("/", include_in_schema=False)
@@ -345,6 +356,57 @@ def visual_dataset_image(symbol: str, session: str, request: Request) -> FileRes
 @app.get("/api/jobs")
 def list_jobs(request: Request) -> list[dict[str, Any]]:
     return [_job_payload(manager(request), record, detail=False) for record in manager(request).list()]
+
+
+@app.get("/api/comparisons")
+def list_comparisons(request: Request) -> list[dict[str, Any]]:
+    comparisons = comparison_manager(request)
+    return [comparisons.payload(record.id) for record in comparisons.list()]
+
+
+@app.post("/api/comparisons", status_code=201)
+def submit_comparison(
+    payload: WindowComparisonRequest, request: Request
+) -> dict[str, Any]:
+    if payload.request.training_scope == "sector-pooled":
+        dataset = request.app.state.sector_datasets.get(
+            payload.request.dataset_id or ""
+        )
+        if dataset is None:
+            raise HTTPException(status_code=400, detail="sector dataset not found")
+        payload = payload.model_copy(
+            update={
+                "request": payload.request.model_copy(
+                    update={
+                        "database_path": dataset.database_path,
+                        "symbols": list(dataset.symbols),
+                        "dataset_id": dataset.dataset_id,
+                    }
+                )
+            }
+        )
+    try:
+        record = comparison_manager(request).create(payload)
+    except (DuplicateComparisonNameError, DuplicateJobNameError) as exc:
+        raise HTTPException(status_code=409, detail="对比名称已经存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return comparison_manager(request).payload(record.id)
+
+
+@app.get("/api/comparisons/{identifier}")
+def get_comparison(identifier: str, request: Request) -> dict[str, Any]:
+    try:
+        return comparison_manager(request).payload(identifier)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="comparison not found") from exc
+
+
+@app.delete("/api/comparisons/{identifier}")
+def delete_comparison(identifier: str, request: Request) -> dict[str, bool]:
+    if not comparison_manager(request).delete(identifier):
+        raise HTTPException(status_code=404, detail="comparison not found")
+    return {"deleted": True}
 
 
 @app.post("/api/jobs", status_code=201)

@@ -325,6 +325,7 @@
 
         <div class="form-actions">
           <button class="primary-button" type="submit" id="run-button"><i data-lucide="play"></i>开始测试</button>
+          <button class="secondary-button boundary-flow-only hidden" type="button" id="run-window-comparison"><i data-lucide="columns-3"></i>运行六窗口对比</button>
           <div id="form-error" class="form-error" role="alert"></div>
         </div>
       </form>
@@ -358,12 +359,36 @@
             <span id="history-selected-count">已选 0</span>
           </div>
           <div id="job-list" class="job-list"></div>
+          <div class="comparison-history-head"><h2>窗口对比</h2><span id="comparison-count">0</span></div>
+          <div id="comparison-list" class="job-list comparison-list"></div>
         </nav>
 
         <section class="result-area" id="result-area">
           <div class="empty-state" id="empty-state">
             <i data-lucide="scan-line"></i>
             <strong>尚未选择测试</strong>
+          </div>
+
+          <div id="comparison-view" class="comparison-view hidden">
+            <div class="run-toolbar">
+              <div>
+                <div class="run-title-row"><h2 id="comparison-title"></h2><span id="comparison-status" class="status-badge neutral"></span></div>
+                <div id="comparison-meta" class="run-meta"></div>
+              </div>
+              <button class="icon-button danger-icon-button" id="delete-comparison-button" type="button" title="删除本组对比" aria-label="删除本组对比"><i data-lucide="trash-2"></i></button>
+            </div>
+            <div class="comparison-progress" id="comparison-progress"></div>
+            <div class="boundary-evaluation-summary" id="comparison-conclusion"></div>
+            <div class="boundary-key-metrics" id="comparison-summary-metrics"></div>
+            <section class="comparison-section">
+              <div class="boundary-panel-intro"><strong>六窗口结果</strong><span>六次测试除支流历史长度外使用完全相同的参数和样本外区间。</span></div>
+              <div class="table-scroll"><table><thead><tr><th>窗口</th><th>状态</th><th>成本后收益</th><th>最大回撤</th><th>方向正确率</th><th>均衡正确率</th><th>平均仓位</th><th>平均换手</th><th></th></tr></thead><tbody id="comparison-window-table"></tbody></table></div>
+            </section>
+            <section class="comparison-section">
+              <div class="boundary-panel-intro"><strong>成本后净值对比</strong><span>所有曲线从 1.000 开始，已扣除各自每日换手成本。</span></div>
+              <div class="comparison-legend" id="comparison-equity-legend"></div>
+              <div class="boundary-canvas-wrap"><canvas id="comparison-equity-canvas" width="1200" height="380" aria-label="六窗口成本后净值对比"></canvas></div>
+            </section>
           </div>
 
           <div id="job-view" class="job-view hidden">
