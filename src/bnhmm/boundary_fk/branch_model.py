@@ -125,17 +125,22 @@ class BayesianBranchModel:
         )
 
         potential_raw = _potential_matrix(states, branch)
-        potential_x, potential_center, potential_scale = _standardized_design(
-            potential_raw[selected]
+        selected_rows = np.flatnonzero(selected)
+        calibration_positions, causal_drift = self._causal_drift_predictions(
+            drift_raw[selected], target
         )
-        direction = states.feature("return_mean_5")[selected, branch]
+        calibration_rows = selected_rows[calibration_positions]
+        potential_x, potential_center, potential_scale = _standardized_design(
+            potential_raw[calibration_rows]
+        )
         threshold = self.config.neutral_sigma * labels.historical_volatility[
-            selected, branch
+            calibration_rows, branch
         ]
+        calibration_target = labels.next_return[calibration_rows, branch]
         survival = (
-            (np.sign(target) == np.sign(direction))
-            & (np.abs(target) > threshold)
-            & (np.abs(direction) > 1e-12)
+            (np.sign(calibration_target) == np.sign(causal_drift))
+            & (np.abs(calibration_target) > threshold)
+            & (np.abs(causal_drift) > 1e-12)
         ).astype(np.float64)
         survival_beta, potential_covariance = self._logistic_fit(
             potential_x, survival
@@ -188,6 +193,34 @@ class BayesianBranchModel:
         age = (rows - 1) - np.arange(rows, dtype=np.float64)
         weights = np.exp2(-age / half_life)
         return weights / float(np.mean(weights))
+
+    def _causal_drift_predictions(
+        self,
+        drift_raw: np.ndarray,
+        target: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        calibration_start = min(
+            self.config.minimum_rows,
+            max(5, len(target) // 3),
+            len(target) - 1,
+        )
+        positions = np.arange(calibration_start, len(target), dtype=np.int64)
+        predictions = np.empty(len(positions), dtype=np.float64)
+        for output_row, position in enumerate(positions):
+            design, center, scale = _standardized_design(drift_raw[:position])
+            mean, _ = self._gaussian_fit(
+                design,
+                target[:position],
+                self._recent_weights(position),
+            )
+            current = np.concatenate(
+                (
+                    np.ones(1),
+                    (drift_raw[position] - center) / scale,
+                )
+            )
+            predictions[output_row] = float(current @ mean)
+        return positions, predictions
 
     def _logistic_fit(
         self, design: np.ndarray, target: np.ndarray
