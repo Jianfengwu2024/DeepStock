@@ -25,7 +25,7 @@ def _dataset(rows: int = 80) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
     next_return = np.column_stack(
         (0.8 * values[:, 0, 1], -0.8 * values[:, 1, 1])
     ) + rng.normal(0.0, 0.001, size=(rows, 2))
-    target = np.full(rows, np.datetime64("NaT"), dtype="datetime64[ns]")
+    target = np.full(rows, np.datetime64("NaT", "ns"), dtype="datetime64[ns]")
     target[:-1] = sessions[1:].astype("datetime64[ns]")
     valid = np.ones((rows, 2), dtype=np.bool_)
     valid[-1] = False

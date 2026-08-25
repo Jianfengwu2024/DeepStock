@@ -98,6 +98,7 @@ def build_boundary_experiment_data(
         TopologyConfig(
             lookback_sessions=topology_lookback_sessions,
             maximum_bands=2,
+            minimum_band_size=max(2, int(np.ceil(len(symbols) * 0.10))),
         )
     ).build(normalized, months)
     built = TwoBranchDailyStateBuilder().build(normalized, topologies)

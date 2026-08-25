@@ -29,12 +29,15 @@ BRANCH_FEATURE_NAMES = (
 class TwoBranchDailyStateConfig:
     minimum_valid_minutes: int = 30
     history_sessions: int = 20
+    minimum_member_fraction: float = 0.8
 
     def __post_init__(self) -> None:
         if self.minimum_valid_minutes < 1:
             raise ValueError("minimum valid minutes must be positive")
         if self.history_sessions < 5:
             raise ValueError("branch history must contain at least five sessions")
+        if not 0.0 < self.minimum_member_fraction <= 1.0:
+            raise ValueError("minimum member fraction must lie in (0, 1]")
 
 
 class TwoBranchDailyStateBuilder:
@@ -43,10 +46,12 @@ class TwoBranchDailyStateBuilder:
         *,
         minimum_valid_minutes: int = 30,
         history_sessions: int = 20,
+        minimum_member_fraction: float = 0.8,
     ) -> None:
         self.config = TwoBranchDailyStateConfig(
             minimum_valid_minutes=minimum_valid_minutes,
             history_sessions=history_sessions,
+            minimum_member_fraction=minimum_member_fraction,
         )
 
     def build(
@@ -77,10 +82,10 @@ class TwoBranchDailyStateBuilder:
             for branch, symbols in enumerate(membership.branches):
                 columns = np.asarray([symbol_index[symbol] for symbol in symbols])
                 available = daily_valid[row, columns]
-                if not available.all():
+                if float(np.mean(available)) < self.config.minimum_member_fraction:
                     continue
                 branch_returns[row, branch] = float(
-                    np.mean(daily_returns[row, columns])
+                    np.mean(daily_returns[row, columns[available]])
                 )
                 branch_coherence[row, branch] = self._coherence(
                     panel, minute_rows, columns
@@ -110,7 +115,9 @@ class TwoBranchDailyStateBuilder:
             values=values,
             valid=valid,
         )
-        target_time = np.full(len(sessions), np.datetime64("NaT"), dtype="datetime64[ns]")
+        target_time = np.full(
+            len(sessions), np.datetime64("NaT", "ns"), dtype="datetime64[ns]"
+        )
         next_return = np.full((len(sessions), 2), np.nan, dtype=np.float64)
         historical_volatility = np.full_like(next_return, np.nan)
         label_valid = np.zeros_like(valid)
@@ -118,17 +125,22 @@ class TwoBranchDailyStateBuilder:
         member_next_valid = np.zeros_like(daily_valid)
         for row in range(len(sessions) - 1):
             target_time[row] = sessions[row + 1].astype("datetime64[ns]")
-            member_next_returns[row] = daily_returns[row + 1]
-            member_next_valid[row] = daily_valid[row + 1]
+            member_next_returns[row] = np.where(
+                daily_valid[row + 1], daily_returns[row + 1], 0.0
+            )
+            member_next_valid[row] = True
             membership = membership_by_month.get(sessions[row].astype("datetime64[M]"))
             if membership is None:
                 continue
             for branch, symbols in enumerate(membership.branches):
                 columns = np.asarray([symbol_index[symbol] for symbol in symbols])
                 available = daily_valid[row + 1, columns]
-                if states.valid[row, branch] and available.all():
+                if (
+                    states.valid[row, branch]
+                    and float(np.mean(available)) >= self.config.minimum_member_fraction
+                ):
                     next_return[row, branch] = float(
-                        np.mean(daily_returns[row + 1, columns])
+                        np.mean(daily_returns[row + 1, columns[available]])
                     )
                     historical_volatility[row, branch] = states.feature(
                         "volatility_20"
@@ -200,7 +212,7 @@ class TwoBranchDailyStateBuilder:
         for topology in sorted(topologies, key=lambda item: item.month):
             labels = sorted(np.unique(topology.band_ids[topology.assigned]).tolist())
             if len(labels) != 2:
-                raise ValueError(f"{topology.month} does not contain exactly two branches")
+                continue
             branches = tuple(
                 tuple(
                     symbol
@@ -214,6 +226,8 @@ class TwoBranchDailyStateBuilder:
                 )
                 for branch_label in labels
             )
+            if not branches[0] or not branches[1]:
+                continue
             result.append(
                 MonthlyBranchMembership(
                     month=topology.month,

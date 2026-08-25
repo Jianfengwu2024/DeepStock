@@ -98,6 +98,31 @@ class RiverTopologyBuilderTests(unittest.TestCase):
         self.assertEqual(result.band_ids[0], result.band_ids[1])
         self.assertNotEqual(result.band_ids[0], result.band_ids[6])
 
+    def test_fixed_two_band_split_never_creates_a_singleton_branch(self) -> None:
+        builder = RiverTopologyBuilder(
+            TopologyConfig(
+                minimum_sessions=40,
+                minimum_pair_sessions=30,
+                maximum_bands=2,
+                minimum_band_size=2,
+            )
+        )
+        similarity = np.full((8, 8), 0.9, dtype=np.float64)
+        similarity[-1, :-1] = -0.9
+        similarity[:-1, -1] = -0.9
+        np.fill_diagonal(similarity, 1.0)
+
+        labels = builder._bands(
+            similarity,
+            np.ones(8, dtype=np.bool_),
+            tuple(f"S{index}" for index in range(8)),
+            None,
+        )
+        sizes = np.bincount(labels)
+
+        self.assertEqual(len(sizes), 2)
+        self.assertGreaterEqual(int(sizes.min()), 2)
+
     def test_future_rows_do_not_change_topology(self) -> None:
         original = self.builder.build(self.panel, self.cutoff, self.month)
         future = self.panel.timestamps > self.cutoff

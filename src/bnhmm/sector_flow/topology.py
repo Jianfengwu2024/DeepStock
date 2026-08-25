@@ -247,8 +247,25 @@ class RiverTopologyBuilder:
             labels = fcluster(tree, count, criterion="maxclust").astype(np.int64)
             if len(np.unique(labels)) < 2:
                 continue
+            sizes = np.asarray(
+                [np.sum(labels == label) for label in np.unique(labels)]
+            )
+            if np.any(sizes < self.config.minimum_band_size):
+                continue
             score = self._silhouette(distance, labels)
             candidates.append((score, -count, labels))
+        if not candidates and maximum == 2:
+            ordered = leaves_list(optimal_leaf_ordering(tree, condensed))
+            minimum = self.config.minimum_band_size
+            for cut in range(minimum, len(columns) - minimum + 1):
+                labels = np.ones(len(columns), dtype=np.int64)
+                labels[ordered[:cut]] = 0
+                score = self._silhouette(distance, labels)
+                imbalance = abs(len(columns) - 2 * cut)
+                candidates.append((score, -imbalance, labels))
+        if not candidates:
+            result[columns] = 0
+            return result
         labels = max(candidates, key=lambda item: (item[0], item[1]))[2]
         labels = self._canonical_labels(labels, columns, symbols)
         if previous is not None:

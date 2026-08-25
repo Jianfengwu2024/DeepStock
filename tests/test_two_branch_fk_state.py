@@ -94,3 +94,25 @@ def test_future_minutes_do_not_change_an_earlier_state() -> None:
     repeated = builder.build(replace(panel, raw_velocity=changed_raw), topologies)
 
     np.testing.assert_allclose(original.states.values[-2], repeated.states.values[-2])
+
+
+def test_partial_member_gap_keeps_branch_day_and_marks_suspended_return_zero() -> None:
+    panel, topologies = _inputs()
+    raw_valid = panel.raw_velocity_valid.copy()
+    velocity_valid = panel.velocity_valid.copy()
+    raw_valid[21 * 3 : 22 * 3, 1] = False
+    velocity_valid[21 * 3 : 22 * 3, 1] = False
+    changed = replace(
+        panel,
+        raw_velocity_valid=raw_valid,
+        velocity_valid=velocity_valid,
+    )
+
+    result = TwoBranchDailyStateBuilder(
+        minimum_valid_minutes=3,
+        minimum_member_fraction=0.5,
+    ).build(changed, topologies)
+
+    assert result.labels.valid[20, 0]
+    assert result.member_next_valid[20, 1]
+    assert result.member_next_returns[20, 1] == 0.0
