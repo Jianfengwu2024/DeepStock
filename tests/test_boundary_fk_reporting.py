@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from bnhmm.boundary_fk.reporting import (
-    write_background_potential_report,
+    write_convection_report,
     write_baseline_report,
 )
 
 
-def test_convection_report_explains_background_potential_in_plain_chinese(tmp_path) -> None:
+def test_convection_report_explains_one_day_potential_in_plain_chinese(tmp_path) -> None:
     path = tmp_path / "convection.md"
 
-    write_background_potential_report(
+    write_convection_report(
         path,
         [
             {
@@ -17,7 +17,7 @@ def test_convection_report_explains_background_potential_in_plain_chinese(tmp_pa
                 "metrics": {"net_total_return": 0.02, "maximum_drawdown": 0.03},
             },
             {
-                "model_name": "PathEfficiencyFK-60D-BackgroundPotential",
+                "model_name": "PathEfficiencyFK-60D-OneDayPotential",
                 "metrics": {"net_total_return": 0.03, "maximum_drawdown": 0.02},
             },
         ],
@@ -31,14 +31,14 @@ def test_convection_report_explains_background_potential_in_plain_chinese(tmp_pa
     )
 
     report = path.read_text(encoding="utf-8")
-    assert "背景外势 β0" in report
-    assert "C1" not in report and "C2" not in report and "C3" not in report
-    assert "V = softplus(β0)" in report
+    assert "背景势" in report
+    assert "C1" in report and "C2" not in report and "C3" not in report
+    assert "V = softplus(β0 + β1·C1标准化值)" in report
     assert "有效势" in report
     assert "趋势存活率" in report
     assert "连续 2 日减半" not in report
     assert "门控" not in report
-    assert "PathEfficiencyFK-60D-BackgroundPotential" in report
+    assert "PathEfficiencyFK-60D-OneDayPotential" in report
     assert "12" in report
 
 

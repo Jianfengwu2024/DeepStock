@@ -155,14 +155,14 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         self.assertIn("sector-regime-evaluation.json", payload["artifacts"])
         self.assertIn("sector-policy-evaluation.json", payload["artifacts"])
 
-    def test_job_payload_discovers_background_potential_artifacts(self) -> None:
+    def test_job_payload_discovers_one_day_potential_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manager = JobManager(directory, Path.cwd())
             output = Path(directory, "boundary")
             output.mkdir()
             for name in (
-                "path-efficiency-background-potential-report.md",
-                "background-potential-evaluation.json",
+                "path-efficiency-convection-potential-report.md",
+                "convection-potential-evaluation.json",
             ):
                 (output / name).write_text("test", encoding="utf-8")
             request = WalkForwardJobRequest(
@@ -184,9 +184,9 @@ class WebSectorFlowConfigTests(unittest.TestCase):
             manager.close()
 
         self.assertIn(
-            "path-efficiency-background-potential-report.md", payload["artifacts"]
+            "path-efficiency-convection-potential-report.md", payload["artifacts"]
         )
-        self.assertIn("background-potential-evaluation.json", payload["artifacts"])
+        self.assertIn("convection-potential-evaluation.json", payload["artifacts"])
 
 
 if __name__ == "__main__":

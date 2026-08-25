@@ -55,18 +55,18 @@ def _percent(value: Any) -> str:
     return "-" if value is None else f"{float(value) * 100.0:.2f}%"
 
 
-def write_background_potential_report(
+def write_convection_report(
     path: Path,
     stages: list[dict[str, Any]],
     diagnostics: dict[str, Any],
 ) -> None:
     lines = [
-        "# PathEfficiencyFK 60 日背景外势报告",
+        "# PathEfficiencyFK 60 日一日反向流量外势报告",
         "",
-        "路径效率是唯一漂移输入，决定趋势方向。背景外势只判断这股趋势还能否延续。",
+        "路径效率是唯一漂移输入，决定趋势方向。一日反向流量进入 Feynman-Kac 有效势，判断这股趋势还能否延续。",
         "",
-        "外势不读取反向流量或其他市场特征，只在每个支流、每个滚动训练窗口独立估计背景外势 β0。",
-        "有效势 V = softplus(β0)，趋势存活率 S = exp(-V)。它只能削弱趋势，不能制造反向信号。",
+        "外势只使用当日一日反向流量集中度 C1，不人为加入两日或三日持续性。C1 越大，表示当日反向流量越集中。",
+        "有效势 V = softplus(β0 + β1·C1标准化值)，趋势存活率 S = exp(-V)。β0 表示背景势，β1 非负；外势只能削弱趋势，不能制造反向信号。",
         "",
         "## 策略结果",
         "",
@@ -87,7 +87,7 @@ def write_background_potential_report(
     lines.extend(
         (
             "",
-            "## 背景外势统计",
+          "## 一日反向流量外势统计",
             "",
             f"样本数：{int(diagnostics.get('observations', 0))}",
             f"平均有效势：{float(diagnostics.get('mean_effective_potential', 0.0)):.4f}",

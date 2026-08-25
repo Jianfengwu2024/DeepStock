@@ -1106,12 +1106,12 @@ function renderBoundaryFlowResult(job) {
   const predictionsUrl = job.artifacts?.["feynman-kac-predictions.json"];
   const posteriorUrl = job.artifacts?.["boundary-model-posterior.json"];
   const residualUrl = job.artifacts?.["boundary-residual-analysis.json"];
-  const potentialUrl = job.artifacts?.["background-potential-evaluation.json"];
+  const potentialUrl = job.artifacts?.["convection-potential-evaluation.json"];
   const downloads = {
     "path-efficiency-fk-report.md": "中文报告",
-    "path-efficiency-background-potential-report.md": "背景外势报告",
+    "path-efficiency-convection-potential-report.md": "一日反向流量外势报告",
     "boundary-policy-evaluation.json": "策略评估",
-    "background-potential-evaluation.json": "背景外势统计",
+    "convection-potential-evaluation.json": "一日反向流量外势统计",
     "feynman-kac-predictions.json": "样本外预测",
     "boundary-model-posterior.json": "模型后验",
     "boundary-residual-analysis.json": "残差分析",
@@ -1227,7 +1227,7 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
 
 function paintBoundaryFlowResult(job, payload) {
   const { stages, predictions: allPredictions, posterior, residual, potential } = payload;
-  const backgroundPotentialModel = "PathEfficiencyFK-60D-BackgroundPotential";
+  const backgroundPotentialModel = "PathEfficiencyFK-60D-OneDayPotential";
   const baselineModel = "PathEfficiencyFK-60D-Baseline";
   const stage = stages.find(item => item.model_name === backgroundPotentialModel)
     || stages.find(item => item.model_name !== baselineModel)
@@ -1236,12 +1236,12 @@ function paintBoundaryFlowResult(job, payload) {
   const predictions = allPredictions.filter(item => item.model_version === potentialModel);
   const baselinePredictions = allPredictions.filter(item => item.model_version === baselineModel);
   const baselineStage = stages.find(item => item.model_name === baselineModel) || {};
-  document.querySelector("#boundary-result-title").textContent = "60 日路径效率 + 背景外势 FK";
+  document.querySelector("#boundary-result-title").textContent = "60 日路径效率 + 一日反向流量外势 FK";
   const metrics = stage.metrics || {};
   const baselineMetrics = baselineStage.metrics || {};
   const latest = predictions.at(-1);
   document.querySelector("#boundary-flow-result-status").textContent =
-    `${formatInteger(predictions.length)} 个样本外交易日 · 仅估计背景外势 β0`;
+    `${formatInteger(predictions.length)} 个样本外交易日 · β0 + 一日反向流量 C1`;
 
   const verdict = boundaryImprovementVerdict(metrics, baselineMetrics);
   document.querySelector("#boundary-evaluation-summary").innerHTML = `
@@ -1251,11 +1251,13 @@ function paintBoundaryFlowResult(job, payload) {
   document.querySelector("#boundary-evaluation-metrics").innerHTML = [
     boundaryMetric("基线成本后收益", formatPercent(baselineMetrics.net_total_return), "60 日纯路径效率 FK"),
     boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return), "扣除换手成本"),
-    boundaryMetric("平均背景有效势", formatNumber(potential?.mean_effective_potential, 4), "V = softplus(β0)"),
+    boundaryMetric("平均一日有效势", formatNumber(potential?.mean_effective_potential, 4), "V = softplus(β0 + β1·C1)"),
     boundaryMetric("平均趋势存活率", formatPercent(potential?.mean_trend_survival_probability), "FK 对漂移的保留比例"),
     boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown), "历史高点后的最大跌幅"),
     boundaryMetric("方向判断正确率", formatPercent(metrics.drift_direction_accuracy), "上涨或下跌方向"),
     boundaryMetric("平均实际仓位", formatPercent(metrics.average_exposure), "整个测试期平均"),
+    boundaryMetric("涨停未买入", formatInteger(metrics.failed_buy_orders), "全天未打开涨停板"),
+    boundaryMetric("跌停未卖出", formatInteger(metrics.failed_sell_orders), "全天未打开跌停板"),
   ].join("");
 
   if (!latest) {
@@ -1278,7 +1280,7 @@ function paintBoundaryFlowResult(job, payload) {
   const dynamics = branches.flatMap(branch => {
     const values = [
     [`支流 ${branch.branch} 预期涨跌`, formatPercent(branch.expected_drift)],
-    [`支流 ${branch.branch} 背景有效势`, formatNumber(branch.expected_effective_potential, 4)],
+    [`支流 ${branch.branch} 一日有效势`, formatNumber(branch.expected_effective_potential, 4)],
     [`支流 ${branch.branch} 趋势延续可信度`, formatPercent(branch.survival_confidence)],
     [`支流 ${branch.branch} 看多概率`, formatPercent(branch.bullish_drift_probability)],
     [`支流 ${branch.branch} 趋势强度`, formatNumber(branch.drift_signal_to_noise, 3)],
@@ -1303,10 +1305,11 @@ function paintBoundaryFlowResult(job, payload) {
 
   document.querySelector("#boundary-prediction-table").innerHTML = predictions.slice(-60).reverse().map(item => {
     const itemBranches = item.branches || [];
-    const exposure = (item.branch_target_exposures || []).reduce((sum, value) => sum + Number(value || 0), 0);
+    const exposure = (item.actual_weights || []).reduce((sum, value) => sum + Number(value || 0), 0);
     const label = branch => ({ bear: "空", flat: "平", bull: "多" })[branch?.direction] || "—";
-    const potentialText = itemBranches.map(branch => formatNumber(branch.expected_effective_potential, 4)).join(" · ");
-    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${label(itemBranches[0])}</td><td>${label(itemBranches[1])}</td><td>${escapeHtml(potentialText)}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.selected_symbols?.length || 0)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
+    const potentialText = itemBranches.map(branch => formatPercent(branch.convection_potential_features?.reverse_flow_1d)).join(" · ");
+    const blocked = Number(item.failed_buy_orders || 0) + Number(item.failed_sell_orders || 0);
+    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${label(itemBranches[0])}</td><td>${label(itemBranches[1])}</td><td>${escapeHtml(potentialText)}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.actual_symbols?.length || 0)}</td><td>${formatInteger(blocked)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
   }).join("");
 
   const latestBeta0 = [1, 2].map(branch =>
@@ -1330,7 +1333,7 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
     boundaryMetric("股票数量", `${formatInteger(job.request.symbols?.length)} 只`),
     boundaryMetric("支流历史", `${job.request.topology_lookback_sessions} 日`),
-    boundaryMetric("外势输入", "仅背景外势 β0"),
+    boundaryMetric("外势输入", "背景势 β0 + 一日反向流量 C1"),
     boundaryMetric("FK 模拟路径", formatInteger(job.request.boundary_fk_paths)),
     boundaryMetric("模型版本", latest.model_version || posterior?.[0]?.model_name || "PathEfficiencyFK"),
     boundaryMetric("训练截止", latest.training_cutoff || "—"),
@@ -1353,7 +1356,7 @@ function paintBoundaryReturnComparison(job, metrics, predictions, baselineMetric
   const baselineEquity = boundaryEquitySeries(job, baselinePredictions);
   const wins = predictions.filter(item => Number(item.gross_strategy_return) > 0).length;
   document.querySelector("#boundary-return-metrics").innerHTML = [
-    boundaryMetric("背景外势 FK 收益", formatPercent(metrics.net_total_return)),
+    boundaryMetric("一日反向流量外势 FK 收益", formatPercent(metrics.net_total_return)),
     boundaryMetric("纯路径效率基线", formatPercent(baselineMetrics.net_total_return)),
     boundaryMetric("相对基线", formatPercent(Number(metrics.net_total_return || 0) - Number(baselineMetrics.net_total_return || 0))),
     boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),

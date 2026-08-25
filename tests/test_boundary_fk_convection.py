@@ -3,29 +3,31 @@ from __future__ import annotations
 import numpy as np
 
 from bnhmm.boundary_fk.convection import (
-    BACKGROUND_POTENTIAL_FEATURE_NAMES,
-    background_potential_features,
+    CONVECTION_POTENTIAL_FEATURE_NAMES,
+    convection_potential_features,
 )
 from test_boundary_fk_pipeline import _walk_forward_data
 
 
-def test_background_potential_has_no_market_features() -> None:
+def test_one_day_reverse_flow_is_the_only_potential_feature() -> None:
     base = _walk_forward_data(6)
 
-    names, values, feature_valid = background_potential_features(base, branch=0)
+    names, values, feature_valid = convection_potential_features(base, branch=0)
 
-    assert names == BACKGROUND_POTENTIAL_FEATURE_NAMES == ()
-    assert values.shape == (6, 0)
-    assert feature_valid.tolist() == [True, True, True, True, True, True]
+    assert names == CONVECTION_POTENTIAL_FEATURE_NAMES == ("reverse_flow_1d",)
+    assert values.shape == (6, 1)
+    np.testing.assert_allclose(values[:, 0], base.convection_strength[:, 0, 0])
+    np.testing.assert_array_equal(feature_valid, base.convection_valid[:, 0, 0])
 
 
-def test_background_potential_does_not_depend_on_convection_data() -> None:
+def test_one_day_reverse_flow_requires_valid_convection_data() -> None:
     base = _walk_forward_data(6)
     base.convection_strength[:] = np.nan
     base.convection_valid[:] = False
 
-    names, values, feature_valid = background_potential_features(base, branch=1)
+    names, values, feature_valid = convection_potential_features(base, branch=1)
 
-    assert names == ()
-    assert values.shape == (6, 0)
-    assert feature_valid.all()
+    assert names == ("reverse_flow_1d",)
+    assert values.shape == (6, 1)
+    assert np.isnan(values).all()
+    assert not feature_valid.any()

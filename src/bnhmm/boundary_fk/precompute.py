@@ -16,6 +16,7 @@ from ..sector_flow.topology import TopologyConfig
 from .branch_state import TwoBranchDailyStateBuilder
 from .cache import CACHE_LOOKBACKS, BoundaryDataCache, BoundaryDataCacheKey
 from .daily_state import BoundaryTopologyBuilder
+from .execution import build_member_execution_constraints
 from .normalization import CausalBoundaryNormalizer
 
 
@@ -51,6 +52,7 @@ def build_boundary_cache_variants(
     }
     panel = SectorMinutePanelBuilder().build(bars)
     normalized = CausalBoundaryNormalizer().transform(panel)
+    execution = build_member_execution_constraints(panel)
     topology_start = start_date - timedelta(days=300)
     months = tuple(
         np.arange(
@@ -70,7 +72,25 @@ def build_boundary_cache_variants(
                 minimum_band_size=max(2, int(np.ceil(len(symbols) * 0.10))),
             )
         ).build(normalized, months)
-        data = TwoBranchDailyStateBuilder().build(normalized, topologies)
+        built = TwoBranchDailyStateBuilder().build(normalized, topologies)
+        if not np.array_equal(built.states.sessions, execution.sessions):
+            raise ValueError("execution constraints do not align with daily states")
+        data = type(built)(
+            states=built.states,
+            labels=built.labels,
+            memberships=built.memberships,
+            symbols=built.symbols,
+            member_next_returns=built.member_next_returns,
+            member_next_valid=built.member_next_valid,
+            member_next_buy_returns=execution.buy_returns,
+            member_next_buy_executable=execution.buy_executable,
+            member_next_sell_returns=execution.sell_returns,
+            member_next_sell_executable=execution.sell_executable,
+            convection_strength=built.convection_strength,
+            convection_valid=built.convection_valid,
+            convection_total_flow=built.convection_total_flow,
+            convection_observations=built.convection_observations,
+        )
         key = BoundaryDataCacheKey.from_source(
             dataset_id=dataset_id,
             source_path=source_path,

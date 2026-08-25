@@ -290,6 +290,10 @@ class TwoBranchDataset:
     symbols: tuple[str, ...]
     member_next_returns: NDArray[np.float64]
     member_next_valid: NDArray[np.bool_]
+    member_next_buy_returns: NDArray[np.float64] | None = None
+    member_next_buy_executable: NDArray[np.bool_] | None = None
+    member_next_sell_returns: NDArray[np.float64] | None = None
+    member_next_sell_executable: NDArray[np.bool_] | None = None
     evaluation_start: np.datetime64 | None = None
     evaluation_end: np.datetime64 | None = None
     convection_lookbacks: tuple[int, ...] = CONVECTION_LOOKBACKS
@@ -301,6 +305,14 @@ class TwoBranchDataset:
     def __post_init__(self) -> None:
         rows = len(self.states.sessions)
         expected = (rows, len(self.symbols))
+        if self.member_next_buy_returns is None:
+            object.__setattr__(self, "member_next_buy_returns", self.member_next_returns.copy())
+        if self.member_next_buy_executable is None:
+            object.__setattr__(self, "member_next_buy_executable", self.member_next_valid.copy())
+        if self.member_next_sell_returns is None:
+            object.__setattr__(self, "member_next_sell_returns", np.zeros(expected, dtype=np.float64))
+        if self.member_next_sell_executable is None:
+            object.__setattr__(self, "member_next_sell_executable", self.member_next_valid.copy())
         if self.convection_lookbacks != CONVECTION_LOOKBACKS:
             raise ValueError(
                 f"convection lookbacks must be fixed at {CONVECTION_LOOKBACKS}"
@@ -332,10 +344,24 @@ class TwoBranchDataset:
             )
         if self.member_next_returns.shape != expected or self.member_next_valid.shape != expected:
             raise ValueError("member next returns must align with sessions and symbols")
+        execution_arrays = (
+            self.member_next_buy_returns,
+            self.member_next_buy_executable,
+            self.member_next_sell_returns,
+            self.member_next_sell_executable,
+        )
+        if any(item is None or item.shape != expected for item in execution_arrays):
+            raise ValueError("member execution constraints must align with sessions and symbols")
         if not np.array_equal(self.states.sessions, self.labels.signal_sessions):
             raise ValueError("two-branch states and labels must align")
         if np.any(self.member_next_valid & ~np.isfinite(self.member_next_returns)):
             raise ValueError("valid member next returns must be finite")
+        if np.any(
+            self.member_next_buy_executable & ~np.isfinite(self.member_next_buy_returns)
+        ) or np.any(
+            self.member_next_sell_executable & ~np.isfinite(self.member_next_sell_returns)
+        ):
+            raise ValueError("executable member returns must be finite")
         convection_arrays = (
             self.convection_strength,
             self.convection_valid,

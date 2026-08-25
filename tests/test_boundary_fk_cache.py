@@ -45,6 +45,24 @@ def test_boundary_cache_round_trips_dataset_without_pickle(tmp_path: Path) -> No
     np.testing.assert_allclose(restored.states.values, original.states.values, equal_nan=True)
     np.testing.assert_allclose(restored.labels.next_return, original.labels.next_return, equal_nan=True)
     np.testing.assert_allclose(restored.member_next_returns, original.member_next_returns, equal_nan=True)
+    np.testing.assert_allclose(
+        restored.member_next_buy_returns,
+        original.member_next_buy_returns,
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(
+        restored.member_next_buy_executable,
+        original.member_next_buy_executable,
+    )
+    np.testing.assert_allclose(
+        restored.member_next_sell_returns,
+        original.member_next_sell_returns,
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(
+        restored.member_next_sell_executable,
+        original.member_next_sell_executable,
+    )
     assert restored.evaluation_start == np.datetime64("2025-01-01")
     assert restored.evaluation_end == np.datetime64("2025-06-30")
     assert not any(path.suffix in {".pkl", ".pickle"} for path in cache.root.rglob("*"))
@@ -77,7 +95,7 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
 def test_boundary_cache_uses_reverse_flow_concentration_version() -> None:
     assert (
         CACHE_CONSTRUCTION_VERSION
-        == "path-efficiency-two-branch-v4-short-convection-windows"
+        == "path-efficiency-two-branch-v5-limit-execution"
     )
 
 
@@ -116,7 +134,7 @@ def test_boundary_cache_manifest_lists_all_standard_windows(tmp_path: Path) -> N
 def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: dict[str, list[object]] = {"fetch": [], "normalize": [], "lookbacks": [], "minimums": [], "save": []}
+    calls: dict[str, list[object]] = {"fetch": [], "normalize": [], "execution": [], "lookbacks": [], "minimums": [], "save": []}
     source = object()
 
     class FakeSource:
@@ -163,6 +181,21 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
 
     monkeypatch.setattr(module, "SectorMinutePanelBuilder", FakePanelBuilder)
     monkeypatch.setattr(module, "CausalBoundaryNormalizer", FakeNormalizer)
+    monkeypatch.setattr(
+        module,
+        "build_member_execution_constraints",
+        lambda panel: calls["execution"].append(panel) or type(
+            "Execution",
+            (),
+            {
+                "sessions": _walk_forward_data(180).states.sessions,
+                "buy_returns": _walk_forward_data(180).member_next_returns,
+                "buy_executable": _walk_forward_data(180).member_next_valid,
+                "sell_returns": np.zeros_like(_walk_forward_data(180).member_next_returns),
+                "sell_executable": _walk_forward_data(180).member_next_valid,
+            },
+        )(),
+    )
     monkeypatch.setattr(module, "TopologyConfig", FakeTopologyConfig)
     monkeypatch.setattr(module, "BoundaryTopologyBuilder", FakeTopologyBuilder)
     monkeypatch.setattr(module, "TwoBranchDailyStateBuilder", FakeStateBuilder)
@@ -182,6 +215,7 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
 
     assert len(calls["fetch"]) == 4
     assert calls["normalize"] == ["raw-panel"]
+    assert calls["execution"] == ["raw-panel"]
     assert tuple(calls["lookbacks"]) == CACHE_LOOKBACKS
     assert tuple(calls["minimums"]) == (
         (7, 5), (14, 10), (20, 15), (27, 20), (40, 30), (60, 45), (80, 60)

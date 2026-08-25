@@ -1447,7 +1447,7 @@ def build_parser() -> argparse.ArgumentParser:
     boundary_flow.add_argument("--minimum-direction-probability", type=float, default=0.60)
     boundary_flow.add_argument("--minimum-signal-to-noise", type=float, default=0.10)
     boundary_flow.add_argument("--minimum-survival-probability", type=float, default=0.35)
-    boundary_flow.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    boundary_flow.add_argument("--transaction-cost-bps", type=float, default=5.0)
     boundary_flow.add_argument("--seed", type=int, default=7)
     boundary_flow.add_argument("--max-folds", type=int)
     boundary_flow.set_defaults(handler=_boundary_flow_walk_forward)

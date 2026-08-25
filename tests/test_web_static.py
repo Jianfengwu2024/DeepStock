@@ -93,13 +93,14 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             'name="transaction_cost_bps"',
             html,
         )
+        self.assertIn("佣金 2 BP + 滑点 3 BP", html)
 
     def test_boundary_flow_configuration_and_results_have_stable_hooks(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.27.0', html)
-        self.assertIn('/static/styles.css?v=0.27.0', html)
+        self.assertIn('/static/app.js?v=0.27.1', html)
+        self.assertIn('/static/styles.css?v=0.27.1', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
@@ -162,7 +163,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("paintBoundaryReturnAnalysis", script)
         self.assertIn("drawBoundaryComparison", script)
         self.assertIn("baselinePredictions", script)
-        self.assertIn("背景外势 FK 净值", html)
+        self.assertIn("一日反向流量外势 FK 净值", html)
         self.assertIn("纯路径效率基线", html)
         self.assertIn('class="run-identity"', html)
         self.assertIn("paintBoundaryResidualAnalysis", script)
@@ -178,13 +179,13 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("路径效率 FK", html)
         for artifact in (
             "path-efficiency-fk-report.md",
-            "path-efficiency-background-potential-report.md",
+            "path-efficiency-convection-potential-report.md",
             "boundary-policy-evaluation.json",
-            "background-potential-evaluation.json",
+            "convection-potential-evaluation.json",
             "feynman-kac-predictions.json",
         ):
             self.assertIn(artifact, script)
-        self.assertIn("PathEfficiencyFK-60D-BackgroundPotential", script)
+        self.assertIn("PathEfficiencyFK-60D-OneDayPotential", script)
         self.assertIn("最新 β0", script)
         self.assertIn("potential_mean?.[0]", script)
         self.assertIn("boundaryImprovementVerdict", script)
@@ -194,9 +195,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("回撤改善", script)
         for field in ("expected_effective_potential", "survival_confidence"):
             self.assertIn(field, script)
-        self.assertIn("背景外势 β0", html)
-        self.assertNotIn("C1", html)
-        self.assertNotIn("convection_potential_features", script)
+        self.assertIn("背景势 β0 + 一日反向流量集中度 C1", html)
+        self.assertIn("convection_potential_features", script)
         self.assertNotIn("convection_lookback_sessions", script)
         self.assertNotIn("convection_exposure_cap", script)
         self.assertNotIn("convection_gate_reason", script)

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from .branch_model import BayesianBranchModel, BayesianBranchModelConfig
-from .convection import background_potential_features
+from .convection import convection_potential_features
 from .evaluation import (
     BoundaryEvaluationConfig,
     BoundaryEvaluationMetrics,
@@ -17,13 +17,13 @@ from .evaluation import (
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
 from .policy import BoundaryPolicy, BoundaryPolicyConfig, BranchPositionState
-from .reporting import write_background_potential_report, write_baseline_report, write_json
+from .reporting import write_baseline_report, write_convection_report, write_json
 from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
 BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Baseline",
-    "PathEfficiencyFK-60D-BackgroundPotential",
+    "PathEfficiencyFK-60D-OneDayPotential",
 )
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
@@ -37,7 +37,7 @@ class BoundaryFlowPipelineConfig:
     seed: int = 7
     neutral_sigma: float = 0.35
     minimum_neutral_threshold: float = 0.002
-    transaction_cost_bps: float = 10.0
+    transaction_cost_bps: float = 5.0
     drift_half_life_sessions: float | None = 60.0
     minimum_direction_probability: float = 0.60
     minimum_signal_to_noise: float = 0.10
@@ -86,6 +86,15 @@ class BoundaryFlowRunResult:
     stages: tuple[BoundaryStageResult, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PortfolioExecution:
+    weights: dict[str, float]
+    gross_return: float
+    turnover: float
+    failed_buy_orders: int
+    failed_sell_orders: int
+
+
 class BoundaryFlowPipeline:
     def __init__(self, config: BoundaryFlowPipelineConfig | None = None) -> None:
         self.config = config or BoundaryFlowPipelineConfig()
@@ -122,7 +131,7 @@ class BoundaryFlowPipeline:
         )
         drift_names: tuple[str, ...] = ()
         potential_inputs = tuple(
-            background_potential_features(data, branch) for branch in range(2)
+            convection_potential_features(data, branch) for branch in range(2)
         )
 
         for fold_index, test_start, training_rows, test_rows in folds:
@@ -214,11 +223,11 @@ class BoundaryFlowPipeline:
                             strict=True,
                         )
                     )
-                    turnover = self._turnover(
-                        previous_weights[model_name], current_weights
-                    )
-                    gross_return = self._portfolio_return(
-                        data, int(row), current_weights
+                    execution = self._execute_portfolio(
+                        data,
+                        int(row),
+                        previous=previous_weights[model_name],
+                        target=current_weights,
                     )
                     observation = TwoBranchForecastObservation(
                         signal_time=signal,
@@ -236,11 +245,15 @@ class BoundaryFlowPipeline:
                             float(thresholds[1]),
                         ),
                         decision=decision,
-                        gross_strategy_return=gross_return,
-                        turnover=turnover,
+                        gross_strategy_return=execution.gross_return,
+                        turnover=execution.turnover,
+                        actual_symbols=tuple(execution.weights),
+                        actual_weights=tuple(execution.weights.values()),
+                        failed_buy_orders=execution.failed_buy_orders,
+                        failed_sell_orders=execution.failed_sell_orders,
                     )
                     observations_by_model[model_name].append(observation)
-                    previous_weights[model_name] = current_weights
+                    previous_weights[model_name] = execution.weights
                     previous_branch_states[model_name] = decision.branch_position_states
                     prediction_payloads.append(
                         self._prediction_payload(
@@ -292,7 +305,7 @@ class BoundaryFlowPipeline:
             ],
             dtype=np.float64,
         )
-        background_potential_payload = {
+        convection_payload = {
             "observations": int(len(potentials)),
             "mean_effective_potential": float(np.mean(potentials)),
             "median_effective_potential": float(np.median(potentials)),
@@ -303,8 +316,8 @@ class BoundaryFlowPipeline:
         write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
         write_json(
-            root / "background-potential-evaluation.json",
-            background_potential_payload,
+            root / "convection-potential-evaluation.json",
+            convection_payload,
         )
         write_json(
             root / "boundary-residual-analysis.json",
@@ -330,10 +343,10 @@ class BoundaryFlowPipeline:
             root / "path-efficiency-fk-report.md",
             stage_payload,
         )
-        write_background_potential_report(
-            root / "path-efficiency-background-potential-report.md",
+        write_convection_report(
+            root / "path-efficiency-convection-potential-report.md",
             stage_payload,
-            background_potential_payload,
+            convection_payload,
         )
         return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, stages)
 
@@ -369,28 +382,85 @@ class BoundaryFlowPipeline:
         return tuple(folds)
 
     @staticmethod
-    def _turnover(previous: dict[str, float], current: dict[str, float]) -> float:
-        return float(
+    def _execute_portfolio(
+        data: TwoBranchDataset,
+        row: int,
+        *,
+        previous: dict[str, float],
+        target: dict[str, float],
+    ) -> PortfolioExecution:
+        symbol_index = {symbol: index for index, symbol in enumerate(data.symbols)}
+        weights = dict(previous)
+        failed_sell_orders = 0
+        failed_buy_orders = 0
+
+        for symbol, previous_weight in previous.items():
+            column = symbol_index[symbol]
+            desired = target.get(symbol, 0.0)
+            if desired >= previous_weight:
+                continue
+            if data.member_next_sell_executable[row, column]:
+                if desired > 1e-12:
+                    weights[symbol] = desired
+                else:
+                    weights.pop(symbol, None)
+            else:
+                failed_sell_orders += 1
+
+        requested_buys: dict[str, float] = {}
+        for symbol, desired in target.items():
+            current = weights.get(symbol, 0.0)
+            if desired <= current:
+                continue
+            column = symbol_index[symbol]
+            if data.member_next_buy_executable[row, column]:
+                requested_buys[symbol] = desired - current
+            else:
+                failed_buy_orders += 1
+
+        available_cash = max(0.0, 1.0 - sum(weights.values()))
+        requested_cash = sum(requested_buys.values())
+        fill_ratio = min(1.0, available_cash / requested_cash) if requested_cash else 0.0
+        for symbol, increase in requested_buys.items():
+            weights[symbol] = weights.get(symbol, 0.0) + increase * fill_ratio
+
+        gross_return = 0.0
+        for symbol in set(previous) | set(weights):
+            column = symbol_index[symbol]
+            before = previous.get(symbol, 0.0)
+            after = weights.get(symbol, 0.0)
+            retained = min(before, after)
+            if retained:
+                if not data.member_next_valid[row, column]:
+                    raise ValueError(f"missing next-session return for held symbol {symbol}")
+                gross_return += retained * float(data.member_next_returns[row, column])
+            if after > before:
+                gross_return += (after - before) * float(
+                    data.member_next_buy_returns[row, column]
+                )
+            elif before > after:
+                gross_return += (before - after) * float(
+                    data.member_next_sell_returns[row, column]
+                )
+
+        cleaned = {
+            symbol: float(weight)
+            for symbol, weight in weights.items()
+            if weight > 1e-12
+        }
+        turnover = float(
             sum(
-                abs(current.get(symbol, 0.0) - previous.get(symbol, 0.0))
-                for symbol in set(previous) | set(current)
+                abs(cleaned.get(symbol, 0.0) - previous.get(symbol, 0.0))
+                for symbol in set(previous) | set(cleaned)
             )
         )
-
-    @staticmethod
-    def _portfolio_return(
-        data: TwoBranchDataset, row: int, weights: dict[str, float]
-    ) -> float:
-        if not weights:
-            return 0.0
-        symbol_index = {symbol: index for index, symbol in enumerate(data.symbols)}
-        result = 0.0
-        for symbol, weight in weights.items():
-            column = symbol_index[symbol]
-            if not data.member_next_valid[row, column]:
-                raise ValueError(f"missing next-session return for held symbol {symbol}")
-            result += weight * float(data.member_next_returns[row, column])
-        return float(result)
+        return PortfolioExecution(
+            weights=cleaned,
+            gross_return=float(gross_return),
+            turnover=turnover,
+            failed_buy_orders=failed_buy_orders,
+            failed_sell_orders=failed_sell_orders,
+        )
 
     @staticmethod
     def _prediction_payload(
@@ -414,6 +484,7 @@ class BoundaryFlowPipeline:
                 strict=True,
             )
         ):
+            names, values, _ = potential_inputs[branch]
             branches.append(
                 {
                     "branch": branch + 1,
@@ -428,6 +499,9 @@ class BoundaryFlowPipeline:
                     "expected_diffusion_variance": forecast.expected_diffusion_variance,
                     "actual_return": actual,
                     "neutral_threshold": threshold,
+                    "convection_potential_features": dict(
+                        zip(names, (float(item) for item in values[row]), strict=True)
+                    ),
                     "effective_potential_enabled": effective_potential_enabled,
                 }
             )
@@ -449,8 +523,12 @@ class BoundaryFlowPipeline:
             ],
             "selected_symbols": list(observation.decision.selected_symbols),
             "target_weights": list(observation.decision.target_weights),
+            "actual_symbols": list(observation.actual_symbols),
+            "actual_weights": list(observation.actual_weights),
             "gross_strategy_return": observation.gross_strategy_return,
             "turnover": observation.turnover,
+            "failed_buy_orders": observation.failed_buy_orders,
+            "failed_sell_orders": observation.failed_sell_orders,
         }
 
     @staticmethod

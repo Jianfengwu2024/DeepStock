@@ -166,7 +166,7 @@ class WalkForwardJobRequest(BaseModel):
     dropout: float = Field(0.1, ge=0.0, lt=1.0)
     mc_samples: int = Field(16, ge=2, le=256)
     uncertainty_aversion: float = Field(2.0, ge=0.0, le=100.0)
-    transaction_cost_bps: float = Field(10.0, ge=0.0, le=1000.0)
+    transaction_cost_bps: float = Field(5.0, ge=0.0, le=1000.0)
     seed: int = Field(7, ge=0, le=2**31 - 1)
 
     @field_validator("name")

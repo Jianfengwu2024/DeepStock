@@ -205,7 +205,7 @@ class WindowComparisonTests(unittest.TestCase):
             [point["signal_time"] for point in result["equity_curve"]],
             ["2025-01-02", "2025-01-03"],
         )
-        expected = (1 + 0.02 - 0.001 * 0.5) * (1 - 0.01 - 0.001 * 0.25)
+        expected = (1 + 0.02 - 0.0005 * 0.5) * (1 - 0.01 - 0.0005 * 0.25)
         self.assertAlmostEqual(result["equity_curve"][-1]["value"], expected)
 
 

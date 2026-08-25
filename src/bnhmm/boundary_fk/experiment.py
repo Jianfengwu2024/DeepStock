@@ -16,6 +16,7 @@ from ..sector_flow.topology import TopologyConfig
 from .branch_state import TwoBranchDailyStateBuilder
 from .cache import BoundaryDataCache, BoundaryDataCacheKey
 from .daily_state import BoundaryTopologyBuilder
+from .execution import build_member_execution_constraints
 from .normalization import CausalBoundaryNormalizer
 from .pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
 from .reporting import write_json
@@ -97,6 +98,7 @@ def build_boundary_experiment_data(
     }
     panel = SectorMinutePanelBuilder().build(bars)
     normalized = CausalBoundaryNormalizer().transform(panel)
+    execution = build_member_execution_constraints(panel)
     topology_start = start - timedelta(days=300)
     months = tuple(
         np.arange(
@@ -120,6 +122,10 @@ def build_boundary_experiment_data(
         symbols=built.symbols,
         member_next_returns=built.member_next_returns,
         member_next_valid=built.member_next_valid,
+        member_next_buy_returns=execution.buy_returns,
+        member_next_buy_executable=execution.buy_executable,
+        member_next_sell_returns=execution.sell_returns,
+        member_next_sell_executable=execution.sell_executable,
         evaluation_start=np.datetime64(start),
         evaluation_end=np.datetime64(end),
     )

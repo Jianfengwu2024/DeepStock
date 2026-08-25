@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import numpy as np
+
+from bnhmm.boundary_fk.execution import build_member_execution_constraints
+from bnhmm.boundary_fk.pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
+from bnhmm.sector_flow.types import SectorMinutePanel
+from test_boundary_fk_pipeline import _walk_forward_data
+
+
+def _panel(next_prices: tuple[tuple[float, float], ...]) -> SectorMinutePanel:
+    timestamps = np.asarray(
+        [
+            "2026-01-05T14:59",
+            "2026-01-05T15:00",
+            "2026-01-06T09:31",
+            "2026-01-06T09:32",
+            "2026-01-06T09:33",
+        ],
+        dtype="datetime64[m]",
+    )
+    prices = ((10.0, 10.0), (10.0, 10.0), *next_prices)
+    open_prices = np.asarray([[item[0]] for item in prices], dtype=np.float64)
+    close_prices = np.asarray([[item[1]] for item in prices], dtype=np.float64)
+    return SectorMinutePanel(
+        symbols=("600000",),
+        timestamps=timestamps,
+        open=open_prices,
+        close=close_prices,
+        volume=np.ones_like(open_prices),
+        valid=np.ones_like(open_prices, dtype=np.bool_),
+    )
+
+
+def test_boundary_fk_defaults_to_five_basis_points() -> None:
+    assert BoundaryFlowPipelineConfig().transaction_cost_bps == 5.0
+
+
+def test_all_day_limit_up_rejects_new_position() -> None:
+    constraints = build_member_execution_constraints(
+        _panel(((11.0, 11.0), (11.0, 11.0), (11.0, 11.0)))
+    )
+
+    assert not constraints.buy_executable[0, 0]
+    assert constraints.sell_executable[0, 0]
+
+
+def test_limit_up_that_opens_intraday_can_be_bought_at_first_open() -> None:
+    constraints = build_member_execution_constraints(
+        _panel(((11.0, 11.0), (11.0, 10.8), (10.8, 10.9)))
+    )
+
+    assert constraints.buy_executable[0, 0]
+    np.testing.assert_allclose(constraints.buy_returns[0, 0], 10.9 / 10.8 - 1.0)
+
+
+def test_all_day_limit_down_rejects_sale_and_keeps_position() -> None:
+    data = _walk_forward_data(180)
+    row = 120
+    sellable = data.member_next_valid.copy()
+    sellable[row, 0] = False
+    data = replace(
+        data,
+        member_next_buy_returns=data.member_next_returns,
+        member_next_buy_executable=data.member_next_valid,
+        member_next_sell_returns=np.zeros_like(data.member_next_returns),
+        member_next_sell_executable=sellable,
+    )
+
+    execution = BoundaryFlowPipeline._execute_portfolio(
+        data,
+        row,
+        previous={"A": 0.5},
+        target={},
+    )
+
+    assert execution.weights == {"A": 0.5}
+    assert execution.turnover == 0.0
+    assert execution.failed_sell_orders == 1
+    np.testing.assert_allclose(
+        execution.gross_return, 0.5 * data.member_next_returns[row, 0]
+    )
+
+
+def test_limit_down_that_opens_intraday_can_be_sold_at_first_open() -> None:
+    constraints = build_member_execution_constraints(
+        _panel(((9.0, 9.0), (9.0, 9.2), (9.2, 9.1)))
+    )
+
+    assert constraints.sell_executable[0, 0]
+    np.testing.assert_allclose(constraints.sell_returns[0, 0], 9.2 / 9.0 - 1.0)
+
+
+def test_turnover_and_cost_use_only_executed_orders() -> None:
+    data = _walk_forward_data(180)
+    row = 120
+    buyable = data.member_next_valid.copy()
+    buyable[row, 0] = False
+    data = replace(
+        data,
+        member_next_buy_returns=data.member_next_returns,
+        member_next_buy_executable=buyable,
+        member_next_sell_returns=np.zeros_like(data.member_next_returns),
+        member_next_sell_executable=data.member_next_valid,
+    )
+
+    execution = BoundaryFlowPipeline._execute_portfolio(
+        data,
+        row,
+        previous={},
+        target={"A": 0.5, "B": 0.5},
+    )
+
+    assert execution.weights == {"B": 0.5}
+    assert execution.turnover == 0.5
+    assert execution.failed_buy_orders == 1
+    np.testing.assert_allclose(
+        execution.gross_return, 0.5 * data.member_next_buy_returns[row, 1]
+    )

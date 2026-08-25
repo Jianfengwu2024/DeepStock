@@ -14,7 +14,7 @@ from .policy import BoundaryPolicyDecision
 
 @dataclass(frozen=True, slots=True)
 class BoundaryEvaluationConfig:
-    transaction_cost_bps: float = 10.0
+    transaction_cost_bps: float = 5.0
     calibration_bins: int = 10
     coverage_probability: float = 0.90
 
@@ -54,6 +54,10 @@ class TwoBranchForecastObservation:
     decision: BoundaryPolicyDecision
     gross_strategy_return: float
     turnover: float
+    actual_symbols: tuple[str, ...] = ()
+    actual_weights: tuple[float, ...] = ()
+    failed_buy_orders: int = 0
+    failed_sell_orders: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +81,8 @@ class BoundaryEvaluationMetrics:
     direction_counts: tuple[int, int, int]
     drift_rank_ic: float
     drift_direction_accuracy: float
+    failed_buy_orders: int = 0
+    failed_sell_orders: int = 0
 
 
 def evaluate_boundary_forecasts(
@@ -240,7 +246,7 @@ def evaluate_two_branch_forecasts(
     gross_equity = np.cumprod(1.0 + gross_returns)
     net_equity = np.cumprod(1.0 + net_returns)
     exposure = np.asarray(
-        [sum(item.decision.target_weights) for item in observations], dtype=np.float64
+        [sum(item.actual_weights) for item in observations], dtype=np.float64
     )
     opened = exposure > 0.0
     probability_residual = one_hot[:, 2] - probabilities[:, 2]
@@ -273,6 +279,8 @@ def evaluate_two_branch_forecasts(
         drift_direction_accuracy=float(
             np.mean(np.sign(expected_drift) == np.sign(actual_returns))
         ),
+        failed_buy_orders=int(sum(item.failed_buy_orders for item in observations)),
+        failed_sell_orders=int(sum(item.failed_sell_orders for item in observations)),
     )
 
 
