@@ -72,7 +72,7 @@ def test_pipeline_compares_baseline_with_convection_potential_fk(tmp_path) -> No
 
     assert result.model_names == BOUNDARY_MODEL_NAMES == (
         "PathEfficiencyFK-60D-Baseline",
-        "PathEfficiencyFK-60D-ConvectionPotential",
+        "PathEfficiencyFK-60D-OneDayPotential",
     )
     assert len(result.stages) == 2
     assert result.stages[0].status == "completed"

@@ -7,18 +7,14 @@ import numpy as np
 from .types import TwoBranchDataset
 
 
-CONVECTION_POTENTIAL_FEATURE_NAMES = (
-    "reverse_flow_1d",
-    "reverse_flow_persistence_2d",
-    "reverse_flow_persistence_3d",
-)
+CONVECTION_POTENTIAL_FEATURE_NAMES = ("reverse_flow_1d",)
 
 
 def convection_potential_features(
     data: TwoBranchDataset,
     branch: int,
-) -> tuple[tuple[str, str, str], np.ndarray, np.ndarray]:
-    """Build causal convection level and persistence features for one branch."""
+) -> tuple[tuple[str], np.ndarray, np.ndarray]:
+    """Build the current one-day reverse-flow external potential input."""
     if branch not in (0, 1):
         raise ValueError("convection branch must be zero or one")
     try:
@@ -28,16 +24,6 @@ def convection_potential_features(
 
     source = data.convection_strength[:, branch, one_day_index]
     source_valid = data.convection_valid[:, branch, one_day_index]
-    values = np.full((len(source), 3), np.nan, dtype=np.float64)
-    valid = np.zeros(len(source), dtype=np.bool_)
-    for row in range(2, len(source)):
-        if not np.all(source_valid[row - 2 : row + 1]):
-            continue
-        current = float(source[row])
-        values[row] = (
-            current,
-            float(np.min(source[row - 1 : row + 1])),
-            float(np.min(source[row - 2 : row + 1])),
-        )
-        valid[row] = True
+    values = np.where(source_valid, source, np.nan).astype(np.float64)[:, None]
+    valid = source_valid.astype(np.bool_, copy=True)
     return CONVECTION_POTENTIAL_FEATURE_NAMES, values, valid

@@ -23,7 +23,7 @@ from .types import MonthlyBranchMembership, TwoBranchDataset
 
 BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Baseline",
-    "PathEfficiencyFK-60D-ConvectionPotential",
+    "PathEfficiencyFK-60D-OneDayPotential",
 )
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset

@@ -98,8 +98,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.26.8', html)
-        self.assertIn('/static/styles.css?v=0.26.8', html)
+        self.assertIn('/static/app.js?v=0.26.9', html)
+        self.assertIn('/static/styles.css?v=0.26.9', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
@@ -162,7 +162,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("paintBoundaryReturnAnalysis", script)
         self.assertIn("drawBoundaryComparison", script)
         self.assertIn("baselinePredictions", script)
-        self.assertIn("对流势能 FK 净值", html)
+        self.assertIn("一日反向流量外势 FK 净值", html)
         self.assertIn("纯路径效率基线", html)
         self.assertIn('class="run-identity"', html)
         self.assertIn("paintBoundaryResidualAnalysis", script)
@@ -184,7 +184,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "feynman-kac-predictions.json",
         ):
             self.assertIn(artifact, script)
-        self.assertIn("PathEfficiencyFK-60D-ConvectionPotential", script)
+        self.assertIn("PathEfficiencyFK-60D-OneDayPotential", script)
         self.assertIn("boundaryImprovementVerdict", script)
         self.assertIn("returnDelta > 0", script)
         self.assertIn("未通过改进标准", script)
@@ -197,8 +197,9 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         ):
             self.assertIn(field, script)
         self.assertIn("反向流量集中度", html)
-        self.assertIn("股票 × 分钟二维反向流量集中度", html)
-        self.assertIn("C1 / C2 / C3", html)
+        self.assertIn("当日一日反向流量集中度 C1", html)
+        self.assertIn("一日反向流量 C1", html)
+        self.assertNotIn("C1 / C2 / C3", html)
         self.assertNotIn("convection_lookback_sessions", script)
         self.assertNotIn("convection_exposure_cap", script)
         self.assertNotIn("convection_gate_reason", script)

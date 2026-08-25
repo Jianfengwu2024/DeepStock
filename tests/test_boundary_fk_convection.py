@@ -12,7 +12,7 @@ from bnhmm.boundary_fk.convection import (
 from test_boundary_fk_pipeline import _walk_forward_data
 
 
-def test_potential_features_use_causal_one_day_persistence_minima() -> None:
+def test_potential_features_use_only_current_one_day_reverse_flow() -> None:
     base = _walk_forward_data(6)
     strength = np.zeros((6, 2, 4), dtype=np.float64)
     strength[:, 0, 0] = np.array([0.8, 0.6, 0.9, 0.4, 0.7, 0.5])
@@ -24,9 +24,10 @@ def test_potential_features_use_causal_one_day_persistence_minima() -> None:
     names, values, feature_valid = convection_potential_features(data, branch=0)
 
     assert names == CONVECTION_POTENTIAL_FEATURE_NAMES
-    assert values[2] == pytest.approx([0.9, 0.6, 0.6])
-    assert values[4] == pytest.approx([0.7, 0.4, 0.4])
-    assert feature_valid.tolist() == [False, False, True, True, True, True]
+    assert names == ("reverse_flow_1d",)
+    assert values.shape == (6, 1)
+    assert values[:, 0] == pytest.approx([0.8, 0.6, 0.9, 0.4, 0.7, 0.5])
+    assert feature_valid.tolist() == [True, True, True, True, True, True]
 
 
 def test_potential_features_do_not_read_future_convection() -> None:
@@ -50,7 +51,7 @@ def test_potential_features_do_not_read_future_convection() -> None:
     assert np.array_equal(changed_valid[:4], original_valid[:4])
 
 
-def test_potential_features_invalidate_windows_with_missing_history() -> None:
+def test_potential_features_invalidate_only_the_missing_current_day() -> None:
     base = _walk_forward_data(6)
     strength = np.full((6, 2, 4), 0.5, dtype=np.float64)
     valid = np.zeros((6, 2, 4), dtype=np.bool_)
@@ -60,5 +61,6 @@ def test_potential_features_invalidate_windows_with_missing_history() -> None:
 
     _, values, feature_valid = convection_potential_features(data, branch=0)
 
-    assert feature_valid.tolist() == [False, False, False, False, False, True]
-    assert np.isnan(values[2:5]).all()
+    assert feature_valid.tolist() == [True, True, False, True, True, True]
+    assert np.isnan(values[2, 0])
+    assert np.isfinite(values[[0, 1, 3, 4, 5], 0]).all()

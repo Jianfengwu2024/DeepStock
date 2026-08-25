@@ -14,7 +14,7 @@ def test_convection_report_explains_effective_potential_in_plain_chinese(tmp_pat
                 "metrics": {"net_total_return": 0.02, "maximum_drawdown": 0.03},
             },
             {
-                "model_name": "PathEfficiencyFK-60D-ConvectionPotential",
+                "model_name": "PathEfficiencyFK-60D-OneDayPotential",
                 "metrics": {"net_total_return": 0.03, "maximum_drawdown": 0.02},
             },
         ],
@@ -29,13 +29,15 @@ def test_convection_report_explains_effective_potential_in_plain_chinese(tmp_pat
 
     report = path.read_text(encoding="utf-8")
     assert "反向流量集中度" in report
-    assert "股票 × 分钟" in report
-    assert "C1" in report and "C2" in report and "C3" in report
+    assert "一日反向流量集中度 C1" in report
+    assert "C1" in report
+    assert "C2" not in report and "C3" not in report
+    assert "β0 + β1·C1标准化值" in report
     assert "有效势" in report
     assert "趋势存活率" in report
     assert "连续 2 日减半" not in report
     assert "门控" not in report
-    assert "PathEfficiencyFK-60D-ConvectionPotential" in report
+    assert "PathEfficiencyFK-60D-OneDayPotential" in report
     assert "12" in report
 
 
