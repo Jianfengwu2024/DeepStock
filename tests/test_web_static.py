@@ -15,6 +15,13 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         for field in (
+            "boundary_drift_half_life_sessions",
+            "boundary_minimum_direction_probability",
+            "boundary_minimum_signal_to_noise",
+            "boundary_minimum_survival_probability",
+        ):
+            self.assertIn(f'name="{field}"', html)
+        for field in (
             "boundary_branch_count",
             "boundary_viscosity_window",
             "boundary_min_raw_bullish_probability",
@@ -37,6 +44,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("两支流 FK", html)
         for artifact in (
             "boundary-policy-evaluation.json",
+            "boundary-policy-ablation.json",
             "feynman-kac-predictions.json",
         ):
             self.assertIn(artifact, script)
@@ -44,8 +52,11 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "branches",
             "state_probabilities",
             "expected_drift",
-            "effective_drift",
             "expected_effective_potential",
+            "bullish_drift_probability",
+            "drift_signal_to_noise",
+            "survival_confidence",
+            "legacy_attenuated_drift",
             "selected_symbols",
             "held_branches",
         ):

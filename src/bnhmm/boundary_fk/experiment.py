@@ -48,6 +48,10 @@ def run_boundary_flow_experiment(args: Any) -> None:
             fk_paths=args.fk_paths,
             seed=args.seed,
             neutral_sigma=args.neutral_sigma,
+            drift_half_life_sessions=args.drift_half_life_sessions,
+            minimum_direction_probability=args.minimum_direction_probability,
+            minimum_signal_to_noise=args.minimum_signal_to_noise,
+            minimum_survival_probability=args.minimum_survival_probability,
             transaction_cost_bps=args.transaction_cost_bps,
         )
     ).run(data, output)

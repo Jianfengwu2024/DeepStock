@@ -14,7 +14,11 @@ def write_json(path: Path, payload: Any) -> None:
     )
 
 
-def write_ablation_report(path: Path, stages: list[dict[str, Any]]) -> None:
+def write_ablation_report(
+    path: Path,
+    stages: list[dict[str, Any]],
+    policy_ablations: dict[str, dict[str, Any]] | None = None,
+) -> None:
     lines = [
         "# 两支流 FK 样本外报告",
         "",
@@ -41,6 +45,35 @@ def write_ablation_report(path: Path, stages: list[dict[str, Any]]) -> None:
                 drawdown=_percent(metrics.get("maximum_drawdown")),
             )
         )
+    if policy_ablations:
+        labels = {
+            "posterior_signal": "近期后验信号",
+            "legacy_attenuated": "旧衰减漂移",
+        }
+        lines.extend(
+            (
+                "",
+                "## 信号消融",
+                "",
+                "两种方法使用同一组预测、月份和交易成本。收益平区间只用于评估，不控制近期后验信号的交易方向。",
+                "",
+                "| 方法 | 空 / 平 / 多 | Balanced Accuracy | Macro F1 | 开仓率 | 净收益 | 最大回撤 |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            )
+        )
+        for name, metrics in policy_ablations.items():
+            counts = metrics.get("direction_counts") or (0, 0, 0)
+            lines.append(
+                "| {name} | {counts} | {balanced} | {macro_f1} | {open_rate} | {net_return} | {drawdown} |".format(
+                    name=labels.get(name, name),
+                    counts=" / ".join(str(int(value)) for value in counts),
+                    balanced=_percent(metrics.get("balanced_accuracy")),
+                    macro_f1=_percent(metrics.get("macro_f1")),
+                    open_rate=_percent(metrics.get("open_rate")),
+                    net_return=_percent(metrics.get("net_total_return")),
+                    drawdown=_percent(metrics.get("maximum_drawdown")),
+                )
+            )
     lines.extend(
         (
             "",

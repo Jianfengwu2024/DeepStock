@@ -39,6 +39,8 @@ const numberFields = new Set([
   "regime_learning_rate", "regime_kl_weight", "regime_state_loss_weight",
   "regime_mc_samples",
   "topology_lookback_sessions", "boundary_fk_paths",
+  "boundary_drift_half_life_sessions", "boundary_minimum_direction_probability",
+  "boundary_minimum_signal_to_noise", "boundary_minimum_survival_probability",
 ]);
 
 const strategyParameterFields = {
@@ -88,7 +90,9 @@ const strategyParameterFields = {
   ],
   "boundary-flow-fk": [
     "minimum_train_sessions", "max_folds", "topology_lookback_sessions",
-    "regime_neutral_sigma", "boundary_fk_paths", "transaction_cost_bps", "seed",
+    "regime_neutral_sigma", "boundary_fk_paths", "boundary_drift_half_life_sessions",
+    "boundary_minimum_direction_probability", "boundary_minimum_signal_to_noise",
+    "boundary_minimum_survival_probability", "transaction_cost_bps", "seed",
   ],
 };
 
@@ -837,9 +841,11 @@ function renderBoundaryFlowResult(job) {
   const status = document.querySelector("#boundary-flow-result-status");
   const evaluationUrl = job.artifacts?.["boundary-policy-evaluation.json"];
   const predictionsUrl = job.artifacts?.["feynman-kac-predictions.json"];
+  const ablationUrl = job.artifacts?.["boundary-policy-ablation.json"];
   const downloads = {
     "boundary-ablation-report.md": "中文报告",
     "boundary-policy-evaluation.json": "策略评估",
+    "boundary-policy-ablation.json": "新旧信号消融",
     "feynman-kac-predictions.json": "样本外预测",
     "boundary-model-posterior.json": "模型后验",
     "boundary-residual-analysis.json": "残差分析",
@@ -858,7 +864,7 @@ function renderBoundaryFlowResult(job) {
     return;
   }
   if (cached?.stages && cached?.predictions) {
-    paintBoundaryFlowResult(job, cached.stages, cached.predictions);
+    paintBoundaryFlowResult(job, cached.stages, cached.predictions, cached.ablation || {});
     return;
   }
   if (!evaluationUrl || !predictionsUrl) {
@@ -866,6 +872,7 @@ function renderBoundaryFlowResult(job) {
       ? "运行失败，请查看日志"
       : ["queued", "running"].includes(job.status) ? "两支流样本外计算中" : "暂无可读取的结果制品";
     document.querySelector("#boundary-stage-table").replaceChildren();
+    document.querySelector("#boundary-ablation-table").replaceChildren();
     document.querySelector("#boundary-probabilities").replaceChildren();
     document.querySelector("#boundary-dynamics").replaceChildren();
     document.querySelector("#boundary-gate-reason").textContent = "";
@@ -878,20 +885,25 @@ function renderBoundaryFlowResult(job) {
 
   state.boundaryResultCache.set(job.id, { loading: true });
   status.textContent = "正在读取样本外结果";
-  Promise.all([api(evaluationUrl), api(predictionsUrl)]).then(([stages, predictions]) => {
+  Promise.all([
+    api(evaluationUrl),
+    api(predictionsUrl),
+    ablationUrl ? api(ablationUrl) : Promise.resolve({}),
+  ]).then(([stages, predictions, ablation]) => {
     const payload = {
       stages: Array.isArray(stages) ? stages : [],
       predictions: Array.isArray(predictions) ? predictions : [],
+      ablation: ablation && typeof ablation === "object" ? ablation : {},
     };
     state.boundaryResultCache.set(job.id, payload);
-    if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload.stages, payload.predictions);
+    if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload.stages, payload.predictions, payload.ablation);
   }).catch(exception => {
     state.boundaryResultCache.set(job.id, { error: exception.message });
     if (state.selectedId === job.id) status.textContent = `结果读取失败：${exception.message}`;
   });
 }
 
-function paintBoundaryFlowResult(job, stages, predictions) {
+function paintBoundaryFlowResult(job, stages, predictions, ablation = {}) {
   const statusLabels = { completed: "完成", failed: "失败" };
   document.querySelector("#boundary-stage-table").innerHTML = stages.map(stage => {
     const metrics = stage.metrics || {};
@@ -906,6 +918,21 @@ function paintBoundaryFlowResult(job, stages, predictions) {
       <td>${formatPercent(metrics.average_turnover)}</td>
     </tr>`;
   }).join("");
+
+  const ablationLabels = {
+    posterior_signal: "近期后验信号",
+    legacy_attenuated: "旧衰减漂移",
+  };
+  document.querySelector("#boundary-ablation-table").innerHTML = Object.entries(ablation)
+    .map(([name, metrics]) => `<tr>
+      <td><strong>${escapeHtml(ablationLabels[name] || name)}</strong></td>
+      <td>${(metrics.direction_counts || [0, 0, 0]).map(formatInteger).join(" / ")}</td>
+      <td>${formatPercent(metrics.balanced_accuracy)}</td>
+      <td>${formatPercent(metrics.macro_f1)}</td>
+      <td>${formatPercent(metrics.open_rate)}</td>
+      <td>${formatPercent(metrics.net_total_return)}</td>
+      <td>${formatPercent(metrics.maximum_drawdown)}</td>
+    </tr>`).join("");
 
   const latest = predictions.at(-1);
   document.querySelector("#boundary-flow-result-status").textContent =
@@ -931,7 +958,10 @@ function paintBoundaryFlowResult(job, stages, predictions) {
   const dynamics = branches.flatMap(branch => [
     [`支流 ${branch.branch} 原始漂移`, formatNumber(branch.expected_drift, 6)],
     [`支流 ${branch.branch} 有效势`, formatNumber(branch.expected_effective_potential, 6)],
-    [`支流 ${branch.branch} 有效漂移`, formatNumber(branch.effective_drift, 6)],
+    [`支流 ${branch.branch} 势可信度`, formatPercent(branch.survival_confidence)],
+    [`支流 ${branch.branch} 看多后验`, formatPercent(branch.bullish_drift_probability)],
+    [`支流 ${branch.branch} 漂移信噪比`, formatNumber(branch.drift_signal_to_noise, 3)],
+    [`支流 ${branch.branch} 旧衰减漂移`, formatNumber(branch.legacy_attenuated_drift, 6)],
     [`支流 ${branch.branch} 扩散`, formatNumber(branch.expected_diffusion_variance, 6)],
   ]);
   document.querySelector("#boundary-dynamics").innerHTML = dynamics

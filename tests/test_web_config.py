@@ -32,6 +32,10 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         self.assertEqual(defaults["minimum_train_sessions"], 120)
         self.assertEqual(defaults["regime_neutral_sigma"], 0.35)
         self.assertEqual(defaults["boundary_fk_paths"], 10_000)
+        self.assertEqual(defaults["boundary_drift_half_life_sessions"], 60.0)
+        self.assertEqual(defaults["boundary_minimum_direction_probability"], 0.60)
+        self.assertEqual(defaults["boundary_minimum_signal_to_noise"], 0.10)
+        self.assertEqual(defaults["boundary_minimum_survival_probability"], 0.35)
         self.assertEqual(defaults["device"], "cpu")
         for obsolete in (
             "boundary_branch_count",

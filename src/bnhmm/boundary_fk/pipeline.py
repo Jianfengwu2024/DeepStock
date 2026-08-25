@@ -258,10 +258,10 @@ class BoundaryFlowPipeline:
         write_json(root / "boundary-model-posterior.json", posterior_payloads)
         write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
-        write_json(
-            root / "boundary-policy-ablation.json",
-            {name: asdict(value) for name, value in policy_metrics.items()},
-        )
+        policy_ablation_payload = {
+            name: asdict(value) for name, value in policy_metrics.items()
+        }
+        write_json(root / "boundary-policy-ablation.json", policy_ablation_payload)
         write_json(
             root / "boundary-residual-analysis.json",
             {
@@ -277,7 +277,11 @@ class BoundaryFlowPipeline:
                 "valid": data.states.valid.tolist(),
             },
         )
-        write_ablation_report(root / "boundary-ablation-report.md", stage_payload)
+        write_ablation_report(
+            root / "boundary-ablation-report.md",
+            stage_payload,
+            policy_ablation_payload,
+        )
         return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, (stage,))
 
     def _mature_monthly_folds(
