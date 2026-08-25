@@ -39,6 +39,9 @@ class BoundaryFeynmanKacForecast:
     expected_diffusion_variance: float
     expected_effective_potential: float
     bullish_probability_std: float
+    expected_attenuated_drift: float
+    bullish_drift_probability: float
+    drift_signal_to_noise: float
 
 
 class BoundaryFeynmanKacForecaster:
@@ -119,6 +122,11 @@ class BoundaryFeynmanKacForecaster:
             expected_diffusion_variance=aleatoric,
             expected_effective_potential=float(np.mean(effective_potential)),
             bullish_probability_std=float(np.std(conditional_bullish)),
+            expected_attenuated_drift=float(np.mean(drift * survival)),
+            bullish_drift_probability=float(np.mean(drift > 0.0)),
+            drift_signal_to_noise=float(
+                abs(np.mean(drift)) / np.sqrt(epistemic + aleatoric)
+            ),
         )
 
 
@@ -161,9 +169,9 @@ class BranchFeynmanKacForecaster:
             potential_coefficients @ posterior.potential_design(states, resolved_row),
         )
         survival = np.exp(-potential)
-        effective_drift = drift * survival
+        attenuated_drift = drift * survival
         diffusion = posterior.diffusion_variance
-        returns = effective_drift + np.sqrt(diffusion) * rng.standard_normal(
+        returns = drift + np.sqrt(diffusion) * rng.standard_normal(
             self.config.paths
         )
         classes = (
@@ -174,19 +182,26 @@ class BranchFeynmanKacForecaster:
         probabilities = tuple(float(np.mean(mask)) for mask in classes)
         survival_joint = tuple(float(np.mean(survival * mask)) for mask in classes)
         conditional_bullish = ndtr(
-            (effective_drift - neutral_threshold) / np.sqrt(diffusion)
+            (drift - neutral_threshold) / np.sqrt(diffusion)
         )
+        epistemic = float(np.var(drift))
+        expected_drift = float(np.mean(drift))
 
         return BoundaryFeynmanKacForecast(
             raw_state_probabilities=probabilities,
             survival_joint_probabilities=survival_joint,
             trend_survival_probability=float(np.mean(survival)),
-            expected_return=float(np.mean(effective_drift)),
-            epistemic_return_variance=float(np.var(effective_drift)),
+            expected_return=expected_drift,
+            epistemic_return_variance=epistemic,
             aleatoric_return_variance=float(diffusion),
-            total_return_variance=float(np.var(effective_drift) + diffusion),
-            expected_drift=float(np.mean(drift)),
+            total_return_variance=float(epistemic + diffusion),
+            expected_drift=expected_drift,
             expected_diffusion_variance=float(diffusion),
             expected_effective_potential=float(np.mean(potential)),
             bullish_probability_std=float(np.std(conditional_bullish)),
+            expected_attenuated_drift=float(np.mean(attenuated_drift)),
+            bullish_drift_probability=float(np.mean(drift > 0.0)),
+            drift_signal_to_noise=float(
+                abs(expected_drift) / np.sqrt(epistemic + diffusion)
+            ),
         )

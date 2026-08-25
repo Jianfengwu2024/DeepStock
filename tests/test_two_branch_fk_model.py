@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
+import pytest
 
 from bnhmm.boundary_fk.branch_model import (
     BayesianBranchModel,
@@ -112,7 +113,7 @@ def test_recent_weighted_drift_follows_the_new_market_regime() -> None:
     assert recent_weight.drift_mean[2] < equal_weight.drift_mean[2] - 0.001
 
 
-def test_effective_potential_attenuates_drift_toward_noise() -> None:
+def test_effective_potential_is_confidence_not_a_second_drift_shrinkage() -> None:
     states, labels = _dataset()
     base = BayesianBranchPosterior(
         branch=0,
@@ -141,6 +142,27 @@ def test_effective_potential_attenuates_drift_toward_noise() -> None:
         neutral_threshold=0.002,
     )
 
-    assert low.raw_state_probabilities[2] > high.raw_state_probabilities[2]
-    assert abs(high.expected_return) < abs(low.expected_return)
+    assert high.trend_survival_probability < low.trend_survival_probability
+    assert high.expected_return == pytest.approx(low.expected_return, abs=2e-5)
+    assert abs(high.expected_attenuated_drift) < abs(low.expected_attenuated_drift)
     assert high.expected_effective_potential > low.expected_effective_potential
+
+
+def test_branch_forecast_exposes_posterior_direction_strength() -> None:
+    states, labels = _dataset()
+    posterior = BayesianBranchModel(
+        BayesianBranchModelConfig(minimum_rows=30)
+    ).fit(
+        states,
+        labels,
+        branch=0,
+        training_cutoff=labels.target_time[59],
+    )
+
+    forecast = BranchFeynmanKacForecaster(
+        BoundaryFeynmanKacConfig(paths=5000, seed=19)
+    ).predict(posterior, states, row=40, neutral_threshold=0.002)
+
+    assert 0.0 <= forecast.bullish_drift_probability <= 1.0
+    assert forecast.drift_signal_to_noise >= 0.0
+    assert np.isfinite(forecast.expected_attenuated_drift)
