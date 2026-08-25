@@ -10,7 +10,8 @@ import numpy as np
 from .feynman_kac import BoundaryFeynmanKacForecast
 
 
-BRANCH_TARGET_EXPOSURE = {"bull": 0.5, "flat": 0.25, "bear": 0.0}
+FULL_BRANCH_EXPOSURE = 0.5
+HALF_BRANCH_EXPOSURE = 0.25
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,20 @@ class BoundaryPolicyConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BranchPositionState:
+    exposure: float = 0.0
+    consecutive_flat_signals: int = 0
+
+    def __post_init__(self) -> None:
+        if self.exposure not in (0.0, HALF_BRANCH_EXPOSURE, FULL_BRANCH_EXPOSURE):
+            raise ValueError("branch exposure must be 0%, 25%, or 50%")
+        if self.consecutive_flat_signals not in (0, 1):
+            raise ValueError("flat signal count must be 0 or 1")
+        if self.exposure == 0.0 and self.consecutive_flat_signals:
+            raise ValueError("an empty branch cannot retain a flat signal count")
+
+
+@dataclass(frozen=True, slots=True)
 class BoundaryPolicyDecision:
     open_position: bool
     gate_reason: str
@@ -41,6 +56,10 @@ class BoundaryPolicyDecision:
     branch_directions: tuple[str, str] = ("flat", "flat")
     held_branches: tuple[bool, bool] = (False, False)
     branch_target_exposures: tuple[float, float] = (0.0, 0.0)
+    branch_position_states: tuple[BranchPositionState, BranchPositionState] = (
+        BranchPositionState(),
+        BranchPositionState(),
+    )
 
 
 class BoundaryPolicy:
@@ -53,6 +72,9 @@ class BoundaryPolicy:
         *,
         branches: tuple[tuple[str, ...], tuple[str, ...]],
         neutral_thresholds: tuple[float, float],
+        previous_branch_states: tuple[
+            BranchPositionState, BranchPositionState
+        ] = (BranchPositionState(), BranchPositionState()),
     ) -> BoundaryPolicyDecision:
         if (
             len(forecasts) != 2
@@ -64,7 +86,13 @@ class BoundaryPolicy:
             self._direction(item, threshold)
             for item, threshold in zip(forecasts, neutral_thresholds, strict=True)
         )
-        exposures = tuple(BRANCH_TARGET_EXPOSURE[direction] for direction in directions)
+        states = tuple(
+            self._next_position_state(direction, previous)
+            for direction, previous in zip(
+                directions, previous_branch_states, strict=True
+            )
+        )
+        exposures = tuple(state.exposure for state in states)
         selected: list[str] = []
         target_weights: list[float] = []
         for symbols, exposure in zip(branches, exposures, strict=True):
@@ -88,7 +116,23 @@ class BoundaryPolicy:
             branch_directions=(directions[0], directions[1]),
             held_branches=(exposures[0] > 0.0, exposures[1] > 0.0),
             branch_target_exposures=(exposures[0], exposures[1]),
+            branch_position_states=(states[0], states[1]),
         )
+
+    @staticmethod
+    def _next_position_state(
+        direction: str, previous: BranchPositionState
+    ) -> BranchPositionState:
+        if direction == "bull":
+            return BranchPositionState(exposure=FULL_BRANCH_EXPOSURE)
+        if direction == "bear" or previous.exposure == 0.0:
+            return BranchPositionState()
+        if previous.consecutive_flat_signals == 0:
+            return BranchPositionState(
+                exposure=HALF_BRANCH_EXPOSURE,
+                consecutive_flat_signals=1,
+            )
+        return BranchPositionState()
 
     def _direction(
         self,

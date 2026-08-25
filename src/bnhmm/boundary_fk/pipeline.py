@@ -15,7 +15,7 @@ from .evaluation import (
     evaluate_two_branch_forecasts,
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
-from .policy import BoundaryPolicy, BoundaryPolicyConfig
+from .policy import BoundaryPolicy, BoundaryPolicyConfig, BranchPositionState
 from .reporting import write_ablation_report, write_json
 from .types import MonthlyBranchMembership, TwoBranchDataset
 
@@ -104,6 +104,7 @@ class BoundaryFlowPipeline:
         posterior_payloads: list[dict[str, object]] = []
         fit_rows: list[int] = []
         previous_weights: dict[str, float] = {}
+        previous_branch_states = (BranchPositionState(), BranchPositionState())
         policy = BoundaryPolicy(
             BoundaryPolicyConfig(
                 minimum_direction_probability=self.config.minimum_direction_probability,
@@ -184,6 +185,7 @@ class BoundaryFlowPipeline:
                     (forecasts[0], forecasts[1]),
                     branches=membership.branches,
                     neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
+                    previous_branch_states=previous_branch_states,
                 )
                 current_weights = dict(
                     zip(
@@ -215,6 +217,7 @@ class BoundaryFlowPipeline:
                 )
                 observations.append(observation)
                 previous_weights = current_weights
+                previous_branch_states = decision.branch_position_states
                 prediction_payloads.append(
                     self._prediction_payload(observation, fold_index)
                 )
@@ -360,6 +363,10 @@ class BoundaryFlowPipeline:
             "branch_target_exposures": list(
                 observation.decision.branch_target_exposures
             ),
+            "branch_flat_signal_counts": [
+                item.consecutive_flat_signals
+                for item in observation.decision.branch_position_states
+            ],
             "selected_symbols": list(observation.decision.selected_symbols),
             "target_weights": list(observation.decision.target_weights),
             "gross_strategy_return": observation.gross_strategy_return,

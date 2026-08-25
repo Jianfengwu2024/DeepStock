@@ -79,6 +79,7 @@ def test_pipeline_runs_one_two_branch_fk_stage_and_writes_causal_artifacts(tmp_p
         "model_version",
         "selected_symbols",
         "branch_target_exposures",
+        "branch_flat_signal_counts",
         "gross_strategy_return",
     }.issubset(predictions[0])
     assert not (tmp_path / "boundary-policy-ablation.json").exists()
@@ -105,6 +106,9 @@ def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) ->
             minimum_train_sessions=60,
             max_folds=1,
             fk_paths=1000,
+            minimum_direction_probability=0.5,
+            minimum_signal_to_noise=0.0,
+            minimum_survival_probability=0.0,
         )
     ).run(data, tmp_path)
     predictions = json.loads(

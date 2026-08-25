@@ -976,10 +976,11 @@ function paintBoundaryFlowResult(job, stages, predictions) {
     .join("");
 
   const branchTargetExposures = latest.branch_target_exposures || [0, 0];
+  const branchFlatSignalCounts = latest.branch_flat_signal_counts || [0, 0];
   const totalExposure = branchTargetExposures.reduce((total, value) => total + value, 0);
   const holdings = latest.selected_symbols?.length
-    ? `目标仓位 ${formatPercent(totalExposure)} · 支流 ${branchTargetExposures.map(formatPercent).join(" / ")} · ${latest.selected_symbols.join("、")}`
-    : "当前空仓";
+    ? `目标仓位 ${formatPercent(totalExposure)} · 支流 ${branchTargetExposures.map(formatPercent).join(" / ")} · 连续看平 ${branchFlatSignalCounts.join(" / ")} · ${latest.selected_symbols.join("、")}`
+    : `当前空仓 · 连续看平 ${branchFlatSignalCounts.join(" / ")}`;
   const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
   document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span>`;
 }

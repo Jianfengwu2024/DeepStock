@@ -5,7 +5,11 @@ from dataclasses import replace
 import pytest
 
 from bnhmm.boundary_fk.feynman_kac import BoundaryFeynmanKacForecast
-from bnhmm.boundary_fk.policy import BoundaryPolicy, BoundaryPolicyConfig
+from bnhmm.boundary_fk.policy import (
+    BoundaryPolicy,
+    BoundaryPolicyConfig,
+    BranchPositionState,
+)
 
 
 def _forecast(direction: str) -> BoundaryFeynmanKacForecast:
@@ -55,6 +59,10 @@ def test_branch_directions_map_to_absolute_capital_exposure(
         (_forecast(directions[0]), _forecast(directions[1])),
         branches=(("A", "B"), ("C", "D")),
         neutral_thresholds=(0.002, 0.002),
+        previous_branch_states=(
+            BranchPositionState(exposure=0.5),
+            BranchPositionState(exposure=0.5),
+        ),
     )
 
     assert decision.branch_target_exposures == pytest.approx(branch_exposure)
@@ -66,25 +74,87 @@ def test_bull_and_flat_allocate_each_branch_budget_across_its_members() -> None:
         (_forecast("bull"), _forecast("flat")),
         branches=(("A", "B"), ("C", "D")),
         neutral_thresholds=(0.002, 0.002),
+        previous_branch_states=(
+            BranchPositionState(exposure=0.5),
+            BranchPositionState(exposure=0.5),
+        ),
     )
 
     assert decision.selected_symbols == ("A", "B", "C", "D")
     assert decision.target_weights == pytest.approx((0.25, 0.25, 0.125, 0.125))
 
 
-def test_repeated_flat_signal_stays_at_fixed_half_position() -> None:
-    decisions = [
-        BoundaryPolicy().decide(
-            (_forecast("flat"), _forecast("flat")),
-            branches=(("A", "B"), ("C", "D")),
-            neutral_thresholds=(0.002, 0.002),
-        )
-        for _ in range(2)
-    ]
+def test_flat_signal_only_reduces_an_existing_long_position() -> None:
+    decision = BoundaryPolicy().decide(
+        (_forecast("flat"), _forecast("flat")),
+        branches=(("A", "B"), ("C", "D")),
+        neutral_thresholds=(0.002, 0.002),
+    )
 
-    assert decisions[0].branch_target_exposures == (0.25, 0.25)
-    assert decisions[1].branch_target_exposures == (0.25, 0.25)
-    assert sum(decisions[1].target_weights) == pytest.approx(0.5)
+    assert decision.branch_target_exposures == (0.0, 0.0)
+    assert decision.branch_position_states == (
+        BranchPositionState(),
+        BranchPositionState(),
+    )
+
+
+def test_second_consecutive_flat_signal_exits_each_branch() -> None:
+    policy = BoundaryPolicy()
+    bullish = policy.decide(
+        (_forecast("bull"), _forecast("bull")),
+        branches=(("A", "B"), ("C", "D")),
+        neutral_thresholds=(0.002, 0.002),
+    )
+    first_flat = policy.decide(
+        (_forecast("flat"), _forecast("flat")),
+        branches=(("A", "B"), ("C", "D")),
+        neutral_thresholds=(0.002, 0.002),
+        previous_branch_states=bullish.branch_position_states,
+    )
+    second_flat = policy.decide(
+        (_forecast("flat"), _forecast("flat")),
+        branches=(("A", "B"), ("C", "D")),
+        neutral_thresholds=(0.002, 0.002),
+        previous_branch_states=first_flat.branch_position_states,
+    )
+
+    assert first_flat.branch_target_exposures == (0.25, 0.25)
+    assert second_flat.branch_target_exposures == (0.0, 0.0)
+    assert not second_flat.open_position
+
+
+def test_bull_resets_flat_count_and_bear_exits_immediately() -> None:
+    policy = BoundaryPolicy()
+    prior = (
+        BranchPositionState(exposure=0.25, consecutive_flat_signals=1),
+        BranchPositionState(exposure=0.25, consecutive_flat_signals=1),
+    )
+    decision = policy.decide(
+        (_forecast("bull"), _forecast("bear")),
+        branches=(("A", "B"), ("C", "D")),
+        neutral_thresholds=(0.002, 0.002),
+        previous_branch_states=prior,
+    )
+
+    assert decision.branch_target_exposures == (0.5, 0.0)
+    assert decision.branch_position_states == (
+        BranchPositionState(exposure=0.5, consecutive_flat_signals=0),
+        BranchPositionState(),
+    )
+
+
+def test_two_branch_exit_memory_is_independent() -> None:
+    decision = BoundaryPolicy().decide(
+        (_forecast("flat"), _forecast("flat")),
+        branches=(("A", "B"), ("C", "D")),
+        neutral_thresholds=(0.002, 0.002),
+        previous_branch_states=(
+            BranchPositionState(exposure=0.5),
+            BranchPositionState(exposure=0.25, consecutive_flat_signals=1),
+        ),
+    )
+
+    assert decision.branch_target_exposures == (0.25, 0.0)
 
 
 def test_diffusion_probability_argmax_cannot_force_a_weak_drift_direction() -> None:
@@ -99,6 +169,10 @@ def test_diffusion_probability_argmax_cannot_force_a_weak_drift_direction() -> N
         (noisy, noisy),
         branches=(("A", "B"), ("C", "D")),
         neutral_thresholds=(0.002, 0.002),
+        previous_branch_states=(
+            BranchPositionState(exposure=0.5),
+            BranchPositionState(exposure=0.5),
+        ),
     )
 
     assert decision.branch_directions == ("flat", "flat")

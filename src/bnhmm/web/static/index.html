@@ -134,7 +134,7 @@
             <div class="fixed-spec"><span>支流</span><strong>60日同步聚类，每月固定两组</strong></div>
             <div class="fixed-spec"><span>后验</span><strong>每组独立估计漂移与有效势</strong></div>
             <div class="fixed-spec"><span>漂移输入</span><strong>纯路径效率</strong></div>
-            <div class="fixed-spec"><span>持仓</span><strong>每支流多 50% / 平 25% / 空 0%</strong></div>
+            <div class="fixed-spec"><span>持仓</span><strong>多 50%；首次平 25%；连续第二次平或空则清仓</strong></div>
           </div>
           <div class="two-columns">
             <label>支流历史（日）<input name="topology_lookback_sessions" type="number" value="60" readonly></label>
@@ -305,7 +305,7 @@
             <label class="non-sector-flow-only non-boundary-flow-only">认知不确定性惩罚<input name="uncertainty_aversion" type="number" min="0" step="0.1"></label>
             <label class="non-boundary-flow-only">交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
           </div>
-          <div class="device-note non-sector-flow-only">弱多半仓、强多满仓；弱空或强空平仓，策略不做空。</div>
+          <div class="device-note non-sector-flow-only non-boundary-flow-only">弱多半仓、强多满仓；弱空或强空平仓，策略不做空。</div>
         </details>
 
         <div class="form-actions">
