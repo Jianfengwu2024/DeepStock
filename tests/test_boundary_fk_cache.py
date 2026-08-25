@@ -54,7 +54,7 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
     cache = BoundaryDataCache(tmp_path / "cache")
     key = _key(tmp_path)
     base = _walk_forward_data(180)
-    shape = (len(base.states.sessions), 2)
+    shape = (len(base.states.sessions), 2, 4)
     original = replace(
         base,
         convection_strength=np.full(shape, 0.25),
@@ -71,12 +71,13 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
     np.testing.assert_array_equal(
         restored.convection_observations, original.convection_observations
     )
+    assert restored.convection_lookbacks == (1, 2, 3, 5)
 
 
 def test_boundary_cache_uses_reverse_flow_concentration_version() -> None:
     assert (
         CACHE_CONSTRUCTION_VERSION
-        == "path-efficiency-two-branch-v3-reverse-flow-concentration"
+        == "path-efficiency-two-branch-v4-short-convection-windows"
     )
 
 

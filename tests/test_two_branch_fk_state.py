@@ -69,6 +69,9 @@ def test_builder_emits_two_branch_feature_tensor_and_frozen_memberships() -> Non
     assert result.states.valid.shape == (26, 2)
     assert result.memberships[0].branches == (("A", "B"), ("C", "D"))
     assert result.states.valid[-1].all()
+    assert result.convection_lookbacks == (1, 2, 3, 5)
+    assert result.convection_strength.shape == (26, 2, 4)
+    assert result.convection_valid.shape == (26, 2, 4)
 
 
 def test_builder_emits_signed_path_efficiency_only() -> None:
@@ -125,14 +128,44 @@ def test_convection_strength_is_joint_reverse_flow_concentration() -> None:
         replace(panel, raw_velocity=dispersed_raw), topologies
     )
 
-    assert concentrated.convection_valid[-1, 0]
-    assert dispersed.convection_valid[-1, 0]
-    assert concentrated.convection_strength[-1, 0] == pytest.approx(1.0)
-    assert dispersed.convection_strength[-1, 0] == pytest.approx(0.1)
-    assert concentrated.convection_strength[-1, 0] > dispersed.convection_strength[-1, 0]
-    assert concentrated.convection_total_flow[-1, 0] == pytest.approx(0.02)
-    assert dispersed.convection_total_flow[-1, 0] == pytest.approx(0.02)
-    assert concentrated.convection_observations[-1, 0] == 6
+    assert concentrated.convection_valid[-1, 0, 0]
+    assert dispersed.convection_valid[-1, 0, 0]
+    assert concentrated.convection_strength[-1, 0, 0] == pytest.approx(1.0)
+    assert dispersed.convection_strength[-1, 0, 0] == pytest.approx(0.1)
+    assert (
+        concentrated.convection_strength[-1, 0, 0]
+        > dispersed.convection_strength[-1, 0, 0]
+    )
+    assert concentrated.convection_total_flow[-1, 0, 0] == pytest.approx(0.02)
+    assert dispersed.convection_total_flow[-1, 0, 0] == pytest.approx(0.02)
+    assert concentrated.convection_observations[-1, 0, 0] == 6
+
+
+def test_convection_windows_pool_only_trailing_completed_sessions() -> None:
+    panel, topologies = _inputs()
+    changed_raw = panel.raw_velocity.copy()
+    changed_raw[-6:-3, :2] = np.asarray(
+        (
+            (0.04, 0.02),
+            (-0.005, -0.005),
+            (-0.005, -0.005),
+        )
+    )
+    changed_raw[-3:, :2] = np.asarray(
+        (
+            (0.04, 0.02),
+            (-0.02, 0.0),
+            (0.0, 0.0),
+        )
+    )
+
+    result = TwoBranchDailyStateBuilder(minimum_valid_minutes=3).build(
+        replace(panel, raw_velocity=changed_raw), topologies
+    )
+
+    assert result.convection_strength[-1, 0, 0] == pytest.approx(1.0)
+    assert result.convection_strength[-1, 0, 1] == pytest.approx(0.25)
+    assert result.convection_observations[-1, 0].tolist() == [6, 12, 18, 30]
 
 
 def test_convection_is_invalid_without_reverse_flow() -> None:
@@ -140,9 +173,9 @@ def test_convection_is_invalid_without_reverse_flow() -> None:
 
     result = TwoBranchDailyStateBuilder(minimum_valid_minutes=3).build(panel, topologies)
 
-    assert not result.convection_valid[-1, 0]
-    assert np.isnan(result.convection_strength[-1, 0])
-    assert result.convection_total_flow[-1, 0] == 0.0
+    assert not result.convection_valid[-1, 0].any()
+    assert np.isnan(result.convection_strength[-1, 0]).all()
+    assert np.all(result.convection_total_flow[-1, 0] == 0.0)
 
 
 def test_convection_is_invalid_when_the_branch_has_no_net_direction() -> None:
@@ -160,8 +193,8 @@ def test_convection_is_invalid_when_the_branch_has_no_net_direction() -> None:
         replace(panel, raw_velocity=changed_raw), topologies
     )
 
-    assert not result.convection_valid[-1, 0]
-    assert np.isnan(result.convection_strength[-1, 0])
+    assert not result.convection_valid[-1, 0, 0]
+    assert np.isnan(result.convection_strength[-1, 0, 0])
 
 
 def test_labels_and_member_returns_use_only_the_next_completed_session() -> None:

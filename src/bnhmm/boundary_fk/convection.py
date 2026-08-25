@@ -24,6 +24,7 @@ class ConvectionGate:
         tuple[float, float, float] | None,
     ]
     training_rows: tuple[int, int]
+    lookback_sessions: int = 3
 
     @classmethod
     def fit(
@@ -32,16 +33,25 @@ class ConvectionGate:
         *,
         training_cutoff: np.datetime64,
         minimum_rows: int = 30,
+        lookback_sessions: int = 3,
     ) -> "ConvectionGate":
         if minimum_rows < 1:
             raise ValueError("minimum convection rows must be positive")
         cutoff = np.datetime64(training_cutoff, "ns")
+        try:
+            window_index = data.convection_lookbacks.index(lookback_sessions)
+        except ValueError as exc:
+            raise ValueError(
+                f"convection lookback must be one of {data.convection_lookbacks}"
+            ) from exc
         matured = data.labels.valid & (data.labels.target_time[:, None] <= cutoff)
         thresholds: list[tuple[float, float, float] | None] = []
         row_counts: list[int] = []
         for branch in range(2):
-            selected = data.convection_valid[:, branch] & matured[:, branch]
-            values = data.convection_strength[selected, branch]
+            selected = (
+                data.convection_valid[:, branch, window_index] & matured[:, branch]
+            )
+            values = data.convection_strength[selected, branch, window_index]
             row_counts.append(int(len(values)))
             if len(values) < minimum_rows:
                 thresholds.append(None)
@@ -51,6 +61,7 @@ class ConvectionGate:
         return cls(
             thresholds=(thresholds[0], thresholds[1]),
             training_rows=(row_counts[0], row_counts[1]),
+            lookback_sessions=lookback_sessions,
         )
 
     def decide(
@@ -66,10 +77,21 @@ class ConvectionGate:
         if resolved_row < 0 or resolved_row >= len(data.states.sessions):
             raise IndexError("convection row is out of range")
         threshold = self.thresholds[branch]
-        if threshold is None or not data.convection_valid[resolved_row, branch]:
+        try:
+            window_index = data.convection_lookbacks.index(self.lookback_sessions)
+        except ValueError as exc:
+            raise ValueError(
+                f"convection lookback must be one of {data.convection_lookbacks}"
+            ) from exc
+        if (
+            threshold is None
+            or not data.convection_valid[resolved_row, branch, window_index]
+        ):
             return ConvectionGateDecision(None, "unavailable", 0.5, "no_causal_calibration")
 
-        strength = float(data.convection_strength[resolved_row, branch])
+        strength = float(
+            data.convection_strength[resolved_row, branch, window_index]
+        )
         q50, q75, q90 = threshold
         if strength <= q50:
             return ConvectionGateDecision(strength, "low", 0.5, "below_median")

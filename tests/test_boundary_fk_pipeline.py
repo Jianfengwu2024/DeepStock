@@ -49,7 +49,7 @@ def _walk_forward_data(rows: int = 180) -> TwoBranchDataset:
 
 def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_path) -> None:
     base = _walk_forward_data()
-    shape = (len(base.states.sessions), 2)
+    shape = (len(base.states.sessions), 2, 4)
     data = replace(
         base,
         convection_strength=np.full(shape, 0.2),
@@ -60,6 +60,7 @@ def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_pa
             minimum_train_sessions=60,
             max_folds=1,
             fk_paths=1000,
+            convection_lookback_sessions=3,
         )
     ).run(data, tmp_path)
 
@@ -119,8 +120,10 @@ def test_pipeline_runs_baseline_and_convection_gate_from_shared_forecasts(tmp_pa
     )
     assert set(diagnostics["bands"]) == {"low", "elevated", "high", "extreme"}
     assert "path_efficiency_rank_correlation" in diagnostics
+    assert diagnostics["convection_lookback_sessions"] == 3
     assert not (tmp_path / "boundary-ablation-report.md").exists()
     assert 0.0 <= result.stages[0].metrics.average_exposure <= 1.0
+    assert all(item["convection_lookback_sessions"] == 3 for item in predictions)
 
     grouped: dict[str, list[dict[str, object]]] = {
         model: [item for item in predictions if item["model_version"] == model]

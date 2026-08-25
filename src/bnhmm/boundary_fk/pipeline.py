@@ -21,6 +21,7 @@ from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
 from .policy import BoundaryPolicy, BoundaryPolicyConfig, BranchPositionState
 from .reporting import write_baseline_report, write_convection_report, write_json
 from .types import MonthlyBranchMembership, TwoBranchDataset
+from .types import CONVECTION_LOOKBACKS
 
 
 BOUNDARY_MODEL_NAMES = (
@@ -44,6 +45,7 @@ class BoundaryFlowPipelineConfig:
     minimum_direction_probability: float = 0.60
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
+    convection_lookback_sessions: int = 3
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -56,6 +58,10 @@ class BoundaryFlowPipelineConfig:
             raise ValueError("PathEfficiencyFK requires at least 1000 FK paths")
         if self.transaction_cost_bps < 0.0:
             raise ValueError("transaction cost cannot be negative")
+        if self.convection_lookback_sessions not in CONVECTION_LOOKBACKS:
+            raise ValueError(
+                f"convection lookback must be one of {CONVECTION_LOOKBACKS}"
+            )
         BoundaryPolicyConfig(
             minimum_direction_probability=self.minimum_direction_probability,
             minimum_signal_to_noise=self.minimum_signal_to_noise,
@@ -130,6 +136,7 @@ class BoundaryFlowPipeline:
             convection_gate = ConvectionGate.fit(
                 data,
                 training_cutoff=cutoff,
+                lookback_sessions=self.config.convection_lookback_sessions,
             )
             posteriors = []
             for branch in range(2):
@@ -270,6 +277,9 @@ class BoundaryFlowPipeline:
                             fold_index,
                             convection_decisions,
                             convection_applied=gated,
+                            convection_lookback_sessions=(
+                                self.config.convection_lookback_sessions
+                            ),
                         )
                     )
 
@@ -298,6 +308,9 @@ class BoundaryFlowPipeline:
         stage_payload = [self._stage_payload(stage) for stage in stages]
         convection_metrics = evaluate_convection_diagnostics(tuple(convection_records))
         convection_payload = asdict(convection_metrics)
+        convection_payload["convection_lookback_sessions"] = (
+            self.config.convection_lookback_sessions
+        )
         write_json(root / "boundary-model-posterior.json", posterior_payloads)
         write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
@@ -395,6 +408,7 @@ class BoundaryFlowPipeline:
         convection_decisions: tuple[ConvectionGateDecision, ConvectionGateDecision],
         *,
         convection_applied: bool,
+        convection_lookback_sessions: int,
     ) -> dict[str, object]:
         branches = []
         for branch, (forecast, actual, threshold, direction, convection) in enumerate(
@@ -439,6 +453,7 @@ class BoundaryFlowPipeline:
             "target_time": str(observation.target_time),
             "training_cutoff": str(observation.training_cutoff),
             "model_version": observation.model_version,
+            "convection_lookback_sessions": convection_lookback_sessions,
             "fold": fold,
             "branches": branches,
             "held_branches": list(observation.decision.held_branches),

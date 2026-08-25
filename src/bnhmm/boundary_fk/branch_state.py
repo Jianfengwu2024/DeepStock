@@ -8,6 +8,7 @@ import numpy as np
 
 from ..sector_flow.types import MonthlyRiverTopology
 from .types import (
+    CONVECTION_LOOKBACKS,
     MonthlyBranchMembership,
     NormalizedBoundaryPanel,
     TwoBranchDailyStates,
@@ -74,17 +75,21 @@ class TwoBranchDailyStateBuilder:
         branch_returns = np.full((len(sessions), 2), np.nan, dtype=np.float64)
         branch_coherence = np.full_like(branch_returns, np.nan)
         path_efficiency = np.full((len(sessions), 2), np.nan, dtype=np.float64)
-        convection_strength = np.full_like(path_efficiency, np.nan)
-        convection_valid = np.zeros_like(path_efficiency, dtype=np.bool_)
-        convection_total_flow = np.zeros_like(path_efficiency)
-        convection_observations = np.zeros_like(path_efficiency, dtype=np.int64)
+        convection_shape = (len(sessions), 2, len(CONVECTION_LOOKBACKS))
+        convection_strength = np.full(convection_shape, np.nan, dtype=np.float64)
+        convection_valid = np.zeros(convection_shape, dtype=np.bool_)
+        convection_total_flow = np.zeros(convection_shape, dtype=np.float64)
+        convection_observations = np.zeros(convection_shape, dtype=np.int64)
         symbol_index = {symbol: index for index, symbol in enumerate(panel.symbols)}
+        minute_rows_by_session = tuple(
+            np.flatnonzero(minute_sessions == session) for session in sessions
+        )
 
         for row, session in enumerate(sessions):
             membership = membership_by_month.get(session.astype("datetime64[M]"))
             if membership is None:
                 continue
-            minute_rows = np.flatnonzero(minute_sessions == session)
+            minute_rows = minute_rows_by_session[row]
             for branch, symbols in enumerate(membership.branches):
                 columns = np.asarray([symbol_index[symbol] for symbol in symbols])
                 available = daily_valid[row, columns]
@@ -99,12 +104,25 @@ class TwoBranchDailyStateBuilder:
                 path_efficiency[row, branch] = self._intraday_path_efficiency(
                     panel, minute_rows, columns
                 )
-                (
-                    convection_strength[row, branch],
-                    convection_valid[row, branch],
-                    convection_total_flow[row, branch],
-                    convection_observations[row, branch],
-                ) = self._intraday_convection(panel, minute_rows, columns)
+                for window_index, lookback in enumerate(CONVECTION_LOOKBACKS):
+                    if row + 1 < lookback:
+                        continue
+                    trailing_rows = np.concatenate(
+                        minute_rows_by_session[row - lookback + 1 : row + 1]
+                    )
+                    (
+                        convection_strength[row, branch, window_index],
+                        convection_valid[row, branch, window_index],
+                        convection_total_flow[row, branch, window_index],
+                        convection_observations[row, branch, window_index],
+                    ) = self._intraday_convection(
+                        panel,
+                        trailing_rows,
+                        columns,
+                        minimum_valid_minutes=(
+                            self.config.minimum_valid_minutes * lookback
+                        ),
+                    )
 
         history = self.config.history_sessions
         for row in range(history - 1, len(sessions)):
@@ -182,6 +200,7 @@ class TwoBranchDailyStateBuilder:
             symbols=panel.symbols,
             member_next_returns=member_next_returns,
             member_next_valid=member_next_valid,
+            convection_lookbacks=CONVECTION_LOOKBACKS,
             convection_strength=convection_strength,
             convection_valid=convection_valid,
             convection_total_flow=convection_total_flow,
@@ -254,6 +273,8 @@ class TwoBranchDailyStateBuilder:
         panel: NormalizedBoundaryPanel,
         rows: np.ndarray,
         columns: np.ndarray,
+        *,
+        minimum_valid_minutes: int | None = None,
     ) -> tuple[float, bool, float, int]:
         branch_velocity: list[float] = []
         member_velocity: list[np.ndarray] = []
@@ -264,7 +285,12 @@ class TwoBranchDailyStateBuilder:
             values = panel.raw_velocity[row, columns[available]]
             branch_velocity.append(float(np.mean(values)))
             member_velocity.append(values)
-        if len(branch_velocity) < self.config.minimum_valid_minutes:
+        required_minutes = (
+            self.config.minimum_valid_minutes
+            if minimum_valid_minutes is None
+            else minimum_valid_minutes
+        )
+        if len(branch_velocity) < required_minutes:
             return np.nan, False, 0.0, 0
 
         direction_value = float(np.sum(branch_velocity))

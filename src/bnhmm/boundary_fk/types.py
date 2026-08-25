@@ -8,6 +8,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+CONVECTION_LOOKBACKS = (1, 2, 3, 5)
+
+
 @dataclass(frozen=True, slots=True)
 class NormalizedBoundaryPanel:
     symbols: tuple[str, ...]
@@ -289,6 +292,7 @@ class TwoBranchDataset:
     member_next_valid: NDArray[np.bool_]
     evaluation_start: np.datetime64 | None = None
     evaluation_end: np.datetime64 | None = None
+    convection_lookbacks: tuple[int, ...] = CONVECTION_LOOKBACKS
     convection_strength: NDArray[np.float64] | None = None
     convection_valid: NDArray[np.bool_] | None = None
     convection_total_flow: NDArray[np.float64] | None = None
@@ -297,7 +301,11 @@ class TwoBranchDataset:
     def __post_init__(self) -> None:
         rows = len(self.states.sessions)
         expected = (rows, len(self.symbols))
-        branch_shape = (rows, 2)
+        if self.convection_lookbacks != CONVECTION_LOOKBACKS:
+            raise ValueError(
+                f"convection lookbacks must be fixed at {CONVECTION_LOOKBACKS}"
+            )
+        branch_shape = (rows, 2, len(self.convection_lookbacks))
         if self.convection_strength is None:
             object.__setattr__(
                 self,
