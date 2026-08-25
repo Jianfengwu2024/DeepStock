@@ -36,11 +36,13 @@ def test_bull_opens_and_bear_closes_each_branch_independently() -> None:
         (_forecast("bull"), _forecast("flat")),
         branches=(("A", "B"), ("C", "D")),
         held_branches=(False, False),
+        neutral_thresholds=(0.002, 0.002),
     )
     closed = policy.decide(
         (_forecast("bear"), _forecast("bull")),
         branches=(("A", "B"), ("C", "D")),
         held_branches=opened.held_branches,
+        neutral_thresholds=(0.002, 0.002),
     )
 
     assert opened.held_branches == (True, False)
@@ -54,6 +56,7 @@ def test_flat_keeps_existing_position_but_does_not_open_a_new_one() -> None:
         (_forecast("flat"), _forecast("flat")),
         branches=(("A", "B"), ("C", "D")),
         held_branches=(True, False),
+        neutral_thresholds=(0.002, 0.002),
     )
 
     assert decision.branch_directions == ("flat", "flat")
@@ -66,7 +69,26 @@ def test_all_held_symbols_receive_one_equal_portfolio_weight() -> None:
         (_forecast("bull"), _forecast("bull")),
         branches=(("A", "B"), ("C", "D")),
         held_branches=(False, False),
+        neutral_thresholds=(0.002, 0.002),
     )
 
     assert decision.selected_symbols == ("A", "B", "C", "D")
     assert decision.target_weights == pytest.approx((0.25, 0.25, 0.25, 0.25))
+
+
+def test_diffusion_probability_argmax_cannot_force_a_weak_drift_direction() -> None:
+    noisy = replace(
+        _forecast("bull"),
+        raw_state_probabilities=(0.34, 0.26, 0.40),
+        expected_return=0.0005,
+    )
+
+    decision = BoundaryPolicy().decide(
+        (noisy, noisy),
+        branches=(("A", "B"), ("C", "D")),
+        held_branches=(False, False),
+        neutral_thresholds=(0.002, 0.002),
+    )
+
+    assert decision.branch_directions == ("flat", "flat")
+    assert not decision.open_position

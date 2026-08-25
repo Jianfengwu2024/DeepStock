@@ -154,6 +154,7 @@ class BoundaryFlowPipeline:
                     (forecasts[0], forecasts[1]),
                     branches=membership.branches,
                     held_branches=held_branches,
+                    neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
                 )
                 current_weights = dict(
                     zip(decision.selected_symbols, decision.target_weights, strict=True)

@@ -35,10 +35,19 @@ class BoundaryPolicy:
         *,
         branches: tuple[tuple[str, ...], tuple[str, ...]],
         held_branches: tuple[bool, bool],
+        neutral_thresholds: tuple[float, float],
     ) -> BoundaryPolicyDecision:
-        if len(forecasts) != 2 or len(branches) != 2 or len(held_branches) != 2:
+        if (
+            len(forecasts) != 2
+            or len(branches) != 2
+            or len(held_branches) != 2
+            or len(neutral_thresholds) != 2
+        ):
             raise ValueError("two-branch policy requires exactly two branches")
-        directions = tuple(self._direction(item) for item in forecasts)
+        directions = tuple(
+            self._direction(item, threshold)
+            for item, threshold in zip(forecasts, neutral_thresholds, strict=True)
+        )
         next_held: list[bool] = []
         for direction, held in zip(directions, held_branches, strict=True):
             if direction == "bull":
@@ -71,8 +80,13 @@ class BoundaryPolicy:
         )
 
     @staticmethod
-    def _direction(forecast: BoundaryFeynmanKacForecast) -> str:
-        bear, flat, bull = forecast.raw_state_probabilities
-        if flat >= max(bear, bull):
-            return "flat"
-        return "bull" if bull > bear else "bear"
+    def _direction(
+        forecast: BoundaryFeynmanKacForecast, neutral_threshold: float
+    ) -> str:
+        if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
+            raise ValueError("neutral threshold must be finite and non-negative")
+        if forecast.expected_return > neutral_threshold:
+            return "bull"
+        if forecast.expected_return < -neutral_threshold:
+            return "bear"
+        return "flat"

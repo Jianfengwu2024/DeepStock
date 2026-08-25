@@ -181,7 +181,7 @@ class BranchFeynmanKacForecaster:
             raw_state_probabilities=probabilities,
             survival_joint_probabilities=survival_joint,
             trend_survival_probability=float(np.mean(survival)),
-            expected_return=float(np.mean(returns)),
+            expected_return=float(np.mean(effective_drift)),
             epistemic_return_variance=float(np.var(effective_drift)),
             aleatoric_return_variance=float(diffusion),
             total_return_variance=float(np.var(effective_drift) + diffusion),
