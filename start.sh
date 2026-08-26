@@ -4,6 +4,7 @@ set -Eeuo pipefail
 service_name="${BNHMM_SERVICE_NAME:-bnhmm-web.service}"
 host="${BNHMM_WEB_HOST:-127.0.0.1}"
 port="${BNHMM_WEB_PORT:-8765}"
+timeout_seconds="${BNHMM_START_TIMEOUT_SECONDS:-90}"
 health_url="http://${host}:${port}/health"
 
 if ! systemctl --user cat "${service_name}" >/dev/null 2>&1; then
@@ -14,7 +15,7 @@ fi
 
 systemctl --user start "${service_name}"
 
-for _ in $(seq 1 30); do
+for _ in $(seq 1 "${timeout_seconds}"); do
     if curl -fsS "${health_url}" >/dev/null 2>&1; then
         public_host="${BNHMM_PUBLIC_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
         public_host="${public_host:-127.0.0.1}"
@@ -29,6 +30,6 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 
-echo "BNHMM did not become healthy within 30 seconds." >&2
+echo "BNHMM did not become healthy within ${timeout_seconds} seconds." >&2
 journalctl --user -u "${service_name}" -n 30 --no-pager >&2
 exit 1
