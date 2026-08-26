@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from math import ceil
 from pathlib import Path
 
 import numpy as np
@@ -11,9 +12,8 @@ from .branch_model import (
     BayesianBranchModel,
     BayesianBranchModelConfig,
     BayesianBranchPosterior,
-    BayesianConvectionDriftPosterior,
 )
-from .convection import convection_drift_features, convection_potential_features
+from .convection import convection_potential_features
 from .evaluation import (
     BoundaryEvaluationConfig,
     BoundaryEvaluationMetrics,
@@ -28,7 +28,7 @@ from .types import MonthlyBranchMembership, TwoBranchDataset
 
 BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Beta0PlusC1-Baseline",
-    "PathEfficiencyFK-60D-ConvectionDriftCorrection",
+    "PathEfficiencyFK-60D-StrongestThird",
 )
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
@@ -47,6 +47,7 @@ class BoundaryFlowPipelineConfig:
     minimum_direction_probability: float = 0.60
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
+    relative_strength_lookback_sessions: int = 20
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -59,6 +60,8 @@ class BoundaryFlowPipelineConfig:
             raise ValueError("PathEfficiencyFK requires at least 1000 FK paths")
         if self.transaction_cost_bps < 0.0:
             raise ValueError("transaction cost cannot be negative")
+        if not 2 <= self.relative_strength_lookback_sessions <= 252:
+            raise ValueError("relative strength lookback must lie in [2, 252]")
         BoundaryPolicyConfig(
             minimum_direction_probability=self.minimum_direction_probability,
             minimum_signal_to_noise=self.minimum_signal_to_noise,
@@ -104,6 +107,36 @@ class BoundaryFlowPipeline:
     def __init__(self, config: BoundaryFlowPipelineConfig | None = None) -> None:
         self.config = config or BoundaryFlowPipelineConfig()
 
+    def _strongest_third_branches(
+        self,
+        data: TwoBranchDataset,
+        row: int,
+        branches: tuple[tuple[str, ...], tuple[str, ...]],
+    ) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], dict[str, float]]:
+        start = max(0, row - self.config.relative_strength_lookback_sessions)
+        if row - start < 2:
+            raise ValueError("insufficient completed returns for relative strength")
+        symbol_index = {symbol: index for index, symbol in enumerate(data.symbols)}
+        scores: dict[str, float] = {}
+        selected_branches: list[tuple[str, ...]] = []
+        for symbols in branches:
+            columns = np.asarray([symbol_index[symbol] for symbol in symbols])
+            returns = data.member_next_returns[start:row, columns]
+            valid = data.member_next_valid[start:row, columns] & np.isfinite(returns)
+            log_returns = np.where(valid, np.log1p(np.clip(returns, -0.999, None)), np.nan)
+            cumulative = np.nansum(log_returns, axis=0)
+            observations = np.sum(valid, axis=0)
+            minimum_observations = max(2, int(np.ceil((row - start) * 0.8)))
+            cumulative = np.where(observations >= minimum_observations, cumulative, -np.inf)
+            finite = np.isfinite(cumulative)
+            branch_center = float(np.mean(cumulative[finite])) if np.any(finite) else 0.0
+            for symbol, value in zip(symbols, cumulative, strict=True):
+                scores[symbol] = float(value - branch_center) if np.isfinite(value) else -np.inf
+            keep = max(1, ceil(len(symbols) / 3))
+            ranked = sorted(symbols, key=lambda symbol: (-scores[symbol], symbol))
+            selected_branches.append(tuple(ranked[:keep]))
+        return (selected_branches[0], selected_branches[1]), scores
+
     def run(
         self,
         data: TwoBranchDataset,
@@ -138,17 +171,11 @@ class BoundaryFlowPipeline:
         potential_inputs = tuple(
             convection_potential_features(data, branch) for branch in range(2)
         )
-        convection_drift_inputs = tuple(
-            convection_drift_features(data, branch) for branch in range(2)
-        )
-
         for fold_index, test_start, training_rows, test_rows in folds:
             cutoff = test_start - np.timedelta64(1, "ns")
             posteriors: list[BayesianBranchPosterior] = []
-            corrections: list[BayesianConvectionDriftPosterior] = []
             for branch in range(2):
                 _, potential_values, potential_valid = potential_inputs[branch]
-                drift_feature_names, drift_values, drift_valid = convection_drift_inputs[branch]
                 model = BayesianBranchModel(
                     BayesianBranchModelConfig(
                         minimum_rows=self.config.minimum_train_sessions,
@@ -165,37 +192,24 @@ class BoundaryFlowPipeline:
                     branch=branch,
                     training_cutoff=cutoff,
                 )
-                correction = model.fit_convection_drift(
-                    data.states,
-                    data.labels,
-                    convection_features=drift_values,
-                    convection_valid=drift_valid,
-                    branch=branch,
-                    training_cutoff=cutoff,
-                    feature_names=drift_feature_names,
-                )
                 posteriors.append(posterior)
-                corrections.append(correction)
-                fit_rows.extend((posterior.fit_rows, correction.fit_rows))
+                fit_rows.append(posterior.fit_rows)
                 drift_names = posterior.drift_feature_names
                 posterior_payloads.append(
                     {
-                        "model_name": BOUNDARY_MODEL_NAMES[1],
+                        "model_name": BOUNDARY_MODEL_NAMES[0],
                         "policy": PRIMARY_POLICY_NAME,
                         "fold": fold_index,
                         "branch": branch + 1,
                         "training_cutoff": str(cutoff),
                         "drift_feature_names": list(posterior.drift_feature_names),
                         "potential_feature_names": list(posterior.potential_feature_names),
-                        "convection_drift_feature_names": list(correction.feature_names),
                         "drift_mean": posterior.drift_mean.tolist(),
                         "drift_half_life_sessions": self.config.drift_half_life_sessions,
                         "potential_target": "drift_disruption",
                         "diffusion_variance": posterior.diffusion_variance,
                         "potential_mean": posterior.potential_mean.tolist(),
                         "potential_mode": posterior.potential_mode,
-                        "convection_drift_mean": correction.mean.tolist(),
-                        "convection_drift_scale": correction.scale.tolist(),
                     }
                 )
 
@@ -205,7 +219,6 @@ class BoundaryFlowPipeline:
                     membership is None
                     or not data.labels.valid[row].all()
                     or not all(item[2][row] for item in potential_inputs)
-                    or not all(item[2][row] for item in convection_drift_inputs)
                 ):
                     continue
                 thresholds = tuple(
@@ -217,35 +230,33 @@ class BoundaryFlowPipeline:
                     for branch in range(2)
                 )
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
+                strongest_branches, strength_scores = self._strongest_third_branches(
+                    data, int(row), membership.branches
+                )
                 for model_name in BOUNDARY_MODEL_NAMES:
-                    use_correction = model_name == BOUNDARY_MODEL_NAMES[1]
                     forecasts = tuple(
                         BranchFeynmanKacForecaster(
                             BoundaryFeynmanKacConfig(
                                 paths=self.config.fk_paths,
                                 seed=self.config.seed + fold_index * 2 + branch,
                                 use_effective_potential=True,
-                                use_convection_drift_correction=use_correction,
                             )
                         ).predict(
                             posteriors[branch],
                             data.states,
                             int(row),
                             potential_features=potential_inputs[branch][1][row],
-                            convection_drift_posterior=(
-                                corrections[branch] if use_correction else None
-                            ),
-                            convection_drift_features=(
-                                convection_drift_inputs[branch][1][row]
-                                if use_correction else None
-                            ),
                             neutral_threshold=float(thresholds[branch]),
                         )
                         for branch in range(2)
                     )
                     decision = policy.decide(
                         (forecasts[0], forecasts[1]),
-                        branches=membership.branches,
+                        branches=(
+                            strongest_branches
+                            if model_name == BOUNDARY_MODEL_NAMES[1]
+                            else membership.branches
+                        ),
                         neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
                         previous_branch_states=previous_branch_states[model_name],
                     )
@@ -294,7 +305,16 @@ class BoundaryFlowPipeline:
                             fold_index,
                             int(row),
                             potential_inputs,
-                            convection_drift_inputs,
+                            relative_strength_scores=(
+                                strength_scores
+                                if model_name == BOUNDARY_MODEL_NAMES[1]
+                                else None
+                            ),
+                            relative_strength_lookback_sessions=(
+                                self.config.relative_strength_lookback_sessions
+                                if model_name == BOUNDARY_MODEL_NAMES[1]
+                                else None
+                            ),
                             effective_potential_enabled=True,
                         )
                     )
@@ -365,7 +385,10 @@ class BoundaryFlowPipeline:
             convection_payload,
         )
         self._write_ablation_report(
-            root / "boundary-ablation-report.md", stages, potential_diagnostics
+            root / "boundary-ablation-report.md",
+            stages,
+            potential_diagnostics,
+            self.config.relative_strength_lookback_sessions,
         )
         return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, stages)
 
@@ -402,13 +425,14 @@ class BoundaryFlowPipeline:
         path: Path,
         stages: tuple[BoundaryStageResult, ...],
         diagnostics: dict[str, dict[str, float | int]],
+        relative_strength_lookback_sessions: int,
     ) -> None:
         labels = {
             BOUNDARY_MODEL_NAMES[0]: "β0+C1 基线",
-            BOUNDARY_MODEL_NAMES[1]: "β0+C1 + 对流修正漂移",
+            BOUNDARY_MODEL_NAMES[1]: "β0+C1 + 支流内最强 1/3",
         }
         lines = [
-            "# 路径效率 FK 对流修正漂移实验",
+            "# 路径效率 FK 相对强弱选股实验",
             "",
             "两组实验使用相同的 β0+C1 外势、样本外日期、交易成本和涨跌停成交约束。",
             "",
@@ -445,9 +469,9 @@ class BoundaryFlowPipeline:
                 "",
                 "## 判断方法",
                 "",
-                "- 基线只允许外势削弱原漂移，不能改变方向。",
-                "- 对流修正版允许有符号反向流修正漂移，因此可能出现空翻多或平翻多。",
-                "- 只有修正版在样本外同时改善收益或回撤，才说明方向修正有效。",
+                "- 两组使用完全相同的 β0+C1 FK 支流方向与仓位。",
+                f"- 修正版仅交易每支流近 {relative_strength_lookback_sessions} 日相对强度最高的前 1/3 股票。",
+                "- 收益改善但换手显著上升时，需要同时检查交易成本后的结果。",
             ]
         )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -575,11 +599,9 @@ class BoundaryFlowPipeline:
             tuple[tuple[str, ...], np.ndarray, np.ndarray],
             tuple[tuple[str, ...], np.ndarray, np.ndarray],
         ],
-        convection_drift_inputs: tuple[
-            tuple[tuple[str, ...], np.ndarray, np.ndarray],
-            tuple[tuple[str, ...], np.ndarray, np.ndarray],
-        ],
         *,
+        relative_strength_scores: dict[str, float] | None,
+        relative_strength_lookback_sessions: int | None,
         effective_potential_enabled: bool,
     ) -> dict[str, object]:
         branches = []
@@ -593,17 +615,12 @@ class BoundaryFlowPipeline:
             )
         ):
             names, values, _ = potential_inputs[branch]
-            drift_names, drift_values, _ = convection_drift_inputs[branch]
             branches.append(
                 {
                     "branch": branch + 1,
                     "direction": direction,
                     "state_probabilities": list(forecast.raw_state_probabilities),
                     "expected_drift": forecast.expected_drift,
-                    "expected_base_drift": forecast.expected_base_drift,
-                    "convection_drift_correction": (
-                        forecast.expected_convection_drift_correction
-                    ),
                     "effective_drift": forecast.expected_attenuated_drift,
                     "expected_effective_potential": forecast.expected_effective_potential,
                     "survival_confidence": forecast.trend_survival_probability,
@@ -614,13 +631,6 @@ class BoundaryFlowPipeline:
                     "neutral_threshold": threshold,
                     "convection_potential_features": dict(
                         zip(names, (float(item) for item in values[row]), strict=True)
-                    ),
-                    "convection_drift_features": dict(
-                        zip(
-                            drift_names,
-                            (float(item) for item in drift_values[row]),
-                            strict=True,
-                        )
                     ),
                     "effective_potential_enabled": effective_potential_enabled,
                 }
@@ -642,6 +652,14 @@ class BoundaryFlowPipeline:
                 for item in observation.decision.branch_position_states
             ],
             "selected_symbols": list(observation.decision.selected_symbols),
+            "relative_strength_lookback_sessions": (
+                relative_strength_lookback_sessions
+            ),
+            "selected_relative_strength_scores": {
+                symbol: relative_strength_scores[symbol]
+                for symbol in observation.decision.selected_symbols
+                if relative_strength_scores is not None
+            },
             "target_weights": list(observation.decision.target_weights),
             "actual_symbols": list(observation.actual_symbols),
             "actual_weights": list(observation.actual_weights),

@@ -44,6 +44,7 @@ const numberFields = new Set([
   "topology_lookback_sessions", "boundary_fk_paths",
   "boundary_drift_half_life_sessions", "boundary_minimum_direction_probability",
   "boundary_minimum_signal_to_noise", "boundary_minimum_survival_probability",
+  "boundary_relative_strength_lookback_sessions",
 ]);
 
 const strategyParameterFields = {
@@ -96,6 +97,7 @@ const strategyParameterFields = {
     "regime_neutral_sigma", "boundary_fk_paths", "boundary_drift_half_life_sessions",
     "boundary_minimum_direction_probability", "boundary_minimum_signal_to_noise",
     "boundary_minimum_survival_probability", "transaction_cost_bps", "seed",
+    "boundary_relative_strength_lookback_sessions",
   ],
 };
 

@@ -58,6 +58,9 @@ def run_boundary_flow_experiment(args: Any) -> None:
             minimum_direction_probability=args.minimum_direction_probability,
             minimum_signal_to_noise=args.minimum_signal_to_noise,
             minimum_survival_probability=args.minimum_survival_probability,
+            relative_strength_lookback_sessions=(
+                args.relative_strength_lookback_sessions
+            ),
             transaction_cost_bps=args.transaction_cost_bps,
         )
     ).run(data, output)
@@ -68,6 +71,9 @@ def run_boundary_flow_experiment(args: Any) -> None:
         "symbols": len(symbols),
         "data_source": "precomputed",
         "topology_lookback_sessions": args.topology_lookback_sessions,
+        "relative_strength_lookback_sessions": (
+            args.relative_strength_lookback_sessions
+        ),
         "elapsed_seconds": time.perf_counter() - started,
         "model_names": list(result.model_names),
         "stages": [

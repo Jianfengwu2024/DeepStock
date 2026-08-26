@@ -62,6 +62,7 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
         minimum_direction_probability=0.6,
         minimum_signal_to_noise=0.1,
         minimum_survival_probability=0.35,
+        relative_strength_lookback_sessions=20,
         transaction_cost_bps=10.0,
     )
 

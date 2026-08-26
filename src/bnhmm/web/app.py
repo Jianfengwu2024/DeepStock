@@ -228,6 +228,7 @@ def config(request: Request) -> dict[str, Any]:
         "boundary_minimum_direction_probability": 0.60,
         "boundary_minimum_signal_to_noise": 0.10,
         "boundary_minimum_survival_probability": 0.35,
+        "boundary_relative_strength_lookback_sessions": 20,
     })
     return {
         "devices": _devices(),

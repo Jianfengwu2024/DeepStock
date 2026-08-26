@@ -99,8 +99,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.27.1', html)
-        self.assertIn('/static/styles.css?v=0.27.1', html)
+        self.assertIn('/static/app.js?v=0.27.2', html)
+        self.assertIn('/static/styles.css?v=0.27.2', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('id="boundary-data-build"', html)
@@ -114,6 +114,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "boundary_minimum_direction_probability",
             "boundary_minimum_signal_to_noise",
             "boundary_minimum_survival_probability",
+            "boundary_relative_strength_lookback_sessions",
         ):
             self.assertIn(f'name="{field}"', html)
         for field in (

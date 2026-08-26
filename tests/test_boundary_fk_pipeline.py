@@ -72,7 +72,7 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
 
     assert result.model_names == BOUNDARY_MODEL_NAMES == (
         "PathEfficiencyFK-60D-Beta0PlusC1-Baseline",
-        "PathEfficiencyFK-60D-ConvectionDriftCorrection",
+        "PathEfficiencyFK-60D-StrongestThird",
     )
     assert len(result.stages) == 2
     assert result.stages[0].status == "completed"
@@ -133,7 +133,7 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
     assert set(diagnostics["models"]) == set(BOUNDARY_MODEL_NAMES)
     assert (tmp_path / "boundary-ablation-report.md").exists()
     report = (tmp_path / "boundary-ablation-report.md").read_text(encoding="utf-8")
-    assert "对流修正版" in report
+    assert "相对强弱" in report
     assert "最大回撤" in report
     assert "涨停未买入" in report
     assert 0.0 <= result.stages[0].metrics.average_exposure <= 1.0
@@ -149,16 +149,60 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
             potential = grouped[model_name][row_index]
             assert baseline["signal_time"] == potential["signal_time"]
             assert [item["expected_drift"] for item in baseline["branches"]] == [
-                item["expected_base_drift"] for item in potential["branches"]
+                item["expected_drift"] for item in potential["branches"]
             ]
             assert all(
                 0.0 <= item["survival_confidence"] <= 1.0
                 for item in potential["branches"]
             )
-            assert all(
-                "convection_drift_correction" in item
-                for item in potential["branches"]
-            )
+            assert len(potential["selected_symbols"]) <= len(baseline["selected_symbols"])
+
+
+def test_strongest_third_ranking_is_causal_and_keeps_one_of_three() -> None:
+    data = _walk_forward_data(180)
+    symbols = ("A", "B", "C", "D", "E", "F")
+    returns = np.zeros((180, 6), dtype=np.float64)
+    returns[:, :3] = (0.01, 0.005, -0.005)
+    returns[:, 3:] = (0.008, 0.002, -0.004)
+    memberships = tuple(
+        MonthlyBranchMembership(
+            month=item.month,
+            training_cutoff=item.training_cutoff,
+            branches=(("A", "B", "C"), ("D", "E", "F")),
+        )
+        for item in data.memberships
+    )
+    ranked_data = replace(
+        data,
+        symbols=symbols,
+        memberships=memberships,
+        member_next_returns=returns,
+        member_next_valid=np.ones_like(returns, dtype=np.bool_),
+        member_next_hold_returns=returns,
+        member_next_buy_returns=returns,
+        member_next_buy_executable=np.ones_like(returns, dtype=np.bool_),
+        member_next_sell_returns=np.zeros_like(returns),
+        member_next_sell_executable=np.ones_like(returns, dtype=np.bool_),
+    )
+    pipeline = BoundaryFlowPipeline(
+        BoundaryFlowPipelineConfig(relative_strength_lookback_sessions=20)
+    )
+    row = 100
+
+    selected, scores = pipeline._strongest_third_branches(
+        ranked_data, row, memberships[0].branches
+    )
+    changed = returns.copy()
+    changed[row, 2] = 10.0
+    repeated, _ = pipeline._strongest_third_branches(
+        replace(ranked_data, member_next_returns=changed),
+        row,
+        memberships[0].branches,
+    )
+
+    assert selected == (("A",), ("D",))
+    assert repeated == selected
+    assert scores["A"] > scores["B"] > scores["C"]
 
 
 def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) -> None:
