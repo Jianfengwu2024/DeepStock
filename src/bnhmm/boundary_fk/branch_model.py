@@ -80,6 +80,21 @@ class BayesianBranchPosterior:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class BayesianConvectionDriftPosterior:
+    feature_names: tuple[str, ...]
+    scale: np.ndarray
+    mean: np.ndarray
+    covariance: np.ndarray
+    fit_rows: int
+
+    def design(self, raw_features: np.ndarray) -> np.ndarray:
+        raw = np.asarray(raw_features, dtype=np.float64)
+        if raw.shape != self.scale.shape or np.any(~np.isfinite(raw)):
+            raise ValueError("convection drift features are invalid")
+        return raw / self.scale
+
+
 class BayesianBranchModel:
     def __init__(self, config: BayesianBranchModelConfig | None = None) -> None:
         self.config = config or BayesianBranchModelConfig()
@@ -206,6 +221,71 @@ class BayesianBranchModel:
         mean[list(active)] = active_mean
         covariance[np.ix_(active, active)] = active_covariance
         return mean, covariance
+
+    def fit_convection_drift(
+        self,
+        states: TwoBranchDailyStates,
+        labels: TwoBranchLabels,
+        *,
+        convection_features: np.ndarray,
+        convection_valid: np.ndarray,
+        branch: int,
+        training_cutoff: np.datetime64,
+        feature_names: tuple[str, ...] = ("signed_reverse_flow_1d",),
+    ) -> BayesianConvectionDriftPosterior:
+        features = np.asarray(convection_features, dtype=np.float64)
+        feature_valid = np.asarray(convection_valid, dtype=np.bool_)
+        if features.shape != (len(states.sessions), len(feature_names)):
+            raise ValueError("convection drift features must align with sessions")
+        if feature_valid.shape != (len(states.sessions),):
+            raise ValueError("convection drift validity must align with sessions")
+        cutoff = np.datetime64(training_cutoff, "ns")
+        selected = (
+            states.valid[:, branch]
+            & labels.valid[:, branch]
+            & (labels.target_time <= cutoff)
+        )
+        drift_raw = np.column_stack(
+            [states.feature(name)[:, branch] for name in DRIFT_FEATURE_NAMES]
+        )
+        target = labels.next_return[selected, branch]
+        positions, causal_drift = self._causal_drift_predictions(
+            drift_raw[selected], target
+        )
+        selected_rows = np.flatnonzero(selected)
+        calibration_rows = selected_rows[positions]
+        usable = feature_valid[calibration_rows]
+        calibration_rows = calibration_rows[usable]
+        causal_drift = causal_drift[usable]
+        if len(calibration_rows) < 5:
+            raise ValueError("insufficient matured convection drift rows")
+        raw = features[calibration_rows]
+        scale = np.sqrt(np.mean(np.square(raw), axis=0))
+        scale = np.where(scale > 1e-8, scale, 1.0)
+        design = raw / scale
+        residual_target = labels.next_return[calibration_rows, branch] - causal_drift
+        sample_weight = self._recent_weights(len(residual_target))
+        weighted_design = design * sample_weight[:, None]
+        prior = np.eye(design.shape[1]) * self.config.prior_precision
+        initial_precision = design.T @ weighted_design + prior
+        initial = np.linalg.solve(
+            initial_precision, weighted_design.T @ residual_target
+        )
+        residual = residual_target - design @ initial
+        noise = max(
+            float(np.average(np.square(residual), weights=sample_weight)),
+            self.config.variance_floor,
+        )
+        precision = design.T @ weighted_design / noise + prior
+        covariance = _inverse_positive_definite(precision)
+        mean = covariance @ (weighted_design.T @ residual_target / noise)
+        return BayesianConvectionDriftPosterior(
+            feature_names=feature_names,
+            scale=scale,
+            mean=mean,
+            covariance=covariance,
+            fit_rows=len(calibration_rows),
+        )
 
     def _gaussian_fit(
         self,

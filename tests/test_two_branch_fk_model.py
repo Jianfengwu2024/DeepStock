@@ -9,6 +9,7 @@ from bnhmm.boundary_fk.branch_model import (
     BayesianBranchModel,
     BayesianBranchModelConfig,
     BayesianBranchPosterior,
+    BayesianConvectionDriftPosterior,
     DRIFT_FEATURE_NAMES,
 )
 from bnhmm.boundary_fk.convection import CONVECTION_POTENTIAL_FEATURE_NAMES
@@ -307,6 +308,97 @@ def test_effective_potential_is_confidence_not_a_second_drift_shrinkage() -> Non
     assert high.expected_return == pytest.approx(low.expected_return, abs=2e-5)
     assert abs(high.expected_attenuated_drift) < abs(low.expected_attenuated_drift)
     assert high.expected_effective_potential > low.expected_effective_potential
+
+
+def test_signed_convection_correction_can_flip_bearish_drift_to_bullish() -> None:
+    states, _ = _dataset()
+    posterior = BayesianBranchPosterior(
+        branch=0,
+        drift_feature_names=("signed_path_efficiency",),
+        drift_center=np.zeros(1),
+        drift_scale=np.ones(1),
+        drift_mean=np.asarray([-0.01, 0.0]),
+        drift_covariance=np.eye(2) * 1e-12,
+        diffusion_variance=1e-6,
+        potential_feature_names=CONVECTION_POTENTIAL_FEATURE_NAMES,
+        potential_center=np.zeros(1),
+        potential_scale=np.ones(1),
+        potential_mean=np.asarray([-8.0, 0.0]),
+        potential_covariance=np.eye(2) * 1e-12,
+        training_cutoff=np.datetime64("2024-01-01"),
+        fit_rows=60,
+    )
+    correction = BayesianConvectionDriftPosterior(
+        feature_names=("signed_reverse_flow_1d",),
+        scale=np.ones(1),
+        mean=np.asarray([0.03]),
+        covariance=np.eye(1) * 1e-12,
+        fit_rows=40,
+    )
+
+    forecast = BranchFeynmanKacForecaster(
+        BoundaryFeynmanKacConfig(
+            paths=5000,
+            seed=31,
+            use_convection_drift_correction=True,
+        )
+    ).predict(
+        posterior,
+        states,
+        row=40,
+        potential_features=np.asarray([0.2]),
+        convection_drift_posterior=correction,
+        convection_drift_features=np.asarray([1.0]),
+        neutral_threshold=0.002,
+    )
+
+    assert forecast.expected_base_drift < 0.0
+    assert forecast.expected_convection_drift_correction > 0.0
+    assert forecast.expected_drift > 0.0
+    assert forecast.bullish_drift_probability > 0.99
+
+
+def test_zero_convection_correction_preserves_common_fk_random_paths() -> None:
+    states, labels = _dataset()
+    posterior = _fit_branch(
+        BayesianBranchModel(BayesianBranchModelConfig(minimum_rows=30)),
+        states,
+        labels,
+        branch=0,
+        training_cutoff=labels.target_time[59],
+    )
+    correction = BayesianConvectionDriftPosterior(
+        feature_names=("signed_reverse_flow_1d",),
+        scale=np.ones(1),
+        mean=np.zeros(1),
+        covariance=np.zeros((1, 1)),
+        fit_rows=40,
+    )
+    kwargs = {
+        "posterior": posterior,
+        "states": states,
+        "row": 40,
+        "potential_features": np.asarray([0.2]),
+        "neutral_threshold": 0.002,
+    }
+
+    baseline = BranchFeynmanKacForecaster(
+        BoundaryFeynmanKacConfig(paths=5000, seed=37)
+    ).predict(**kwargs)
+    corrected = BranchFeynmanKacForecaster(
+        BoundaryFeynmanKacConfig(
+            paths=5000,
+            seed=37,
+            use_convection_drift_correction=True,
+        )
+    ).predict(
+        **kwargs,
+        convection_drift_posterior=correction,
+        convection_drift_features=np.asarray([1.0]),
+    )
+
+    assert corrected.raw_state_probabilities == baseline.raw_state_probabilities
+    assert corrected.expected_effective_potential == baseline.expected_effective_potential
 
 
 def test_branch_ablation_disables_one_day_potential() -> None:

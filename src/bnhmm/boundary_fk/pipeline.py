@@ -11,8 +11,9 @@ from .branch_model import (
     BayesianBranchModel,
     BayesianBranchModelConfig,
     BayesianBranchPosterior,
+    BayesianConvectionDriftPosterior,
 )
-from .convection import convection_potential_features
+from .convection import convection_drift_features, convection_potential_features
 from .evaluation import (
     BoundaryEvaluationConfig,
     BoundaryEvaluationMetrics,
@@ -26,17 +27,9 @@ from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
 BOUNDARY_MODEL_NAMES = (
-    "PathEfficiencyFK-60D-Baseline",
-    "PathEfficiencyFK-60D-Beta0OnlyPotential",
-    "PathEfficiencyFK-60D-C1OnlyPotential",
-    "PathEfficiencyFK-60D-Beta0PlusC1Potential",
+    "PathEfficiencyFK-60D-Beta0PlusC1-Baseline",
+    "PathEfficiencyFK-60D-ConvectionDriftCorrection",
 )
-_POTENTIAL_MODEL_MODES = dict(
-    zip(BOUNDARY_MODEL_NAMES[1:], ("beta0_only", "c1_only", "beta0_c1"), strict=True)
-)
-_MODEL_NAME_BY_POTENTIAL_MODE = {
-    mode: name for name, mode in _POTENTIAL_MODEL_MODES.items()
-}
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
 
@@ -145,52 +138,66 @@ class BoundaryFlowPipeline:
         potential_inputs = tuple(
             convection_potential_features(data, branch) for branch in range(2)
         )
+        convection_drift_inputs = tuple(
+            convection_drift_features(data, branch) for branch in range(2)
+        )
 
         for fold_index, test_start, training_rows, test_rows in folds:
             cutoff = test_start - np.timedelta64(1, "ns")
-            posteriors_by_mode: dict[str, list[BayesianBranchPosterior]] = {
-                mode: [] for mode in _POTENTIAL_MODEL_MODES.values()
-            }
-            for mode in posteriors_by_mode:
-                for branch in range(2):
-                    _, potential_values, potential_valid = potential_inputs[branch]
-                    posterior = BayesianBranchModel(
-                        BayesianBranchModelConfig(
-                            minimum_rows=self.config.minimum_train_sessions,
-                            neutral_sigma=self.config.neutral_sigma,
-                            drift_half_life_sessions=self.config.drift_half_life_sessions,
-                            potential_mode=mode,
-                        )
-                    ).fit(
-                        data.states,
-                        data.labels,
-                        potential_features=potential_values,
-                        potential_valid=potential_valid,
-                        branch=branch,
-                        training_cutoff=cutoff,
+            posteriors: list[BayesianBranchPosterior] = []
+            corrections: list[BayesianConvectionDriftPosterior] = []
+            for branch in range(2):
+                _, potential_values, potential_valid = potential_inputs[branch]
+                drift_feature_names, drift_values, drift_valid = convection_drift_inputs[branch]
+                model = BayesianBranchModel(
+                    BayesianBranchModelConfig(
+                        minimum_rows=self.config.minimum_train_sessions,
+                        neutral_sigma=self.config.neutral_sigma,
+                        drift_half_life_sessions=self.config.drift_half_life_sessions,
+                        potential_mode="beta0_c1",
                     )
-                    posteriors_by_mode[mode].append(posterior)
-                    fit_rows.append(posterior.fit_rows)
-                    drift_names = posterior.drift_feature_names
-                    posterior_payloads.append(
-                        {
-                            "model_name": _MODEL_NAME_BY_POTENTIAL_MODE[mode],
-                            "policy": PRIMARY_POLICY_NAME,
-                            "fold": fold_index,
-                            "branch": branch + 1,
-                            "training_cutoff": str(cutoff),
-                            "drift_feature_names": list(posterior.drift_feature_names),
-                            "potential_feature_names": list(
-                                posterior.potential_feature_names
-                            ),
-                            "drift_mean": posterior.drift_mean.tolist(),
-                            "drift_half_life_sessions": self.config.drift_half_life_sessions,
-                            "potential_target": "drift_disruption",
-                            "diffusion_variance": posterior.diffusion_variance,
-                            "potential_mean": posterior.potential_mean.tolist(),
-                            "potential_mode": posterior.potential_mode,
-                        }
-                    )
+                )
+                posterior = model.fit(
+                    data.states,
+                    data.labels,
+                    potential_features=potential_values,
+                    potential_valid=potential_valid,
+                    branch=branch,
+                    training_cutoff=cutoff,
+                )
+                correction = model.fit_convection_drift(
+                    data.states,
+                    data.labels,
+                    convection_features=drift_values,
+                    convection_valid=drift_valid,
+                    branch=branch,
+                    training_cutoff=cutoff,
+                    feature_names=drift_feature_names,
+                )
+                posteriors.append(posterior)
+                corrections.append(correction)
+                fit_rows.extend((posterior.fit_rows, correction.fit_rows))
+                drift_names = posterior.drift_feature_names
+                posterior_payloads.append(
+                    {
+                        "model_name": BOUNDARY_MODEL_NAMES[1],
+                        "policy": PRIMARY_POLICY_NAME,
+                        "fold": fold_index,
+                        "branch": branch + 1,
+                        "training_cutoff": str(cutoff),
+                        "drift_feature_names": list(posterior.drift_feature_names),
+                        "potential_feature_names": list(posterior.potential_feature_names),
+                        "convection_drift_feature_names": list(correction.feature_names),
+                        "drift_mean": posterior.drift_mean.tolist(),
+                        "drift_half_life_sessions": self.config.drift_half_life_sessions,
+                        "potential_target": "drift_disruption",
+                        "diffusion_variance": posterior.diffusion_variance,
+                        "potential_mean": posterior.potential_mean.tolist(),
+                        "potential_mode": posterior.potential_mode,
+                        "convection_drift_mean": correction.mean.tolist(),
+                        "convection_drift_scale": correction.scale.tolist(),
+                    }
+                )
 
             for row in test_rows:
                 membership = membership_by_month.get(data.states.topology_months[row])
@@ -198,6 +205,7 @@ class BoundaryFlowPipeline:
                     membership is None
                     or not data.labels.valid[row].all()
                     or not all(item[2][row] for item in potential_inputs)
+                    or not all(item[2][row] for item in convection_drift_inputs)
                 ):
                     continue
                 thresholds = tuple(
@@ -210,23 +218,27 @@ class BoundaryFlowPipeline:
                 )
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
                 for model_name in BOUNDARY_MODEL_NAMES:
-                    potential_mode = _POTENTIAL_MODEL_MODES.get(
-                        model_name, "beta0_c1"
-                    )
-                    posteriors = posteriors_by_mode[potential_mode]
-                    use_potential = model_name != BOUNDARY_MODEL_NAMES[0]
+                    use_correction = model_name == BOUNDARY_MODEL_NAMES[1]
                     forecasts = tuple(
                         BranchFeynmanKacForecaster(
                             BoundaryFeynmanKacConfig(
                                 paths=self.config.fk_paths,
                                 seed=self.config.seed + fold_index * 2 + branch,
-                                use_effective_potential=use_potential,
+                                use_effective_potential=True,
+                                use_convection_drift_correction=use_correction,
                             )
                         ).predict(
                             posteriors[branch],
                             data.states,
                             int(row),
                             potential_features=potential_inputs[branch][1][row],
+                            convection_drift_posterior=(
+                                corrections[branch] if use_correction else None
+                            ),
+                            convection_drift_features=(
+                                convection_drift_inputs[branch][1][row]
+                                if use_correction else None
+                            ),
                             neutral_threshold=float(thresholds[branch]),
                         )
                         for branch in range(2)
@@ -282,7 +294,8 @@ class BoundaryFlowPipeline:
                             fold_index,
                             int(row),
                             potential_inputs,
-                            effective_potential_enabled=use_potential,
+                            convection_drift_inputs,
+                            effective_potential_enabled=True,
                         )
                     )
 
@@ -311,7 +324,7 @@ class BoundaryFlowPipeline:
         stage_payload = [self._stage_payload(stage) for stage in stages]
         potential_diagnostics = {
             model_name: self._potential_diagnostics(observations_by_model[model_name])
-            for model_name in BOUNDARY_MODEL_NAMES[1:]
+            for model_name in BOUNDARY_MODEL_NAMES
         }
         primary_diagnostics = potential_diagnostics[BOUNDARY_MODEL_NAMES[-1]]
         convection_payload = {**primary_diagnostics, "models": potential_diagnostics}
@@ -391,15 +404,13 @@ class BoundaryFlowPipeline:
         diagnostics: dict[str, dict[str, float | int]],
     ) -> None:
         labels = {
-            BOUNDARY_MODEL_NAMES[0]: "无外势",
-            BOUNDARY_MODEL_NAMES[1]: "仅 β0",
-            BOUNDARY_MODEL_NAMES[2]: "C1-only（β0=0）",
-            BOUNDARY_MODEL_NAMES[3]: "β0+C1",
+            BOUNDARY_MODEL_NAMES[0]: "β0+C1 基线",
+            BOUNDARY_MODEL_NAMES[1]: "β0+C1 + 对流修正漂移",
         }
         lines = [
-            "# 路径效率 FK 外势消融实验",
+            "# 路径效率 FK 对流修正漂移实验",
             "",
-            "四组实验使用相同的路径效率漂移、样本外日期、交易成本和涨跌停成交约束。",
+            "两组实验使用相同的 β0+C1 外势、样本外日期、交易成本和涨跌停成交约束。",
             "",
             "| 模型 | 净收益 | 最大回撤 | 平均仓位 | 平均换手 | 涨停未买入 | 跌停未卖出 | 平均势能 | 平均存活率 |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
@@ -434,9 +445,9 @@ class BoundaryFlowPipeline:
                 "",
                 "## 判断方法",
                 "",
-                "- C1-only 优于 β0+C1：β0 对 C1 形成了过度压制。",
-                "- 仅 β0 优于 C1-only：主要效果来自恒定减仓门控，而不是反向流量信息。",
-                "- C1-only 同时降低回撤且保留收益：C1 本身提供了有效外势信息。",
+                "- 基线只允许外势削弱原漂移，不能改变方向。",
+                "- 对流修正版允许有符号反向流修正漂移，因此可能出现空翻多或平翻多。",
+                "- 只有修正版在样本外同时改善收益或回撤，才说明方向修正有效。",
             ]
         )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -564,6 +575,10 @@ class BoundaryFlowPipeline:
             tuple[tuple[str, ...], np.ndarray, np.ndarray],
             tuple[tuple[str, ...], np.ndarray, np.ndarray],
         ],
+        convection_drift_inputs: tuple[
+            tuple[tuple[str, ...], np.ndarray, np.ndarray],
+            tuple[tuple[str, ...], np.ndarray, np.ndarray],
+        ],
         *,
         effective_potential_enabled: bool,
     ) -> dict[str, object]:
@@ -578,12 +593,17 @@ class BoundaryFlowPipeline:
             )
         ):
             names, values, _ = potential_inputs[branch]
+            drift_names, drift_values, _ = convection_drift_inputs[branch]
             branches.append(
                 {
                     "branch": branch + 1,
                     "direction": direction,
                     "state_probabilities": list(forecast.raw_state_probabilities),
                     "expected_drift": forecast.expected_drift,
+                    "expected_base_drift": forecast.expected_base_drift,
+                    "convection_drift_correction": (
+                        forecast.expected_convection_drift_correction
+                    ),
                     "effective_drift": forecast.expected_attenuated_drift,
                     "expected_effective_potential": forecast.expected_effective_potential,
                     "survival_confidence": forecast.trend_survival_probability,
@@ -594,6 +614,13 @@ class BoundaryFlowPipeline:
                     "neutral_threshold": threshold,
                     "convection_potential_features": dict(
                         zip(names, (float(item) for item in values[row]), strict=True)
+                    ),
+                    "convection_drift_features": dict(
+                        zip(
+                            drift_names,
+                            (float(item) for item in drift_values[row]),
+                            strict=True,
+                        )
                     ),
                     "effective_potential_enabled": effective_potential_enabled,
                 }

@@ -8,7 +8,7 @@ import numpy as np
 from scipy.special import ndtr
 
 from .bayesian_state import BayesianBoundaryPosterior, BoundaryStateLabels
-from .branch_model import BayesianBranchPosterior
+from .branch_model import BayesianBranchPosterior, BayesianConvectionDriftPosterior
 from .types import BoundaryDailyStates
 from .types import TwoBranchDailyStates
 
@@ -18,6 +18,7 @@ class BoundaryFeynmanKacConfig:
     paths: int = 10_000
     seed: int = 7
     use_effective_potential: bool = True
+    use_convection_drift_correction: bool = False
 
     def __post_init__(self) -> None:
         if not 1_000 <= self.paths <= 100_000:
@@ -42,6 +43,8 @@ class BoundaryFeynmanKacForecast:
     expected_attenuated_drift: float = 0.0
     bullish_drift_probability: float = 0.5
     drift_signal_to_noise: float = 0.0
+    expected_base_drift: float = 0.0
+    expected_convection_drift_correction: float = 0.0
 
 
 class BoundaryFeynmanKacForecaster:
@@ -143,6 +146,8 @@ class BranchFeynmanKacForecaster:
         row: int,
         *,
         potential_features: np.ndarray | None = None,
+        convection_drift_posterior: BayesianConvectionDriftPosterior | None = None,
+        convection_drift_features: np.ndarray | None = None,
         neutral_threshold: float,
     ) -> BoundaryFeynmanKacForecast:
         if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
@@ -159,7 +164,22 @@ class BranchFeynmanKacForecaster:
             posterior.drift_covariance,
             size=self.config.paths,
         )
-        drift = drift_coefficients @ posterior.drift_design(states, resolved_row)
+        base_drift = drift_coefficients @ posterior.drift_design(states, resolved_row)
+        convection_correction = np.zeros(self.config.paths, dtype=np.float64)
+        if self.config.use_convection_drift_correction:
+            if convection_drift_posterior is None or convection_drift_features is None:
+                raise ValueError("convection drift posterior and features are required")
+            correction_rng = np.random.default_rng(self.config.seed + 1_000_003)
+            correction_coefficients = correction_rng.multivariate_normal(
+                convection_drift_posterior.mean,
+                convection_drift_posterior.covariance,
+                size=self.config.paths,
+            )
+            convection_correction = (
+                correction_coefficients
+                @ convection_drift_posterior.design(convection_drift_features)
+            )
+        drift = base_drift + convection_correction
         return_shocks = rng.standard_normal(self.config.paths)
         if self.config.use_effective_potential:
             if potential_features is None:
@@ -212,5 +232,9 @@ class BranchFeynmanKacForecaster:
             bullish_drift_probability=float(np.mean(drift > 0.0)),
             drift_signal_to_noise=float(
                 abs(expected_drift) / np.sqrt(epistemic + diffusion)
+            ),
+            expected_base_drift=float(np.mean(base_drift)),
+            expected_convection_drift_correction=float(
+                np.mean(convection_correction)
             ),
         )
