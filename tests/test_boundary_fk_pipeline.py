@@ -172,6 +172,31 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
             assert len(potential["selected_symbols"]) <= len(baseline["selected_symbols"])
 
 
+def test_walk_forward_skips_folds_without_enough_direction_labels() -> None:
+    base = _walk_forward_data(240)
+    returns = base.labels.next_return.copy()
+    returns[:100] = 1e-6
+    data = replace(base, labels=replace(base.labels, next_return=returns))
+    pipeline = BoundaryFlowPipeline(
+        BoundaryFlowPipelineConfig(
+            minimum_train_sessions=60,
+            max_folds=1,
+            fk_paths=1000,
+            direction_label_sigma=0.1,
+        )
+    )
+
+    folds = pipeline._mature_monthly_folds(data)
+
+    assert folds
+    first_training_rows = folds[0][2]
+    for branch in range(2):
+        significant = np.abs(data.labels.next_return[first_training_rows, branch]) > (
+            0.1 * data.labels.historical_volatility[first_training_rows, branch]
+        )
+        assert int(significant.sum()) >= 60
+
+
 def test_strongest_third_ranking_is_causal_and_keeps_one_of_three() -> None:
     data = _walk_forward_data(180)
     symbols = ("A", "B", "C", "D", "E", "F")

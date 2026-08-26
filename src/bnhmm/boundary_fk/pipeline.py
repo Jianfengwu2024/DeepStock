@@ -511,7 +511,22 @@ class BoundaryFlowPipeline:
             test_rows = np.flatnonzero(
                 eligible & (sessions >= test_start) & (sessions < test_end)
             )
-            if len(training_rows) < self.config.minimum_train_sessions or not len(test_rows):
+            direction_ready = self.config.direction_label_sigma <= 0.0 or all(
+                int(
+                    np.sum(
+                        np.abs(data.labels.next_return[training_rows, branch])
+                        > self.config.direction_label_sigma
+                        * data.labels.historical_volatility[training_rows, branch]
+                    )
+                )
+                >= self.config.minimum_train_sessions
+                for branch in range(2)
+            )
+            if (
+                len(training_rows) < self.config.minimum_train_sessions
+                or not direction_ready
+                or not len(test_rows)
+            ):
                 continue
             folds.append((len(folds), test_start, training_rows, test_rows))
             if self.config.max_folds is not None and len(folds) >= self.config.max_folds:
