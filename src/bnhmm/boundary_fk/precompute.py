@@ -45,6 +45,25 @@ def topology_months_for_available_data(
     )
 
 
+def topology_months_with_minimum_history(
+    *,
+    months: tuple[np.datetime64, ...] | np.ndarray,
+    timestamps: np.ndarray,
+    minimum_sessions: int,
+) -> tuple[np.datetime64, ...]:
+    if minimum_sessions < 1:
+        raise ValueError("minimum topology sessions must be positive")
+    sessions = np.unique(np.asarray(timestamps).astype("datetime64[D]"))
+    eligible = tuple(
+        np.datetime64(month, "M")
+        for month in months
+        if np.sum(sessions < np.datetime64(month, "D")) >= minimum_sessions
+    )
+    if not eligible:
+        raise ValueError("available minute history cannot satisfy topology minimums")
+    return eligible
+
+
 def build_boundary_cache_variants(
     source: MinuteSource,
     cache: BoundaryDataCache,
@@ -86,15 +105,22 @@ def build_boundary_cache_variants(
     )
     rows: list[dict[str, object]] = []
     for lookback in lookbacks:
+        minimum_sessions = max(2, int(np.ceil(lookback * 2.0 / 3.0)))
+        minimum_pair_sessions = max(2, int(np.ceil(lookback / 2.0)))
+        eligible_months = topology_months_with_minimum_history(
+            months=months,
+            timestamps=normalized.timestamps,
+            minimum_sessions=minimum_sessions,
+        )
         topologies = BoundaryTopologyBuilder(
             TopologyConfig(
                 lookback_sessions=lookback,
-                minimum_sessions=max(2, int(np.ceil(lookback * 2.0 / 3.0))),
-                minimum_pair_sessions=max(2, int(np.ceil(lookback / 2.0))),
+                minimum_sessions=minimum_sessions,
+                minimum_pair_sessions=minimum_pair_sessions,
                 maximum_bands=2,
                 minimum_band_size=max(2, int(np.ceil(len(symbols) * 0.10))),
             )
-        ).build(normalized, months)
+        ).build(normalized, eligible_months)
         built = TwoBranchDailyStateBuilder().build(normalized, topologies)
         if not np.array_equal(built.states.sessions, execution.sessions):
             raise ValueError("execution constraints do not align with daily states")

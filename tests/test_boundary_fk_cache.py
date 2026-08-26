@@ -17,6 +17,7 @@ from bnhmm.boundary_fk.cache import (
 from bnhmm.boundary_fk.precompute import (
     build_boundary_cache_variants,
     topology_months_for_available_data,
+    topology_months_with_minimum_history,
 )
 from test_boundary_fk_pipeline import _walk_forward_data
 
@@ -151,6 +152,26 @@ def test_topology_months_never_precede_available_minute_history() -> None:
     assert np.all(months > np.datetime64("2024-01", "M"))
 
 
+def test_topology_months_require_completed_session_history() -> None:
+    sessions = np.busday_offset(
+        np.datetime64("2024-01-02", "D"), np.arange(70), roll="forward"
+    )
+    months = np.arange(
+        np.datetime64("2024-02", "M"),
+        np.datetime64("2024-06", "M"),
+        dtype="datetime64[M]",
+    )
+
+    eligible = topology_months_with_minimum_history(
+        months=months,
+        timestamps=sessions.astype("datetime64[ns]"),
+        minimum_sessions=40,
+    )
+
+    assert eligible[0] == np.datetime64("2024-03", "M")
+    assert all(np.sum(sessions < month.astype("datetime64[D]")) >= 40 for month in eligible)
+
+
 def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -173,7 +194,13 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
             return type(
                 "NormalizedPanel",
                 (),
-                {"timestamps": np.asarray(["2023-01-03T09:30"], dtype="datetime64[m]")},
+                {
+                    "timestamps": np.busday_offset(
+                        np.datetime64("2023-01-03", "D"),
+                        np.arange(100),
+                        roll="forward",
+                    ).astype("datetime64[m]")
+                },
             )()
 
     class FakeTopologyConfig:
