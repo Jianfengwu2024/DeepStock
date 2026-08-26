@@ -77,6 +77,14 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertNotIn('id="delete-button"', html)
         self.assertNotIn("function deleteSelectedJob(", script)
 
+    def test_history_cards_prefer_the_completed_summary_symbol_count(self) -> None:
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "job.summary?.symbols ?? job.request.symbols.length",
+            script,
+        )
+
     def test_strategy_switch_excludes_hidden_configuration_controls(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")

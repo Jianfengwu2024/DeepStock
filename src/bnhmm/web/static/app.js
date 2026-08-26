@@ -648,7 +648,8 @@ function renderJobList() {
     const strategy = job.request.strategy === "holo-repair"
       ? job.request.repair_variant
       : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow", "boundary-flow-fk": "路径效率 FK" })[job.request.strategy] || job.request.strategy;
-    const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${job.request.symbols.length} 股</div>`;
+    const symbolCount = job.summary?.symbols ?? job.request.symbols.length;
+    const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${symbolCount} 股</div>`;
     if (state.historyEditing) {
       const label = document.createElement("label");
       const disabled = activeIds.has(job.id) || state.historyDeleting;
