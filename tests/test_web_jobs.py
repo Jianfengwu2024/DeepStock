@@ -24,6 +24,47 @@ from bnhmm.web.jobs import (
 
 
 class WebJobTests(unittest.TestCase):
+    def test_completed_artifact_directory_without_job_metadata_is_discovered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory, "20260826-PathEfficiencyFK-StrongestThird-20D-5BP")
+            output.mkdir()
+            (output / "run-summary.json").write_text(
+                json.dumps(
+                    {
+                        "strategy": "boundary-flow-fk",
+                        "dataset_id": "semiconductor",
+                        "symbols": 96,
+                        "topology_lookback_sessions": 60,
+                        "relative_strength_lookback_sessions": 20,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (output / "boundary-policy-evaluation.json").write_text(
+                json.dumps(
+                    [
+                        {"model_name": "PathEfficiencyFK-60D-Beta0PlusC1-Baseline"},
+                        {"model_name": "PathEfficiencyFK-60D-StrongestThird"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (output / "feynman-kac-predictions.json").write_text("[]", encoding="utf-8")
+
+            manager = JobManager(directory, Path.cwd())
+            jobs = manager.list()
+
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual(jobs[0].id, output.name)
+            self.assertEqual(jobs[0].status, "completed")
+            self.assertEqual(jobs[0].request.strategy, "boundary-flow-fk")
+            self.assertEqual(jobs[0].request.dataset_id, "semiconductor")
+            self.assertEqual(jobs[0].request.topology_lookback_sessions, 60)
+            self.assertEqual(
+                jobs[0].request.boundary_relative_strength_lookback_sessions, 20
+            )
+            manager.close()
+
     def test_job_names_are_case_insensitive_and_unique_until_deleted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manager = JobManager(directory, Path.cwd())

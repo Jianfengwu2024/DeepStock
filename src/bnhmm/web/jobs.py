@@ -1158,3 +1158,55 @@ class JobManager:
                 record.current_gpu_memory_mib = 0
                 self._persist(record)
             self._jobs[record.id] = record
+        self._load_completed_artifact_runs()
+
+    def _load_completed_artifact_runs(self) -> None:
+        required_artifacts = (
+            "run-summary.json",
+            "boundary-policy-evaluation.json",
+            "feynman-kac-predictions.json",
+        )
+        for output_dir in self.root.iterdir():
+            if (
+                not output_dir.is_dir()
+                or output_dir.name in self._jobs
+                or not all((output_dir / name).is_file() for name in required_artifacts)
+            ):
+                continue
+            try:
+                summary = json.loads(
+                    (output_dir / "run-summary.json").read_text(encoding="utf-8")
+                )
+                if summary.get("strategy") != "boundary-flow-fk":
+                    continue
+                dataset_id = summary.get("dataset_id")
+                request = WalkForwardJobRequest(
+                    strategy="boundary-flow-fk",
+                    name=output_dir.name,
+                    symbols=["ARTIFACT"],
+                    dataset_id=dataset_id,
+                    training_scope="sector-pooled" if dataset_id else "per-symbol",
+                    topology_lookback_sessions=int(
+                        summary.get("topology_lookback_sessions", 60)
+                    ),
+                    boundary_relative_strength_lookback_sessions=int(
+                        summary.get("relative_strength_lookback_sessions", 20)
+                    ),
+                )
+                timestamp = datetime.fromtimestamp(
+                    (output_dir / "run-summary.json").stat().st_mtime,
+                    tz=timezone.utc,
+                )
+                record = JobRecord(
+                    id=output_dir.name,
+                    status="completed",
+                    created_at=timestamp,
+                    started_at=timestamp,
+                    finished_at=timestamp,
+                    return_code=0,
+                    output_dir=str(output_dir),
+                    request=request,
+                )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            self._jobs[record.id] = record

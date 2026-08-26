@@ -1227,23 +1227,39 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
   };
 }
 
+function selectBoundaryStages(stages) {
+  const completed = stages.filter(item => item?.status === "completed" && item?.model_name);
+  const strategy = completed.at(-1) || stages.at(-1) || {};
+  const baseline = completed.find(item => item.model_name !== strategy.model_name) || {};
+  return { strategy, baseline };
+}
+
+function boundaryModelLabel(modelName) {
+  const name = String(modelName || "");
+  if (name.includes("StrongestThird")) return "支流内最强 1/3";
+  if (name.includes("Beta0PlusC1-Baseline")) return "β0 + C1 全支流基线";
+  if (name.includes("PathEfficiencyFK-60D-OneDayPotential")) return "β0 + C1 外势 FK";
+  if (name.includes("Baseline")) return "纯路径效率基线";
+  return name || "未命名阶段";
+}
+
 function paintBoundaryFlowResult(job, payload) {
   const { stages, predictions: allPredictions, posterior, residual, potential } = payload;
-  const backgroundPotentialModel = "PathEfficiencyFK-60D-OneDayPotential";
-  const baselineModel = "PathEfficiencyFK-60D-Baseline";
-  const stage = stages.find(item => item.model_name === backgroundPotentialModel)
-    || stages.find(item => item.model_name !== baselineModel)
-    || {};
-  const potentialModel = stage.model_name || backgroundPotentialModel;
+  const selectedStages = selectBoundaryStages(stages);
+  const stage = selectedStages.strategy;
+  const baselineStage = selectedStages.baseline;
+  const potentialModel = stage.model_name || "";
+  const baselineModel = baselineStage.model_name || "";
   const predictions = allPredictions.filter(item => item.model_version === potentialModel);
   const baselinePredictions = allPredictions.filter(item => item.model_version === baselineModel);
-  const baselineStage = stages.find(item => item.model_name === baselineModel) || {};
-  document.querySelector("#boundary-result-title").textContent = "60 日路径效率 + 一日反向流量外势 FK";
+  const strategyLabel = boundaryModelLabel(potentialModel);
+  const baselineLabel = boundaryModelLabel(baselineModel);
+  document.querySelector("#boundary-result-title").textContent = `${baselineLabel} vs ${strategyLabel}`;
   const metrics = stage.metrics || {};
   const baselineMetrics = baselineStage.metrics || {};
   const latest = predictions.at(-1);
   document.querySelector("#boundary-flow-result-status").textContent =
-    `${formatInteger(predictions.length)} 个样本外交易日 · β0 + 一日反向流量 C1`;
+    `${formatInteger(predictions.length)} 个样本外交易日 · ${strategyLabel}`;
 
   const verdict = boundaryImprovementVerdict(metrics, baselineMetrics);
   document.querySelector("#boundary-evaluation-summary").innerHTML = `
@@ -1251,7 +1267,7 @@ function paintBoundaryFlowResult(job, payload) {
     <p>基于 ${formatInteger(metrics.observations)} 个真实样本外交易日。相对基线收益 ${formatPercent(verdict.returnDelta)}，回撤改善 ${formatPercent(verdict.drawdownImprovement)}；${verdict.passed ? "通过" : "未通过"}改进标准。</p>`;
   document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${verdict.level}`;
   document.querySelector("#boundary-evaluation-metrics").innerHTML = [
-    boundaryMetric("基线成本后收益", formatPercent(baselineMetrics.net_total_return), "60 日纯路径效率 FK"),
+    boundaryMetric("基线成本后收益", formatPercent(baselineMetrics.net_total_return), baselineLabel),
     boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return), "扣除换手成本"),
     boundaryMetric("平均一日有效势", formatNumber(potential?.mean_effective_potential, 4), "V = softplus(β0 + β1·C1)"),
     boundaryMetric("平均趋势存活率", formatPercent(potential?.mean_trend_survival_probability), "FK 对漂移的保留比例"),
@@ -1325,7 +1341,15 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("训练成熟样本", formatInteger(stage.minimum_fit_rows), "每支流用于后验估计"),
   ].join("");
 
-  paintBoundaryReturnComparison(job, metrics, predictions, baselineMetrics, baselinePredictions);
+  paintBoundaryReturnComparison(
+    job,
+    metrics,
+    predictions,
+    baselineMetrics,
+    baselinePredictions,
+    strategyLabel,
+    baselineLabel,
+  );
   const modelResidual = Array.isArray(residual)
     ? residual.find(item => item.model_name === potentialModel) || {}
     : residual;
@@ -1333,7 +1357,7 @@ function paintBoundaryFlowResult(job, payload) {
   document.querySelector("#boundary-run-summary").innerHTML = [
     boundaryMetric("数据集", job.request.dataset_id || "—"),
     boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
-    boundaryMetric("股票数量", `${formatInteger(job.request.symbols?.length)} 只`),
+    boundaryMetric("股票数量", `${formatInteger(job.summary?.symbols || job.request.symbols?.length)} 只`),
     boundaryMetric("支流历史", `${job.request.topology_lookback_sessions} 日`),
     boundaryMetric("外势输入", "背景势 β0 + 一日反向流量 C1"),
     boundaryMetric("FK 模拟路径", formatInteger(job.request.boundary_fk_paths)),
@@ -1353,13 +1377,24 @@ function boundaryEquitySeries(job, predictions) {
   });
 }
 
-function paintBoundaryReturnComparison(job, metrics, predictions, baselineMetrics, baselinePredictions) {
+function paintBoundaryReturnComparison(
+  job,
+  metrics,
+  predictions,
+  baselineMetrics,
+  baselinePredictions,
+  strategyLabel,
+  baselineLabel,
+) {
   const strategyEquity = boundaryEquitySeries(job, predictions);
   const baselineEquity = boundaryEquitySeries(job, baselinePredictions);
   const wins = predictions.filter(item => Number(item.gross_strategy_return) > 0).length;
+  document.querySelector("#boundary-return-legend").innerHTML = `
+    <span><i class="persistence"></i>${escapeHtml(strategyLabel)}净值</span>
+    <span><i class="baseline"></i>${escapeHtml(baselineLabel)}</span>`;
   document.querySelector("#boundary-return-metrics").innerHTML = [
-    boundaryMetric("一日反向流量外势 FK 收益", formatPercent(metrics.net_total_return)),
-    boundaryMetric("纯路径效率基线", formatPercent(baselineMetrics.net_total_return)),
+    boundaryMetric(`${strategyLabel}收益`, formatPercent(metrics.net_total_return)),
+    boundaryMetric(`${baselineLabel}收益`, formatPercent(baselineMetrics.net_total_return)),
     boundaryMetric("相对基线", formatPercent(Number(metrics.net_total_return || 0) - Number(baselineMetrics.net_total_return || 0))),
     boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
     boundaryMetric("盈利交易日", formatPercent(predictions.length ? wins / predictions.length : 0)),

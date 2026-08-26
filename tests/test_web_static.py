@@ -135,6 +135,10 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         ):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn("renderBoundaryFlowResult", script)
+        self.assertIn("function selectBoundaryStages(stages)", script)
+        self.assertIn("completed.at(-1)", script)
+        self.assertIn("function boundaryModelLabel(modelName)", script)
+        self.assertIn('document.querySelector("#boundary-return-legend").innerHTML', script)
         expected_tabs = (
             ("evaluation", "策略评估"),
             ("predictions", "样本外预测"),
