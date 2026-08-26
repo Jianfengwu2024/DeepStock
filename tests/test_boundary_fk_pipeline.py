@@ -72,9 +72,11 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
 
     assert result.model_names == BOUNDARY_MODEL_NAMES == (
         "PathEfficiencyFK-60D-Baseline",
-        "PathEfficiencyFK-60D-OneDayPotential",
+        "PathEfficiencyFK-60D-Beta0OnlyPotential",
+        "PathEfficiencyFK-60D-C1OnlyPotential",
+        "PathEfficiencyFK-60D-Beta0PlusC1Potential",
     )
-    assert len(result.stages) == 2
+    assert len(result.stages) == 4
     assert result.stages[0].status == "completed"
     predictions = json.loads(
         (tmp_path / "feynman-kac-predictions.json").read_text(encoding="utf-8")
@@ -116,6 +118,11 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
         (tmp_path / "boundary-model-posterior.json").read_text(encoding="utf-8")
     )
     assert {item["policy"] for item in posteriors} == {"path_efficiency_fk"}
+    assert {item["potential_mode"] for item in posteriors} == {
+        "beta0_only",
+        "c1_only",
+        "beta0_c1",
+    }
     assert all(item["potential_feature_names"] == ["reverse_flow_1d"] for item in posteriors)
     assert all(len(item["potential_mean"]) == 2 for item in posteriors)
     assert all(
@@ -130,30 +137,34 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
     )
     assert "mean_effective_potential" in diagnostics
     assert "mean_trend_survival_probability" in diagnostics
-    assert not (tmp_path / "boundary-ablation-report.md").exists()
+    assert set(diagnostics["models"]) == set(BOUNDARY_MODEL_NAMES[1:])
+    assert (tmp_path / "boundary-ablation-report.md").exists()
+    report = (tmp_path / "boundary-ablation-report.md").read_text(encoding="utf-8")
+    assert "C1-only" in report
+    assert "最大回撤" in report
+    assert "涨停未买入" in report
     assert 0.0 <= result.stages[0].metrics.average_exposure <= 1.0
 
     grouped: dict[str, list[dict[str, object]]] = {
         model: [item for item in predictions if item["model_version"] == model]
         for model in BOUNDARY_MODEL_NAMES
     }
-    assert len(grouped[BOUNDARY_MODEL_NAMES[0]]) == len(grouped[BOUNDARY_MODEL_NAMES[1]])
-    for baseline, potential in zip(
-        grouped[BOUNDARY_MODEL_NAMES[0]],
-        grouped[BOUNDARY_MODEL_NAMES[1]],
-        strict=True,
-    ):
-        assert baseline["signal_time"] == potential["signal_time"]
-        assert [item["expected_drift"] for item in baseline["branches"]] == [
-            item["expected_drift"] for item in potential["branches"]
-        ]
+    baseline_rows = grouped[BOUNDARY_MODEL_NAMES[0]]
+    assert all(len(grouped[name]) == len(baseline_rows) for name in BOUNDARY_MODEL_NAMES)
+    for row_index, baseline in enumerate(baseline_rows):
         assert all(
             item["survival_confidence"] == 1.0 for item in baseline["branches"]
         )
-        assert all(
-            0.0 <= item["survival_confidence"] <= 1.0
-            for item in potential["branches"]
-        )
+        for model_name in BOUNDARY_MODEL_NAMES[1:]:
+            potential = grouped[model_name][row_index]
+            assert baseline["signal_time"] == potential["signal_time"]
+            assert [item["expected_drift"] for item in baseline["branches"]] == [
+                item["expected_drift"] for item in potential["branches"]
+            ]
+            assert all(
+                0.0 <= item["survival_confidence"] <= 1.0
+                for item in potential["branches"]
+            )
 
 
 def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) -> None:

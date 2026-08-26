@@ -112,6 +112,47 @@ def test_disruption_potential_has_beta0_and_one_day_reverse_flow() -> None:
     assert design[0] == 1.0
 
 
+def test_c1_only_potential_fixes_beta0_to_zero() -> None:
+    states, labels = _dataset(rows=140)
+    potential_features, potential_valid = _potential_inputs(states)
+
+    posterior = BayesianBranchModel(
+        BayesianBranchModelConfig(minimum_rows=30, potential_mode="c1_only")
+    ).fit(
+        states,
+        labels,
+        potential_features=potential_features,
+        potential_valid=potential_valid,
+        branch=0,
+        training_cutoff=labels.target_time[120],
+    )
+
+    assert posterior.potential_mode == "c1_only"
+    assert posterior.potential_mean[0] == 0.0
+    assert posterior.potential_mean[1] >= 0.0
+    assert posterior.potential_covariance[0, 0] == 0.0
+
+
+def test_beta0_only_potential_fixes_c1_coefficient_to_zero() -> None:
+    states, labels = _dataset(rows=140)
+    potential_features, potential_valid = _potential_inputs(states)
+
+    posterior = BayesianBranchModel(
+        BayesianBranchModelConfig(minimum_rows=30, potential_mode="beta0_only")
+    ).fit(
+        states,
+        labels,
+        potential_features=potential_features,
+        potential_valid=potential_valid,
+        branch=0,
+        training_cutoff=labels.target_time[120],
+    )
+
+    assert posterior.potential_mode == "beta0_only"
+    assert posterior.potential_mean[1] == 0.0
+    assert posterior.potential_covariance[1, 1] == 0.0
+
+
 def test_path_efficiency_is_the_only_drift_input() -> None:
     states, labels = _intraday_dataset()
     cutoff = labels.target_time[59]

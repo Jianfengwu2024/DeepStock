@@ -7,7 +7,11 @@ from pathlib import Path
 
 import numpy as np
 
-from .branch_model import BayesianBranchModel, BayesianBranchModelConfig
+from .branch_model import (
+    BayesianBranchModel,
+    BayesianBranchModelConfig,
+    BayesianBranchPosterior,
+)
 from .convection import convection_potential_features
 from .evaluation import (
     BoundaryEvaluationConfig,
@@ -23,8 +27,16 @@ from .types import MonthlyBranchMembership, TwoBranchDataset
 
 BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Baseline",
-    "PathEfficiencyFK-60D-OneDayPotential",
+    "PathEfficiencyFK-60D-Beta0OnlyPotential",
+    "PathEfficiencyFK-60D-C1OnlyPotential",
+    "PathEfficiencyFK-60D-Beta0PlusC1Potential",
 )
+_POTENTIAL_MODEL_MODES = dict(
+    zip(BOUNDARY_MODEL_NAMES[1:], ("beta0_only", "c1_only", "beta0_c1"), strict=True)
+)
+_MODEL_NAME_BY_POTENTIAL_MODE = {
+    mode: name for name, mode in _POTENTIAL_MODEL_MODES.items()
+}
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
 
@@ -136,44 +148,49 @@ class BoundaryFlowPipeline:
 
         for fold_index, test_start, training_rows, test_rows in folds:
             cutoff = test_start - np.timedelta64(1, "ns")
-            posteriors = []
-            for branch in range(2):
-                _, potential_values, potential_valid = potential_inputs[branch]
-                posterior = BayesianBranchModel(
-                    BayesianBranchModelConfig(
-                        minimum_rows=self.config.minimum_train_sessions,
-                        neutral_sigma=self.config.neutral_sigma,
-                        drift_half_life_sessions=self.config.drift_half_life_sessions,
+            posteriors_by_mode: dict[str, list[BayesianBranchPosterior]] = {
+                mode: [] for mode in _POTENTIAL_MODEL_MODES.values()
+            }
+            for mode in posteriors_by_mode:
+                for branch in range(2):
+                    _, potential_values, potential_valid = potential_inputs[branch]
+                    posterior = BayesianBranchModel(
+                        BayesianBranchModelConfig(
+                            minimum_rows=self.config.minimum_train_sessions,
+                            neutral_sigma=self.config.neutral_sigma,
+                            drift_half_life_sessions=self.config.drift_half_life_sessions,
+                            potential_mode=mode,
+                        )
+                    ).fit(
+                        data.states,
+                        data.labels,
+                        potential_features=potential_values,
+                        potential_valid=potential_valid,
+                        branch=branch,
+                        training_cutoff=cutoff,
                     )
-                ).fit(
-                    data.states,
-                    data.labels,
-                    potential_features=potential_values,
-                    potential_valid=potential_valid,
-                    branch=branch,
-                    training_cutoff=cutoff,
-                )
-                posteriors.append(posterior)
-                fit_rows.append(posterior.fit_rows)
-                drift_names = posterior.drift_feature_names
-                posterior_payloads.append(
-                    {
-                        "model_name": BOUNDARY_MODEL_NAMES[1],
-                        "policy": PRIMARY_POLICY_NAME,
-                        "fold": fold_index,
-                        "branch": branch + 1,
-                        "training_cutoff": str(cutoff),
-                        "drift_feature_names": list(posterior.drift_feature_names),
-                        "potential_feature_names": list(
-                            posterior.potential_feature_names
-                        ),
-                        "drift_mean": posterior.drift_mean.tolist(),
-                        "drift_half_life_sessions": self.config.drift_half_life_sessions,
-                        "potential_target": "drift_disruption",
-                        "diffusion_variance": posterior.diffusion_variance,
-                        "potential_mean": posterior.potential_mean.tolist(),
-                    }
-                )
+                    posteriors_by_mode[mode].append(posterior)
+                    fit_rows.append(posterior.fit_rows)
+                    drift_names = posterior.drift_feature_names
+                    posterior_payloads.append(
+                        {
+                            "model_name": _MODEL_NAME_BY_POTENTIAL_MODE[mode],
+                            "policy": PRIMARY_POLICY_NAME,
+                            "fold": fold_index,
+                            "branch": branch + 1,
+                            "training_cutoff": str(cutoff),
+                            "drift_feature_names": list(posterior.drift_feature_names),
+                            "potential_feature_names": list(
+                                posterior.potential_feature_names
+                            ),
+                            "drift_mean": posterior.drift_mean.tolist(),
+                            "drift_half_life_sessions": self.config.drift_half_life_sessions,
+                            "potential_target": "drift_disruption",
+                            "diffusion_variance": posterior.diffusion_variance,
+                            "potential_mean": posterior.potential_mean.tolist(),
+                            "potential_mode": posterior.potential_mode,
+                        }
+                    )
 
             for row in test_rows:
                 membership = membership_by_month.get(data.states.topology_months[row])
@@ -192,8 +209,12 @@ class BoundaryFlowPipeline:
                     for branch in range(2)
                 )
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
-                for model_index, model_name in enumerate(BOUNDARY_MODEL_NAMES):
-                    use_potential = model_index == 1
+                for model_name in BOUNDARY_MODEL_NAMES:
+                    potential_mode = _POTENTIAL_MODEL_MODES.get(
+                        model_name, "beta0_c1"
+                    )
+                    posteriors = posteriors_by_mode[potential_mode]
+                    use_potential = model_name != BOUNDARY_MODEL_NAMES[0]
                     forecasts = tuple(
                         BranchFeynmanKacForecaster(
                             BoundaryFeynmanKacConfig(
@@ -288,30 +309,12 @@ class BoundaryFlowPipeline:
             for model_name in BOUNDARY_MODEL_NAMES
         )
         stage_payload = [self._stage_payload(stage) for stage in stages]
-        potential_observations = observations_by_model[BOUNDARY_MODEL_NAMES[1]]
-        potentials = np.asarray(
-            [
-                forecast.expected_effective_potential
-                for item in potential_observations
-                for forecast in item.forecasts
-            ],
-            dtype=np.float64,
-        )
-        survivals = np.asarray(
-            [
-                forecast.trend_survival_probability
-                for item in potential_observations
-                for forecast in item.forecasts
-            ],
-            dtype=np.float64,
-        )
-        convection_payload = {
-            "observations": int(len(potentials)),
-            "mean_effective_potential": float(np.mean(potentials)),
-            "median_effective_potential": float(np.median(potentials)),
-            "mean_trend_survival_probability": float(np.mean(survivals)),
-            "minimum_trend_survival_probability": float(np.min(survivals)),
+        potential_diagnostics = {
+            model_name: self._potential_diagnostics(observations_by_model[model_name])
+            for model_name in BOUNDARY_MODEL_NAMES[1:]
         }
+        primary_diagnostics = potential_diagnostics[BOUNDARY_MODEL_NAMES[-1]]
+        convection_payload = {**primary_diagnostics, "models": potential_diagnostics}
         write_json(root / "boundary-model-posterior.json", posterior_payloads)
         write_json(root / "feynman-kac-predictions.json", prediction_payloads)
         write_json(root / "boundary-policy-evaluation.json", stage_payload)
@@ -348,7 +351,95 @@ class BoundaryFlowPipeline:
             stage_payload,
             convection_payload,
         )
+        self._write_ablation_report(
+            root / "boundary-ablation-report.md", stages, potential_diagnostics
+        )
         return BoundaryFlowRunResult(BOUNDARY_MODEL_NAMES, stages)
+
+    @staticmethod
+    def _potential_diagnostics(
+        observations: list[TwoBranchForecastObservation],
+    ) -> dict[str, float | int]:
+        potentials = np.asarray(
+            [
+                forecast.expected_effective_potential
+                for item in observations
+                for forecast in item.forecasts
+            ],
+            dtype=np.float64,
+        )
+        survivals = np.asarray(
+            [
+                forecast.trend_survival_probability
+                for item in observations
+                for forecast in item.forecasts
+            ],
+            dtype=np.float64,
+        )
+        return {
+            "observations": int(len(potentials)),
+            "mean_effective_potential": float(np.mean(potentials)),
+            "median_effective_potential": float(np.median(potentials)),
+            "mean_trend_survival_probability": float(np.mean(survivals)),
+            "minimum_trend_survival_probability": float(np.min(survivals)),
+        }
+
+    @staticmethod
+    def _write_ablation_report(
+        path: Path,
+        stages: tuple[BoundaryStageResult, ...],
+        diagnostics: dict[str, dict[str, float | int]],
+    ) -> None:
+        labels = {
+            BOUNDARY_MODEL_NAMES[0]: "无外势",
+            BOUNDARY_MODEL_NAMES[1]: "仅 β0",
+            BOUNDARY_MODEL_NAMES[2]: "C1-only（β0=0）",
+            BOUNDARY_MODEL_NAMES[3]: "β0+C1",
+        }
+        lines = [
+            "# 路径效率 FK 外势消融实验",
+            "",
+            "四组实验使用相同的路径效率漂移、样本外日期、交易成本和涨跌停成交约束。",
+            "",
+            "| 模型 | 净收益 | 最大回撤 | 平均仓位 | 平均换手 | 涨停未买入 | 跌停未卖出 | 平均势能 | 平均存活率 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+        for stage in stages:
+            metrics = stage.metrics
+            if metrics is None:
+                continue
+            model_diagnostics = diagnostics.get(stage.model_name, {})
+            lines.append(
+                "| {label} | {ret:.2%} | {drawdown:.2%} | {exposure:.2%} | {turnover:.2%} | "
+                "{failed_buy} | {failed_sell} | {potential} | {survival} |".format(
+                    label=labels[stage.model_name],
+                    ret=metrics.net_total_return,
+                    drawdown=metrics.maximum_drawdown,
+                    exposure=metrics.average_exposure,
+                    turnover=metrics.average_turnover,
+                    failed_buy=metrics.failed_buy_orders,
+                    failed_sell=metrics.failed_sell_orders,
+                    potential=(
+                        f"{float(model_diagnostics['mean_effective_potential']):.4f}"
+                        if model_diagnostics else "-"
+                    ),
+                    survival=(
+                        f"{float(model_diagnostics['mean_trend_survival_probability']):.2%}"
+                        if model_diagnostics else "-"
+                    ),
+                )
+            )
+        lines.extend(
+            [
+                "",
+                "## 判断方法",
+                "",
+                "- C1-only 优于 β0+C1：β0 对 C1 形成了过度压制。",
+                "- 仅 β0 优于 C1-only：主要效果来自恒定减仓门控，而不是反向流量信息。",
+                "- C1-only 同时降低回撤且保留收益：C1 本身提供了有效外势信息。",
+            ]
+        )
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _mature_monthly_folds(
         self, data: TwoBranchDataset

@@ -23,6 +23,7 @@ class BayesianBranchModelConfig:
     convergence_tolerance: float = 1e-8
     neutral_sigma: float = 0.35
     drift_half_life_sessions: float | None = 60.0
+    potential_mode: str = "beta0_c1"
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -36,6 +37,8 @@ class BayesianBranchModelConfig:
             and self.drift_half_life_sessions <= 0.0
         ):
             raise ValueError("drift half-life must be positive when provided")
+        if self.potential_mode not in {"beta0_only", "c1_only", "beta0_c1"}:
+            raise ValueError("unknown convection potential mode")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +57,7 @@ class BayesianBranchPosterior:
     potential_covariance: np.ndarray
     training_cutoff: np.datetime64
     fit_rows: int
+    potential_mode: str = "beta0_c1"
 
     def __post_init__(self) -> None:
         if self.branch not in (0, 1):
@@ -156,7 +160,7 @@ class BayesianBranchModel:
             & (np.abs(causal_direction) > 1e-12)
         ).astype(np.float64)
         disruption = 1.0 - drift_survival
-        potential_mean, potential_covariance = self._constrained_logistic_fit(
+        potential_mean, potential_covariance = self._fit_potential(
             potential_x, disruption
         )
 
@@ -175,7 +179,33 @@ class BayesianBranchModel:
             potential_covariance=potential_covariance,
             training_cutoff=cutoff,
             fit_rows=int(selected.sum()),
+            potential_mode=self.config.potential_mode,
         )
+
+    def _fit_potential(
+        self, design: np.ndarray, target: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        mode = self.config.potential_mode
+        if mode == "beta0_only":
+            active = (0,)
+            bounds = [(None, None)]
+        elif mode == "c1_only":
+            active = (1,)
+            bounds = [(0.0, None)]
+        else:
+            active = tuple(range(design.shape[1]))
+            bounds = [(None, None), *[(0.0, None)] * (design.shape[1] - 1)]
+        active_mean, active_covariance = self._constrained_logistic_fit(
+            design[:, active],
+            target,
+            bounds=bounds,
+            intercept_position=active.index(0) if 0 in active else None,
+        )
+        mean = np.zeros(design.shape[1], dtype=np.float64)
+        covariance = np.zeros((design.shape[1], design.shape[1]), dtype=np.float64)
+        mean[list(active)] = active_mean
+        covariance[np.ix_(active, active)] = active_covariance
+        return mean, covariance
 
     def _gaussian_fit(
         self,
@@ -237,10 +267,16 @@ class BayesianBranchModel:
         return positions, predictions
 
     def _constrained_logistic_fit(
-        self, design: np.ndarray, target: np.ndarray
+        self,
+        design: np.ndarray,
+        target: np.ndarray,
+        *,
+        bounds: list[tuple[float | None, float | None]],
+        intercept_position: int | None,
     ) -> tuple[np.ndarray, np.ndarray]:
         prior = np.eye(design.shape[1]) * self.config.prior_precision
-        prior[0, 0] *= 1e-4
+        if intercept_position is not None:
+            prior[intercept_position, intercept_position] *= 1e-4
 
         def objective(coefficient: np.ndarray) -> tuple[float, np.ndarray]:
             linear = design @ coefficient
@@ -257,7 +293,7 @@ class BayesianBranchModel:
             np.zeros(design.shape[1], dtype=np.float64),
             method="L-BFGS-B",
             jac=True,
-            bounds=[(None, None), *[(0.0, None)] * (design.shape[1] - 1)],
+            bounds=bounds,
             options={
                 "maxiter": self.config.maximum_newton_steps,
                 "ftol": self.config.convergence_tolerance,
