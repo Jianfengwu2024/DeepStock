@@ -11,7 +11,12 @@ from .convection import CONVECTION_POTENTIAL_FEATURE_NAMES
 from .types import TwoBranchDailyStates, TwoBranchLabels
 
 
-DRIFT_FEATURE_NAMES = ("signed_path_efficiency",)
+DRIFT_FEATURE_NAMES = (
+    "signed_path_efficiency",
+    "path_efficiency_delta_1d",
+    "path_direction_consistency_3d",
+    "signed_member_synchronization",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +29,7 @@ class BayesianBranchModelConfig:
     neutral_sigma: float = 0.35
     drift_half_life_sessions: float | None = 60.0
     potential_mode: str = "beta0_c1"
+    drift_feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -39,6 +45,12 @@ class BayesianBranchModelConfig:
             raise ValueError("drift half-life must be positive when provided")
         if self.potential_mode not in {"beta0_only", "c1_only", "beta0_c1"}:
             raise ValueError("unknown convection potential mode")
+        if (
+            not self.drift_feature_names
+            or self.drift_feature_names[0] != "signed_path_efficiency"
+            or not set(self.drift_feature_names).issubset(DRIFT_FEATURE_NAMES)
+        ):
+            raise ValueError("direction drift features must use the causal feature set")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,12 +70,18 @@ class BayesianBranchPosterior:
     training_cutoff: np.datetime64
     fit_rows: int
     potential_mode: str = "beta0_c1"
+    drift_model: str = "gaussian_return"
+    drift_return_scale: float = 1.0
 
     def __post_init__(self) -> None:
         if self.branch not in (0, 1):
             raise ValueError("branch posterior index must be zero or one")
         if not np.isfinite(self.diffusion_variance) or self.diffusion_variance <= 0.0:
             raise ValueError("branch diffusion variance must be finite and positive")
+        if self.drift_model not in {"gaussian_return", "bayesian_direction_logit"}:
+            raise ValueError("unknown branch drift model")
+        if not np.isfinite(self.drift_return_scale) or self.drift_return_scale <= 0.0:
+            raise ValueError("branch drift return scale must be finite and positive")
 
     def drift_design(self, states: TwoBranchDailyStates, row: int) -> np.ndarray:
         raw = np.asarray(
@@ -134,19 +152,32 @@ class BayesianBranchModel:
         if int(selected.sum()) < self.config.minimum_rows:
             raise ValueError("insufficient matured branch returns for Bayesian fit")
 
-        drift_names = DRIFT_FEATURE_NAMES
+        drift_names = self.config.drift_feature_names
         drift_raw = np.column_stack(
             [states.feature(name)[:, branch] for name in drift_names]
         )
-        drift_x, drift_center, drift_scale = _standardized_design(
+        drift_x, drift_center, drift_scale = _odd_symmetric_design(
             drift_raw[selected]
         )
         target = labels.next_return[selected, branch]
         sample_weight = self._recent_weights(len(target))
-        drift_mean, drift_covariance = self._gaussian_fit(
-            drift_x, target, sample_weight
+        active_mean, active_covariance = self._constrained_logistic_fit(
+            drift_x[:, 1:],
+            (target > 0.0).astype(np.float64),
+            bounds=[(None, None)] * len(drift_names),
+            intercept_position=None,
+            sample_weight=sample_weight,
         )
-        residual = target - drift_x @ drift_mean
+        drift_mean = np.concatenate((np.zeros(1), active_mean))
+        drift_covariance = np.zeros((len(drift_mean), len(drift_mean)))
+        drift_covariance[1:, 1:] = active_covariance
+        drift_return_scale = max(
+            float(np.average(np.abs(target), weights=sample_weight)),
+            self.config.variance_floor**0.5,
+        )
+        fitted_logit = drift_x @ drift_mean
+        fitted_return = np.tanh(fitted_logit * 0.5) * drift_return_scale
+        residual = target - fitted_return
         diffusion_variance = max(
             float(np.average(np.square(residual), weights=sample_weight)),
             self.config.variance_floor,
@@ -195,6 +226,8 @@ class BayesianBranchModel:
             training_cutoff=cutoff,
             fit_rows=int(selected.sum()),
             potential_mode=self.config.potential_mode,
+            drift_model="bayesian_direction_logit",
+            drift_return_scale=drift_return_scale,
         )
 
     def _fit_potential(
@@ -331,19 +364,29 @@ class BayesianBranchModel:
         positions = np.arange(calibration_start, len(target), dtype=np.int64)
         predictions = np.empty(len(positions), dtype=np.float64)
         for output_row, position in enumerate(positions):
-            design, center, scale = _standardized_design(drift_raw[:position])
-            mean, _ = self._gaussian_fit(
-                design,
-                target[:position],
-                self._recent_weights(position),
+            design, _, scale = _odd_symmetric_design(drift_raw[:position])
+            weight = self._recent_weights(position)
+            active_mean, _ = self._constrained_logistic_fit(
+                design[:, 1:],
+                (target[:position] > 0.0).astype(np.float64),
+                bounds=[(None, None)] * drift_raw.shape[1],
+                intercept_position=None,
+                sample_weight=weight,
             )
+            mean = np.concatenate((np.zeros(1), active_mean))
             current = np.concatenate(
                 (
                     np.ones(1),
-                    (drift_raw[position] - center) / scale,
+                    drift_raw[position] / scale,
                 )
             )
-            predictions[output_row] = float(current @ mean)
+            return_scale = max(
+                float(np.average(np.abs(target[:position]), weights=weight)),
+                self.config.variance_floor**0.5,
+            )
+            predictions[output_row] = float(
+                np.tanh(float(current @ mean) * 0.5) * return_scale
+            )
         return positions, predictions
 
     def _constrained_logistic_fit(
@@ -353,7 +396,13 @@ class BayesianBranchModel:
         *,
         bounds: list[tuple[float | None, float | None]],
         intercept_position: int | None,
+        sample_weight: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        weights = (
+            np.ones(len(target), dtype=np.float64)
+            if sample_weight is None
+            else np.asarray(sample_weight, dtype=np.float64)
+        )
         prior = np.eye(design.shape[1]) * self.config.prior_precision
         if intercept_position is not None:
             prior[intercept_position, intercept_position] *= 1e-4
@@ -362,10 +411,10 @@ class BayesianBranchModel:
             linear = design @ coefficient
             probability = expit(linear)
             loss = float(
-                np.sum(np.logaddexp(0.0, linear) - target * linear)
+                np.sum(weights * (np.logaddexp(0.0, linear) - target * linear))
                 + 0.5 * coefficient @ prior @ coefficient
             )
-            gradient = design.T @ (probability - target) + prior @ coefficient
+            gradient = design.T @ (weights * (probability - target)) + prior @ coefficient
             return loss, gradient
 
         result = minimize(
@@ -384,8 +433,8 @@ class BayesianBranchModel:
         coefficient = np.asarray(result.x, dtype=np.float64)
         linear = design @ coefficient
         probability = expit(linear)
-        weights = np.maximum(probability * (1.0 - probability), 1e-8)
-        hessian = design.T @ (design * weights[:, None]) + prior
+        curvature = weights * np.maximum(probability * (1.0 - probability), 1e-8)
+        hessian = design.T @ (design * curvature[:, None]) + prior
         return coefficient, _inverse_positive_definite(hessian)
 
 
@@ -398,6 +447,17 @@ def _standardized_design(
     scale = raw.std(axis=0)
     scale = np.where(scale > 1e-8, scale, 1.0)
     return np.column_stack((np.ones(len(raw)), (raw - center) / scale)), center, scale
+
+
+def _odd_symmetric_design(
+    raw: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if np.any(~np.isfinite(raw)):
+        raise ValueError("branch direction features must be finite")
+    scale = np.sqrt(np.mean(np.square(raw), axis=0))
+    scale = np.where(scale > 1e-8, scale, 1.0)
+    center = np.zeros(raw.shape[1], dtype=np.float64)
+    return np.column_stack((np.ones(len(raw)), raw / scale)), center, scale
 
 
 def _inverse_positive_definite(matrix: np.ndarray) -> np.ndarray:

@@ -101,10 +101,10 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
     assert restored.convection_lookbacks == (1, 2, 3, 5)
 
 
-def test_boundary_cache_uses_reverse_flow_concentration_version() -> None:
+def test_boundary_cache_uses_direction_feature_version() -> None:
     assert (
         CACHE_CONSTRUCTION_VERSION
-        == "path-efficiency-two-branch-v6-close-to-close-execution"
+        == "path-efficiency-two-branch-v7-direction-features"
     )
 
 

@@ -118,11 +118,21 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
     assert {item["potential_mode"] for item in posteriors} == {"beta0_c1"}
     assert all(item["potential_feature_names"] == ["reverse_flow_1d"] for item in posteriors)
     assert all(len(item["potential_mean"]) == 2 for item in posteriors)
+    expected_drift_features = [
+        "signed_path_efficiency",
+        "path_efficiency_delta_1d",
+        "path_direction_consistency_3d",
+        "signed_member_synchronization",
+    ]
     assert all(
-        item["drift_feature_names"] == ["signed_path_efficiency"]
+        item["drift_feature_names"] == expected_drift_features
         for item in posteriors
     )
-    assert result.stages[0].drift_feature_names == ("signed_path_efficiency",)
+    assert all(item["drift_model"] == "bayesian_direction_logit" for item in posteriors)
+    assert all(item["drift_mean"][0] == 0.0 for item in posteriors)
+    assert result.stages[0].drift_feature_names == tuple(expected_drift_features)
+    assert 0.0 <= result.stages[0].metrics.direction_signal_coverage <= 1.0
+    assert 0.0 <= result.stages[0].metrics.direction_signal_accuracy <= 1.0
     assert (tmp_path / "path-efficiency-fk-report.md").exists()
     assert (tmp_path / "path-efficiency-convection-potential-report.md").exists()
     diagnostics = json.loads(

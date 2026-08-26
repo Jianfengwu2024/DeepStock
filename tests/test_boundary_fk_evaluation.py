@@ -72,6 +72,8 @@ def test_evaluation_reports_probability_and_strategy_metrics() -> None:
     assert metrics.maximum_drawdown == pytest.approx(0.012)
     assert 0.0 <= metrics.ece <= 1.0
     assert metrics.crps >= 0.0
+    assert metrics.direction_signal_coverage == pytest.approx(2 / 3)
+    assert metrics.direction_signal_accuracy == pytest.approx(1.0)
 
 
 def test_evaluation_rejects_noncausal_prediction_trace() -> None:

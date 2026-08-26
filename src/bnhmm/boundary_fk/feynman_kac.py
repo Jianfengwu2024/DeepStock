@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.special import ndtr
+from scipy.special import expit, ndtr
 
 from .bayesian_state import BayesianBoundaryPosterior, BoundaryStateLabels
 from .branch_model import BayesianBranchPosterior, BayesianConvectionDriftPosterior
@@ -164,7 +164,12 @@ class BranchFeynmanKacForecaster:
             posterior.drift_covariance,
             size=self.config.paths,
         )
-        base_drift = drift_coefficients @ posterior.drift_design(states, resolved_row)
+        drift_linear = drift_coefficients @ posterior.drift_design(states, resolved_row)
+        if posterior.drift_model == "bayesian_direction_logit":
+            direction_probability = expit(drift_linear)
+            base_drift = (2.0 * direction_probability - 1.0) * posterior.drift_return_scale
+        else:
+            base_drift = drift_linear
         convection_correction = np.zeros(self.config.paths, dtype=np.float64)
         if self.config.use_convection_drift_correction:
             if convection_drift_posterior is None or convection_drift_features is None:
@@ -180,6 +185,8 @@ class BranchFeynmanKacForecaster:
                 @ convection_drift_posterior.design(convection_drift_features)
             )
         drift = base_drift + convection_correction
+        if posterior.drift_model != "bayesian_direction_logit":
+            direction_probability = (drift > 0.0).astype(np.float64)
         return_shocks = rng.standard_normal(self.config.paths)
         if self.config.use_effective_potential:
             if potential_features is None:
@@ -227,11 +234,16 @@ class BranchFeynmanKacForecaster:
             expected_drift=expected_drift,
             expected_diffusion_variance=float(diffusion),
             expected_effective_potential=float(np.mean(potential)),
-            bullish_probability_std=float(np.std(conditional_bullish)),
+            bullish_probability_std=float(np.std(direction_probability)),
             expected_attenuated_drift=float(np.mean(attenuated_drift)),
-            bullish_drift_probability=float(np.mean(drift > 0.0)),
+            bullish_drift_probability=float(np.mean(direction_probability)),
             drift_signal_to_noise=float(
-                abs(expected_drift) / np.sqrt(epistemic + diffusion)
+                (
+                    abs(float(np.mean(drift_linear)))
+                    / max(float(np.std(drift_linear)), 1e-8)
+                    if posterior.drift_model == "bayesian_direction_logit"
+                    else abs(expected_drift) / np.sqrt(epistemic + diffusion)
+                )
             ),
             expected_base_drift=float(np.mean(base_drift)),
             expected_convection_drift_correction=float(

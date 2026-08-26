@@ -81,6 +81,8 @@ class BoundaryEvaluationMetrics:
     direction_counts: tuple[int, int, int]
     drift_rank_ic: float
     drift_direction_accuracy: float
+    direction_signal_coverage: float = 0.0
+    direction_signal_accuracy: float = 0.0
     failed_buy_orders: int = 0
     failed_sell_orders: int = 0
 
@@ -146,6 +148,7 @@ def evaluate_boundary_forecasts(
     expected_drift = np.asarray(
         [item.forecast.expected_drift for item in observations], dtype=np.float64
     )
+    direction_signal = np.abs(expected_drift) > 1e-12
 
     return BoundaryEvaluationMetrics(
         observations=len(observations),
@@ -170,6 +173,17 @@ def evaluate_boundary_forecasts(
         drift_rank_ic=_rank_correlation(expected_drift, actual_returns),
         drift_direction_accuracy=float(
             np.mean(np.sign(expected_drift) == np.sign(actual_returns))
+        ),
+        direction_signal_coverage=float(np.mean(direction_signal)),
+        direction_signal_accuracy=(
+            float(
+                np.mean(
+                    np.sign(expected_drift[direction_signal])
+                    == np.sign(actual_returns[direction_signal])
+                )
+            )
+            if np.any(direction_signal)
+            else 0.0
         ),
     )
 
@@ -254,6 +268,7 @@ def evaluate_two_branch_forecasts(
         [forecast.expected_drift for item in observations for forecast in item.forecasts],
         dtype=np.float64,
     )
+    direction_signal = predicted_classes != 1
 
     return BoundaryEvaluationMetrics(
         observations=len(observations),
@@ -278,6 +293,12 @@ def evaluate_two_branch_forecasts(
         drift_rank_ic=_rank_correlation(expected_drift, actual_returns),
         drift_direction_accuracy=float(
             np.mean(np.sign(expected_drift) == np.sign(actual_returns))
+        ),
+        direction_signal_coverage=float(np.mean(direction_signal)),
+        direction_signal_accuracy=(
+            float(np.mean(predicted_classes[direction_signal] == actual_classes[direction_signal]))
+            if np.any(direction_signal)
+            else 0.0
         ),
         failed_buy_orders=int(sum(item.failed_buy_orders for item in observations)),
         failed_sell_orders=int(sum(item.failed_sell_orders for item in observations)),

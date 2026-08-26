@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 CACHE_FORMAT_VERSION = 1
-CACHE_CONSTRUCTION_VERSION = "path-efficiency-two-branch-v6-close-to-close-execution"
+CACHE_CONSTRUCTION_VERSION = "path-efficiency-two-branch-v7-direction-features"
 CACHE_LOOKBACKS = (10, 20, 30, 40, 60, 90, 120)
 
 

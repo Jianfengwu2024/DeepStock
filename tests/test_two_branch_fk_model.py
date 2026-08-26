@@ -23,10 +23,24 @@ from bnhmm.boundary_fk.types import TwoBranchDailyStates, TwoBranchLabels
 def _dataset(rows: int = 80) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
     rng = np.random.default_rng(17)
     sessions = np.busday_offset(np.datetime64("2024-01-02"), np.arange(rows))
-    values = rng.normal(0.0, 0.01, size=(rows, 2, 6))
+    feature_names = (
+        "return_1d",
+        "return_mean_5",
+        "return_mean_20",
+        "volatility_20",
+        "coherence_1d",
+        "signed_path_efficiency",
+        "path_efficiency_delta_1d",
+        "path_direction_consistency_3d",
+        "signed_member_synchronization",
+    )
+    values = rng.normal(0.0, 0.01, size=(rows, 2, len(feature_names)))
     values[:, :, 3] = 0.01
     values[:, :, 4] = 0.8
     values[:, :, 5] = rng.uniform(-1.0, 1.0, size=(rows, 2))
+    values[1:, :, 6] = np.diff(values[:, :, 5], axis=0)
+    values[:, :, 7] = np.sign(values[:, :, 5])
+    values[:, :, 8] = np.sign(values[:, :, 5]) * 0.8
     next_return = np.column_stack(
         (0.02 * values[:, 0, 5], -0.02 * values[:, 1, 5])
     ) + rng.normal(0.0, 0.001, size=(rows, 2))
@@ -38,14 +52,7 @@ def _dataset(rows: int = 80) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
         TwoBranchDailyStates(
             sessions=sessions,
             topology_months=sessions.astype("datetime64[M]"),
-            feature_names=(
-                "return_1d",
-                "return_mean_5",
-                "return_mean_20",
-                "volatility_20",
-                "coherence_1d",
-                "signed_path_efficiency",
-            ),
+            feature_names=feature_names,
             values=values,
             valid=np.ones((rows, 2), dtype=np.bool_),
         ),
@@ -154,7 +161,7 @@ def test_beta0_only_potential_fixes_c1_coefficient_to_zero() -> None:
     assert posterior.potential_covariance[1, 1] == 0.0
 
 
-def test_path_efficiency_is_the_only_drift_input() -> None:
+def test_direction_model_uses_the_minimal_causal_feature_set() -> None:
     states, labels = _intraday_dataset()
     cutoff = labels.target_time[59]
 
@@ -165,8 +172,18 @@ def test_path_efficiency_is_the_only_drift_input() -> None:
         branch=0,
         training_cutoff=cutoff,
     )
-    assert DRIFT_FEATURE_NAMES == ("signed_path_efficiency",)
-    assert posterior.drift_feature_names == ("signed_path_efficiency",)
+    assert DRIFT_FEATURE_NAMES == (
+        "signed_path_efficiency",
+        "path_efficiency_delta_1d",
+        "path_direction_consistency_3d",
+        "signed_member_synchronization",
+    )
+    assert posterior.drift_feature_names == DRIFT_FEATURE_NAMES
+    assert posterior.drift_model == "bayesian_direction_logit"
+    assert posterior.drift_mean[0] == 0.0
+    assert np.all(posterior.drift_covariance[0] == 0.0)
+    assert np.all(posterior.drift_covariance[:, 0] == 0.0)
+    assert np.all(posterior.drift_center == 0.0)
     with pytest.raises(TypeError):
         BayesianBranchModelConfig(drift_feature_set="legacy")
 

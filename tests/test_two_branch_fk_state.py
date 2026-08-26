@@ -74,14 +74,25 @@ def test_builder_emits_two_branch_feature_tensor_and_frozen_memberships() -> Non
     assert result.convection_valid.shape == (26, 2, 4)
 
 
-def test_builder_emits_signed_path_efficiency_only() -> None:
+def test_builder_emits_causal_direction_features() -> None:
     panel, topologies = _inputs()
 
     result = TwoBranchDailyStateBuilder(minimum_valid_minutes=3).build(panel, topologies)
 
-    assert result.states.feature_names[-1:] == ("signed_path_efficiency",)
+    assert result.states.feature_names[-4:] == (
+        "signed_path_efficiency",
+        "path_efficiency_delta_1d",
+        "path_direction_consistency_3d",
+        "signed_member_synchronization",
+    )
     assert result.states.feature("signed_path_efficiency")[-1, 0] == 1.0
     assert result.states.feature("signed_path_efficiency")[-1, 1] == -1.0
+    assert result.states.feature("path_efficiency_delta_1d")[-1, 0] == 0.0
+    assert result.states.feature("path_efficiency_delta_1d")[-1, 1] == 0.0
+    assert result.states.feature("path_direction_consistency_3d")[-1, 0] == 1.0
+    assert result.states.feature("path_direction_consistency_3d")[-1, 1] == -1.0
+    assert result.states.feature("signed_member_synchronization")[-1, 0] == 1.0
+    assert result.states.feature("signed_member_synchronization")[-1, 1] == -1.0
 
 
 def test_path_efficiency_uses_displacement_over_total_variation() -> None:

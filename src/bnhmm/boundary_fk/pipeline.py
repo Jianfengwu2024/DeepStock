@@ -12,6 +12,7 @@ from .branch_model import (
     BayesianBranchModel,
     BayesianBranchModelConfig,
     BayesianBranchPosterior,
+    DRIFT_FEATURE_NAMES,
 )
 from .convection import convection_potential_features
 from .evaluation import (
@@ -48,6 +49,7 @@ class BoundaryFlowPipelineConfig:
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
     relative_strength_lookback_sessions: int = 20
+    drift_feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -182,6 +184,7 @@ class BoundaryFlowPipeline:
                         neutral_sigma=self.config.neutral_sigma,
                         drift_half_life_sessions=self.config.drift_half_life_sessions,
                         potential_mode="beta0_c1",
+                        drift_feature_names=self.config.drift_feature_names,
                     )
                 )
                 posterior = model.fit(
@@ -205,6 +208,8 @@ class BoundaryFlowPipeline:
                         "drift_feature_names": list(posterior.drift_feature_names),
                         "potential_feature_names": list(posterior.potential_feature_names),
                         "drift_mean": posterior.drift_mean.tolist(),
+                        "drift_model": posterior.drift_model,
+                        "drift_return_scale": posterior.drift_return_scale,
                         "drift_half_life_sessions": self.config.drift_half_life_sessions,
                         "potential_target": "drift_disruption",
                         "diffusion_variance": posterior.diffusion_variance,

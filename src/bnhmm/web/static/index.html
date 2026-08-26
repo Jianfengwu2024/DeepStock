@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.27.2">
+  <link rel="stylesheet" href="/static/styles.css?v=0.27.3">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.27.2" defer></script>
+  <script src="/static/app.js?v=0.27.3" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -132,8 +132,8 @@
           <summary>路径效率 FK</summary>
           <div class="fixed-spec-grid">
             <div class="fixed-spec"><span>支流</span><strong>固定 60 日同步聚类，每月固定两组</strong></div>
-            <div class="fixed-spec"><span>后验</span><strong>每组独立估计漂移与有效势</strong></div>
-            <div class="fixed-spec"><span>漂移输入</span><strong>纯路径效率</strong></div>
+            <div class="fixed-spec"><span>后验</span><strong>无截距贝叶斯方向分类</strong></div>
+            <div class="fixed-spec"><span>漂移输入</span><strong>路径效率变化 + 3日一致率 + 成分股同步率</strong></div>
             <div class="fixed-spec"><span>一日外势</span><strong>背景势 β0 + 一日反向流量集中度 C1</strong></div>
             <div class="fixed-spec"><span>支流内选股</span><strong>近期相对强度最高的前 1/3，支流仓位内等权</strong></div>
             <div class="fixed-spec"><span>看多</span><strong>看多：满仓</strong></div>

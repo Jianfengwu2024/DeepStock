@@ -1274,6 +1274,8 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("平均趋势存活率", formatPercent(potential?.mean_trend_survival_probability), "FK 对漂移的保留比例"),
     boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown), "历史高点后的最大跌幅"),
     boundaryMetric("方向判断正确率", formatPercent(metrics.drift_direction_accuracy), "上涨或下跌方向"),
+    boundaryMetric("方向信号覆盖率", formatPercent(metrics.direction_signal_coverage), "输出看多或看空的比例"),
+    boundaryMetric("有效方向命中率", formatPercent(metrics.direction_signal_accuracy), "只统计实际输出的方向信号"),
     boundaryMetric("平均实际仓位", formatPercent(metrics.average_exposure), "整个测试期平均"),
     boundaryMetric("涨停未买入", formatInteger(metrics.failed_buy_orders), "全天未打开涨停板"),
     boundaryMetric("跌停未卖出", formatInteger(metrics.failed_sell_orders), "全天未打开跌停板"),

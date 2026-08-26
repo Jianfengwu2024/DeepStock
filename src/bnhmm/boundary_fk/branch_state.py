@@ -24,6 +24,9 @@ BRANCH_FEATURE_NAMES = (
     "volatility_20",
     "coherence_1d",
     "signed_path_efficiency",
+    "path_efficiency_delta_1d",
+    "path_direction_consistency_3d",
+    "signed_member_synchronization",
 )
 
 
@@ -130,12 +133,41 @@ class TwoBranchDailyStateBuilder:
                 trailing = branch_returns[row - history + 1 : row + 1, branch]
                 coherence = branch_coherence[row, branch]
                 intraday = path_efficiency[row, branch]
+                recent_path = path_efficiency[row - 2 : row + 1, branch]
+                same_topology = np.all(
+                    sessions[row - 2 : row + 1].astype("datetime64[M]")
+                    == sessions[row].astype("datetime64[M]")
+                )
                 if (
                     np.any(~np.isfinite(trailing))
                     or not np.isfinite(coherence)
                     or not np.isfinite(intraday)
+                    or np.any(~np.isfinite(recent_path))
+                    or not same_topology
                 ):
                     continue
+                direction = float(np.sign(intraday))
+                path_consistency = (
+                    0.0
+                    if direction == 0.0
+                    else direction
+                    * float(np.mean(np.sign(recent_path) == direction))
+                )
+                membership = membership_by_month[sessions[row].astype("datetime64[M]")]
+                columns = np.asarray(
+                    [symbol_index[symbol] for symbol in membership.branches[branch]]
+                )
+                available = daily_valid[row, columns]
+                synchronization = (
+                    0.0
+                    if direction == 0.0
+                    else direction
+                    * float(
+                        np.mean(
+                            np.sign(daily_returns[row, columns[available]]) == direction
+                        )
+                    )
+                )
                 values[row, branch] = (
                     trailing[-1],
                     float(np.mean(trailing[-5:])),
@@ -143,6 +175,9 @@ class TwoBranchDailyStateBuilder:
                     max(float(np.std(trailing)), 1e-8),
                     coherence,
                     intraday,
+                    float(intraday - recent_path[-2]),
+                    path_consistency,
+                    synchronization,
                 )
                 valid[row, branch] = True
 
