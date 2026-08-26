@@ -11,10 +11,14 @@ from .convection import CONVECTION_POTENTIAL_FEATURE_NAMES
 from .types import TwoBranchDailyStates, TwoBranchLabels
 
 
-DRIFT_FEATURE_NAMES = (
+CAUSAL_DRIFT_FEATURE_NAMES = (
     "signed_path_efficiency",
     "path_efficiency_delta_1d",
     "path_direction_consistency_3d",
+    "signed_member_synchronization",
+)
+DRIFT_FEATURE_NAMES = (
+    "signed_path_efficiency",
     "signed_member_synchronization",
 )
 
@@ -30,6 +34,7 @@ class BayesianBranchModelConfig:
     drift_half_life_sessions: float | None = 60.0
     potential_mode: str = "beta0_c1"
     drift_feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
+    direction_label_sigma: float = 0.1
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -45,10 +50,13 @@ class BayesianBranchModelConfig:
             raise ValueError("drift half-life must be positive when provided")
         if self.potential_mode not in {"beta0_only", "c1_only", "beta0_c1"}:
             raise ValueError("unknown convection potential mode")
+        if not 0.0 <= self.direction_label_sigma <= 5.0:
+            raise ValueError("direction label sigma must lie in [0, 5]")
         if (
             not self.drift_feature_names
             or self.drift_feature_names[0] != "signed_path_efficiency"
-            or not set(self.drift_feature_names).issubset(DRIFT_FEATURE_NAMES)
+            or len(set(self.drift_feature_names)) != len(self.drift_feature_names)
+            or not set(self.drift_feature_names).issubset(CAUSAL_DRIFT_FEATURE_NAMES)
         ):
             raise ValueError("direction drift features must use the causal feature set")
 
@@ -72,6 +80,8 @@ class BayesianBranchPosterior:
     potential_mode: str = "beta0_c1"
     drift_model: str = "gaussian_return"
     drift_return_scale: float = 1.0
+    direction_label_sigma: float = 0.0
+    direction_fit_rows: int = 0
 
     def __post_init__(self) -> None:
         if self.branch not in (0, 1):
@@ -156,14 +166,25 @@ class BayesianBranchModel:
         drift_raw = np.column_stack(
             [states.feature(name)[:, branch] for name in drift_names]
         )
+        selected_target = labels.next_return[selected, branch]
+        direction_selected = selected.copy()
+        if self.config.direction_label_sigma > 0.0:
+            direction_selected &= np.abs(labels.next_return[:, branch]) > (
+                self.config.direction_label_sigma
+                * labels.historical_volatility[:, branch]
+            )
+        if int(direction_selected.sum()) < self.config.minimum_rows:
+            raise ValueError("insufficient unambiguous branch returns for direction fit")
         drift_x, drift_center, drift_scale = _odd_symmetric_design(
-            drift_raw[selected]
+            drift_raw[direction_selected]
         )
-        target = labels.next_return[selected, branch]
-        sample_weight = self._recent_weights(len(target))
+        direction_target = labels.next_return[direction_selected, branch]
+        direction_mask = direction_selected[selected]
+        sample_weight = self._recent_weights(len(selected_target))[direction_mask]
+        sample_weight /= float(np.mean(sample_weight))
         active_mean, active_covariance = self._constrained_logistic_fit(
             drift_x[:, 1:],
-            (target > 0.0).astype(np.float64),
+            (direction_target > 0.0).astype(np.float64),
             bounds=[(None, None)] * len(drift_names),
             intercept_position=None,
             sample_weight=sample_weight,
@@ -172,20 +193,30 @@ class BayesianBranchModel:
         drift_covariance = np.zeros((len(drift_mean), len(drift_mean)))
         drift_covariance[1:, 1:] = active_covariance
         drift_return_scale = max(
-            float(np.average(np.abs(target), weights=sample_weight)),
+            float(np.average(np.abs(direction_target), weights=sample_weight)),
             self.config.variance_floor**0.5,
         )
-        fitted_logit = drift_x @ drift_mean
+        selected_design = np.column_stack(
+            (np.ones(len(selected_target)), drift_raw[selected] / drift_scale)
+        )
+        fitted_logit = selected_design @ drift_mean
         fitted_return = np.tanh(fitted_logit * 0.5) * drift_return_scale
-        residual = target - fitted_return
+        residual = selected_target - fitted_return
         diffusion_variance = max(
-            float(np.average(np.square(residual), weights=sample_weight)),
+            float(
+                np.average(
+                    np.square(residual),
+                    weights=self._recent_weights(len(selected_target)),
+                )
+            ),
             self.config.variance_floor,
         )
 
         selected_rows = np.flatnonzero(selected)
         calibration_positions, causal_direction = self._causal_drift_predictions(
-            drift_raw[selected], target
+            drift_raw[selected],
+            selected_target,
+            labels.historical_volatility[selected, branch],
         )
         calibration_rows = selected_rows[calibration_positions]
         usable = potential_valid[calibration_rows]
@@ -228,6 +259,8 @@ class BayesianBranchModel:
             potential_mode=self.config.potential_mode,
             drift_model="bayesian_direction_logit",
             drift_return_scale=drift_return_scale,
+            direction_label_sigma=self.config.direction_label_sigma,
+            direction_fit_rows=int(direction_selected.sum()),
         )
 
     def _fit_potential(
@@ -283,7 +316,9 @@ class BayesianBranchModel:
         )
         target = labels.next_return[selected, branch]
         positions, causal_drift = self._causal_drift_predictions(
-            drift_raw[selected], target
+            drift_raw[selected],
+            target,
+            labels.historical_volatility[selected, branch],
         )
         selected_rows = np.flatnonzero(selected)
         calibration_rows = selected_rows[positions]
@@ -355,20 +390,32 @@ class BayesianBranchModel:
         self,
         drift_raw: np.ndarray,
         target: np.ndarray,
+        historical_volatility: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         calibration_start = min(
             self.config.minimum_rows,
             max(5, len(target) // 3),
             len(target) - 1,
         )
-        positions = np.arange(calibration_start, len(target), dtype=np.int64)
-        predictions = np.empty(len(positions), dtype=np.float64)
-        for output_row, position in enumerate(positions):
-            design, _, scale = _odd_symmetric_design(drift_raw[:position])
-            weight = self._recent_weights(position)
+        positions: list[int] = []
+        predictions: list[float] = []
+        for position in range(calibration_start, len(target)):
+            direction_mask = np.ones(position, dtype=np.bool_)
+            if self.config.direction_label_sigma > 0.0:
+                direction_mask &= np.abs(target[:position]) > (
+                    self.config.direction_label_sigma
+                    * historical_volatility[:position]
+                )
+            if int(direction_mask.sum()) < calibration_start:
+                continue
+            design, _, scale = _odd_symmetric_design(
+                drift_raw[:position][direction_mask]
+            )
+            weight = self._recent_weights(position)[direction_mask]
+            weight /= float(np.mean(weight))
             active_mean, _ = self._constrained_logistic_fit(
                 design[:, 1:],
-                (target[:position] > 0.0).astype(np.float64),
+                (target[:position][direction_mask] > 0.0).astype(np.float64),
                 bounds=[(None, None)] * drift_raw.shape[1],
                 intercept_position=None,
                 sample_weight=weight,
@@ -381,13 +428,19 @@ class BayesianBranchModel:
                 )
             )
             return_scale = max(
-                float(np.average(np.abs(target[:position]), weights=weight)),
+                float(
+                    np.average(
+                        np.abs(target[:position][direction_mask]),
+                        weights=weight,
+                    )
+                ),
                 self.config.variance_floor**0.5,
             )
-            predictions[output_row] = float(
+            positions.append(position)
+            predictions.append(float(
                 np.tanh(float(current @ mean) * 0.5) * return_scale
-            )
-        return positions, predictions
+            ))
+        return np.asarray(positions, dtype=np.int64), np.asarray(predictions)
 
     def _constrained_logistic_fit(
         self,

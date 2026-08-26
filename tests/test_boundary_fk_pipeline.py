@@ -59,6 +59,12 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
     shape = (len(base.states.sessions), 2, 4)
     data = replace(
         base,
+        labels=replace(
+            base.labels,
+            historical_volatility=np.full_like(
+                base.labels.historical_volatility, 1e-6
+            ),
+        ),
         convection_strength=np.full(shape, 0.2),
         convection_valid=np.ones(shape, dtype=np.bool_),
     )
@@ -120,8 +126,6 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
     assert all(len(item["potential_mean"]) == 2 for item in posteriors)
     expected_drift_features = [
         "signed_path_efficiency",
-        "path_efficiency_delta_1d",
-        "path_direction_consistency_3d",
         "signed_member_synchronization",
     ]
     assert all(
@@ -222,10 +226,11 @@ def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) ->
             minimum_train_sessions=60,
             max_folds=1,
             fk_paths=1000,
-            minimum_direction_probability=0.5,
-            minimum_signal_to_noise=0.0,
-            minimum_survival_probability=0.0,
-        )
+                minimum_direction_probability=0.5,
+                minimum_signal_to_noise=0.0,
+                minimum_survival_probability=0.0,
+                direction_label_sigma=0.0,
+            )
     ).run(data, tmp_path)
     predictions = json.loads(
         (tmp_path / "feynman-kac-predictions.json").read_text(encoding="utf-8")

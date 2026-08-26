@@ -174,8 +174,6 @@ def test_direction_model_uses_the_minimal_causal_feature_set() -> None:
     )
     assert DRIFT_FEATURE_NAMES == (
         "signed_path_efficiency",
-        "path_efficiency_delta_1d",
-        "path_direction_consistency_3d",
         "signed_member_synchronization",
     )
     assert posterior.drift_feature_names == DRIFT_FEATURE_NAMES
@@ -186,6 +184,62 @@ def test_direction_model_uses_the_minimal_causal_feature_set() -> None:
     assert np.all(posterior.drift_center == 0.0)
     with pytest.raises(TypeError):
         BayesianBranchModelConfig(drift_feature_set="legacy")
+
+
+def test_direction_model_accepts_the_best_ordered_feature_subset() -> None:
+    features = (
+        "signed_path_efficiency",
+        "signed_member_synchronization",
+    )
+
+    config = BayesianBranchModelConfig(drift_feature_names=features)
+
+    assert config.drift_feature_names == features
+
+
+def test_direction_model_excludes_ambiguous_training_returns() -> None:
+    states, labels = _dataset(rows=100)
+    driver = np.sign(states.feature("signed_path_efficiency")[:, 0])
+    changed_returns = labels.next_return.copy()
+    changed_returns[:79, 0] = -driver[:79] * 0.0001
+    changed_returns[::4, 0] = driver[::4] * 0.01
+    changed = replace(labels, next_return=changed_returns)
+    cutoff = labels.target_time[78]
+    features = ("signed_path_efficiency", "signed_member_synchronization")
+
+    unfiltered = _fit_branch(
+        BayesianBranchModel(
+            BayesianBranchModelConfig(
+                minimum_rows=15,
+                drift_half_life_sessions=None,
+                drift_feature_names=features,
+                direction_label_sigma=0.0,
+            )
+        ),
+        states,
+        changed,
+        branch=0,
+        training_cutoff=cutoff,
+    )
+    filtered = _fit_branch(
+        BayesianBranchModel(
+            BayesianBranchModelConfig(
+                minimum_rows=15,
+                drift_half_life_sessions=None,
+                drift_feature_names=features,
+                direction_label_sigma=0.1,
+            )
+        ),
+        states,
+        changed,
+        branch=0,
+        training_cutoff=cutoff,
+    )
+
+    assert unfiltered.drift_mean[1] < 0.0
+    assert filtered.drift_mean[1] > 0.0
+    assert filtered.direction_label_sigma == 0.1
+    assert filtered.direction_fit_rows < filtered.fit_rows
 
 
 def test_two_branches_fit_separate_drift_posteriors_with_constant_diffusion() -> None:

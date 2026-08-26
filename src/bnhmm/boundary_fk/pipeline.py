@@ -50,6 +50,7 @@ class BoundaryFlowPipelineConfig:
     minimum_survival_probability: float = 0.35
     relative_strength_lookback_sessions: int = 20
     drift_feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
+    direction_label_sigma: float = 0.1
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -74,6 +75,8 @@ class BoundaryFlowPipelineConfig:
             and self.drift_half_life_sessions <= 0.0
         ):
             raise ValueError("drift half-life must be positive when provided")
+        if not 0.0 <= self.direction_label_sigma <= 5.0:
+            raise ValueError("direction label sigma must lie in [0, 5]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +188,7 @@ class BoundaryFlowPipeline:
                         drift_half_life_sessions=self.config.drift_half_life_sessions,
                         potential_mode="beta0_c1",
                         drift_feature_names=self.config.drift_feature_names,
+                        direction_label_sigma=self.config.direction_label_sigma,
                     )
                 )
                 posterior = model.fit(
@@ -210,6 +214,8 @@ class BoundaryFlowPipeline:
                         "drift_mean": posterior.drift_mean.tolist(),
                         "drift_model": posterior.drift_model,
                         "drift_return_scale": posterior.drift_return_scale,
+                        "direction_label_sigma": posterior.direction_label_sigma,
+                        "direction_fit_rows": posterior.direction_fit_rows,
                         "drift_half_life_sessions": self.config.drift_half_life_sessions,
                         "potential_target": "drift_disruption",
                         "diffusion_variance": posterior.diffusion_variance,
