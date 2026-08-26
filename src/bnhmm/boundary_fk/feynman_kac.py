@@ -159,10 +159,11 @@ class BranchFeynmanKacForecaster:
             raise ValueError("cannot forecast an invalid branch state")
 
         rng = np.random.default_rng(self.config.seed)
-        drift_coefficients = rng.multivariate_normal(
+        drift_coefficients = _antithetic_multivariate_normal(
+            rng,
             posterior.drift_mean,
             posterior.drift_covariance,
-            size=self.config.paths,
+            self.config.paths,
         )
         drift_linear = drift_coefficients @ posterior.drift_design(states, resolved_row)
         if posterior.drift_model == "bayesian_direction_logit":
@@ -250,3 +251,21 @@ class BranchFeynmanKacForecaster:
                 np.mean(convection_correction)
             ),
         )
+
+
+def _antithetic_multivariate_normal(
+    rng: np.random.Generator,
+    mean: np.ndarray,
+    covariance: np.ndarray,
+    size: int,
+) -> np.ndarray:
+    """Pair posterior deviations so sampling noise cannot flip its mean direction."""
+    mean = np.asarray(mean, dtype=np.float64)
+    half = size // 2
+    deviations = rng.multivariate_normal(
+        np.zeros_like(mean), covariance, size=half
+    )
+    samples = np.concatenate((mean + deviations, mean - deviations), axis=0)
+    if size % 2:
+        samples = np.concatenate((samples, mean[None, :]), axis=0)
+    return samples

@@ -517,6 +517,46 @@ def test_branch_ablation_disables_one_day_potential() -> None:
     assert enabled.trend_survival_probability < disabled.trend_survival_probability
 
 
+def test_direction_sign_is_not_flipped_by_monte_carlo_seed() -> None:
+    states, _ = _dataset()
+    row = int(
+        np.flatnonzero(states.feature("signed_path_efficiency")[:, 0] > 0.0)[0]
+    )
+    posterior = BayesianBranchPosterior(
+        branch=0,
+        drift_feature_names=("signed_path_efficiency",),
+        drift_center=np.zeros(1),
+        drift_scale=np.ones(1),
+        drift_mean=np.asarray([0.0, 1e-4]),
+        drift_covariance=np.diag([0.0, 1.0]),
+        diffusion_variance=1e-4,
+        potential_feature_names=CONVECTION_POTENTIAL_FEATURE_NAMES,
+        potential_center=np.zeros(1),
+        potential_scale=np.ones(1),
+        potential_mean=np.asarray([-8.0, 0.0]),
+        potential_covariance=np.zeros((2, 2)),
+        training_cutoff=np.datetime64("2024-01-01"),
+        fit_rows=60,
+        drift_model="bayesian_direction_logit",
+        drift_return_scale=0.01,
+    )
+
+    forecasts = [
+        BranchFeynmanKacForecaster(
+            BoundaryFeynmanKacConfig(paths=1000, seed=seed)
+        ).predict(
+            posterior,
+            states,
+            row=row,
+            potential_features=np.asarray([0.2]),
+            neutral_threshold=0.002,
+        )
+        for seed in range(10)
+    ]
+
+    assert all(item.expected_drift > 0.0 for item in forecasts)
+
+
 def test_branch_forecast_exposes_posterior_direction_strength() -> None:
     states, labels = _dataset()
     posterior = _fit_branch(
