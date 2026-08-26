@@ -24,6 +24,27 @@ class MinuteSource(Protocol):
     def fetch(self, symbol: str, timeframe: str, start: date, end: date): ...
 
 
+def topology_months_for_available_data(
+    *,
+    requested_start: np.datetime64,
+    requested_end: np.datetime64,
+    first_timestamp: np.datetime64,
+) -> np.ndarray:
+    """Return causal topology months with at least one prior month of data."""
+
+    start_month = np.datetime64(requested_start, "M")
+    end_month = np.datetime64(requested_end, "M")
+    first_eligible = np.datetime64(first_timestamp, "M") + np.timedelta64(1, "M")
+    effective_start = max(start_month, first_eligible)
+    if effective_start > end_month:
+        raise ValueError("available minute history does not reach a topology month")
+    return np.arange(
+        effective_start,
+        end_month + np.timedelta64(1, "M"),
+        dtype="datetime64[M]",
+    )
+
+
 def build_boundary_cache_variants(
     source: MinuteSource,
     cache: BoundaryDataCache,
@@ -54,11 +75,13 @@ def build_boundary_cache_variants(
     normalized = CausalBoundaryNormalizer().transform(panel)
     execution = build_member_execution_constraints(panel)
     topology_start = start_date - timedelta(days=300)
+    if not len(normalized.timestamps):
+        raise ValueError("boundary cache requires available minute history")
     months = tuple(
-        np.arange(
-            np.datetime64(topology_start, "M"),
-            np.datetime64(end_date, "M") + np.timedelta64(1, "M"),
-            dtype="datetime64[M]",
+        topology_months_for_available_data(
+            requested_start=np.datetime64(topology_start, "M"),
+            requested_end=np.datetime64(end_date, "M"),
+            first_timestamp=normalized.timestamps[0],
         )
     )
     rows: list[dict[str, object]] = []

@@ -14,7 +14,10 @@ from bnhmm.boundary_fk.cache import (
     BoundaryDataCacheKey,
     BoundaryDataCacheMiss,
 )
-from bnhmm.boundary_fk.precompute import build_boundary_cache_variants
+from bnhmm.boundary_fk.precompute import (
+    build_boundary_cache_variants,
+    topology_months_for_available_data,
+)
 from test_boundary_fk_pipeline import _walk_forward_data
 
 
@@ -136,6 +139,18 @@ def test_boundary_cache_manifest_lists_all_standard_windows(tmp_path: Path) -> N
     assert all(item["status"] == "ready" for item in manifest["variants"])
 
 
+def test_topology_months_never_precede_available_minute_history() -> None:
+    months = topology_months_for_available_data(
+        requested_start=np.datetime64("2023-03", "M"),
+        requested_end=np.datetime64("2026-08", "M"),
+        first_timestamp=np.datetime64("2024-01-02T09:30", "m"),
+    )
+
+    assert months[0] == np.datetime64("2024-02", "M")
+    assert months[-1] == np.datetime64("2026-08", "M")
+    assert np.all(months > np.datetime64("2024-01", "M"))
+
+
 def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -155,7 +170,11 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
     class FakeNormalizer:
         def transform(self, panel):
             calls["normalize"].append(panel)
-            return "normalized-panel"
+            return type(
+                "NormalizedPanel",
+                (),
+                {"timestamps": np.asarray(["2023-01-03T09:30"], dtype="datetime64[m]")},
+            )()
 
     class FakeTopologyConfig:
         def __init__(self, *, lookback_sessions, **kwargs):
@@ -169,12 +188,12 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
             calls["lookbacks"].append(config.lookback_sessions)
 
         def build(self, panel, months):
-            assert panel == "normalized-panel"
+            assert hasattr(panel, "timestamps")
             return (f"topology-{calls['lookbacks'][-1]}",)
 
     class FakeStateBuilder:
         def build(self, panel, topologies):
-            assert panel == "normalized-panel"
+            assert hasattr(panel, "timestamps")
             return _walk_forward_data(180)
 
     class FakeCache:
