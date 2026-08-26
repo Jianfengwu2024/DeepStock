@@ -178,12 +178,85 @@ def test_direction_model_uses_the_minimal_causal_feature_set() -> None:
     )
     assert posterior.drift_feature_names == DRIFT_FEATURE_NAMES
     assert posterior.drift_model == "bayesian_direction_logit"
-    assert posterior.drift_mean[0] == 0.0
-    assert np.all(posterior.drift_covariance[0] == 0.0)
-    assert np.all(posterior.drift_covariance[:, 0] == 0.0)
+    assert np.isfinite(posterior.drift_mean[0])
+    assert posterior.drift_covariance[0, 0] > 0.0
     assert np.all(posterior.drift_center == 0.0)
     with pytest.raises(TypeError):
         BayesianBranchModelConfig(drift_feature_set="legacy")
+
+
+def test_direction_model_learns_a_prior_shrunk_positive_drift_baseline() -> None:
+    states, labels = _dataset(rows=120)
+    values = states.values.copy()
+    for name in DRIFT_FEATURE_NAMES:
+        values[:, :, states.feature_names.index(name)] = 0.0
+    neutral_states = replace(states, values=values)
+    returns = labels.next_return.copy()
+    pattern = np.asarray([0.01] * 7 + [-0.01] * 3)
+    returns[:, 0] = np.resize(pattern, len(returns))
+    imbalanced = replace(labels, next_return=returns)
+    cutoff = labels.target_time[108]
+
+    regular = _fit_branch(
+        BayesianBranchModel(
+            BayesianBranchModelConfig(
+                minimum_rows=30,
+                prior_precision=2.0,
+                drift_half_life_sessions=None,
+                direction_label_sigma=0.0,
+            )
+        ),
+        neutral_states,
+        imbalanced,
+        branch=0,
+        training_cutoff=cutoff,
+    )
+    strongly_shrunk = _fit_branch(
+        BayesianBranchModel(
+            BayesianBranchModelConfig(
+                minimum_rows=30,
+                prior_precision=200.0,
+                drift_half_life_sessions=None,
+                direction_label_sigma=0.0,
+            )
+        ),
+        neutral_states,
+        imbalanced,
+        branch=0,
+        training_cutoff=cutoff,
+    )
+
+    assert regular.drift_mean[0] > 0.0
+    assert 0.0 < strongly_shrunk.drift_mean[0] < regular.drift_mean[0]
+    assert np.all(np.isfinite(regular.drift_mean))
+
+
+def test_balanced_direction_labels_keep_the_drift_baseline_near_zero() -> None:
+    states, labels = _dataset(rows=120)
+    values = states.values.copy()
+    for name in DRIFT_FEATURE_NAMES:
+        values[:, :, states.feature_names.index(name)] = 0.0
+    neutral_states = replace(states, values=values)
+    returns = labels.next_return.copy()
+    returns[:, 0] = np.resize(np.asarray([0.01, -0.01]), len(returns))
+    balanced = replace(labels, next_return=returns)
+
+    posterior = _fit_branch(
+        BayesianBranchModel(
+            BayesianBranchModelConfig(
+                minimum_rows=30,
+                prior_precision=2.0,
+                drift_half_life_sessions=None,
+                direction_label_sigma=0.0,
+            )
+        ),
+        neutral_states,
+        balanced,
+        branch=0,
+        training_cutoff=labels.target_time[108],
+    )
+
+    assert abs(posterior.drift_mean[0]) < 0.05
 
 
 def test_direction_model_accepts_the_best_ordered_feature_subset() -> None:

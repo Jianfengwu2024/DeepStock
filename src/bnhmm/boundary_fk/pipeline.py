@@ -213,6 +213,7 @@ class BoundaryFlowPipeline:
                         "potential_feature_names": list(posterior.potential_feature_names),
                         "drift_mean": posterior.drift_mean.tolist(),
                         "drift_model": posterior.drift_model,
+                        "drift_baseline_mode": posterior.drift_baseline_mode,
                         "drift_return_scale": posterior.drift_return_scale,
                         "direction_label_sigma": posterior.direction_label_sigma,
                         "direction_fit_rows": posterior.direction_fit_rows,

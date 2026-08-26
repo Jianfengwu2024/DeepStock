@@ -79,6 +79,7 @@ class BayesianBranchPosterior:
     fit_rows: int
     potential_mode: str = "beta0_c1"
     drift_model: str = "gaussian_return"
+    drift_baseline_mode: str = "bayesian_intercept"
     drift_return_scale: float = 1.0
     direction_label_sigma: float = 0.0
     direction_fit_rows: int = 0
@@ -90,6 +91,8 @@ class BayesianBranchPosterior:
             raise ValueError("branch diffusion variance must be finite and positive")
         if self.drift_model not in {"gaussian_return", "bayesian_direction_logit"}:
             raise ValueError("unknown branch drift model")
+        if self.drift_baseline_mode != "bayesian_intercept":
+            raise ValueError("unknown drift baseline mode")
         if not np.isfinite(self.drift_return_scale) or self.drift_return_scale <= 0.0:
             raise ValueError("branch drift return scale must be finite and positive")
 
@@ -182,16 +185,14 @@ class BayesianBranchModel:
         direction_mask = direction_selected[selected]
         sample_weight = self._recent_weights(len(selected_target))[direction_mask]
         sample_weight /= float(np.mean(sample_weight))
-        active_mean, active_covariance = self._constrained_logistic_fit(
-            drift_x[:, 1:],
+        drift_mean, drift_covariance = self._constrained_logistic_fit(
+            drift_x,
             (direction_target > 0.0).astype(np.float64),
-            bounds=[(None, None)] * len(drift_names),
-            intercept_position=None,
+            bounds=[(None, None)] * (len(drift_names) + 1),
+            intercept_position=0,
+            intercept_prior_multiplier=1.0,
             sample_weight=sample_weight,
         )
-        drift_mean = np.concatenate((np.zeros(1), active_mean))
-        drift_covariance = np.zeros((len(drift_mean), len(drift_mean)))
-        drift_covariance[1:, 1:] = active_covariance
         drift_return_scale = max(
             float(np.average(np.abs(direction_target), weights=sample_weight)),
             self.config.variance_floor**0.5,
@@ -258,6 +259,7 @@ class BayesianBranchModel:
             fit_rows=int(selected.sum()),
             potential_mode=self.config.potential_mode,
             drift_model="bayesian_direction_logit",
+            drift_baseline_mode="bayesian_intercept",
             drift_return_scale=drift_return_scale,
             direction_label_sigma=self.config.direction_label_sigma,
             direction_fit_rows=int(direction_selected.sum()),
@@ -413,14 +415,14 @@ class BayesianBranchModel:
             )
             weight = self._recent_weights(position)[direction_mask]
             weight /= float(np.mean(weight))
-            active_mean, _ = self._constrained_logistic_fit(
-                design[:, 1:],
+            mean, _ = self._constrained_logistic_fit(
+                design,
                 (target[:position][direction_mask] > 0.0).astype(np.float64),
-                bounds=[(None, None)] * drift_raw.shape[1],
-                intercept_position=None,
+                bounds=[(None, None)] * (drift_raw.shape[1] + 1),
+                intercept_position=0,
+                intercept_prior_multiplier=1.0,
                 sample_weight=weight,
             )
-            mean = np.concatenate((np.zeros(1), active_mean))
             current = np.concatenate(
                 (
                     np.ones(1),
@@ -449,6 +451,7 @@ class BayesianBranchModel:
         *,
         bounds: list[tuple[float | None, float | None]],
         intercept_position: int | None,
+        intercept_prior_multiplier: float = 1e-4,
         sample_weight: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         weights = (
@@ -458,7 +461,9 @@ class BayesianBranchModel:
         )
         prior = np.eye(design.shape[1]) * self.config.prior_precision
         if intercept_position is not None:
-            prior[intercept_position, intercept_position] *= 1e-4
+            prior[intercept_position, intercept_position] *= (
+                intercept_prior_multiplier
+            )
 
         def objective(coefficient: np.ndarray) -> tuple[float, np.ndarray]:
             linear = design @ coefficient

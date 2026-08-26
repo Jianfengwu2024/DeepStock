@@ -133,7 +133,8 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
         for item in posteriors
     )
     assert all(item["drift_model"] == "bayesian_direction_logit" for item in posteriors)
-    assert all(item["drift_mean"][0] == 0.0 for item in posteriors)
+    assert all(item["drift_baseline_mode"] == "bayesian_intercept" for item in posteriors)
+    assert all(np.isfinite(item["drift_mean"][0]) for item in posteriors)
     assert result.stages[0].drift_feature_names == tuple(expected_drift_features)
     assert 0.0 <= result.stages[0].metrics.direction_signal_coverage <= 1.0
     assert 0.0 <= result.stages[0].metrics.direction_signal_accuracy <= 1.0
