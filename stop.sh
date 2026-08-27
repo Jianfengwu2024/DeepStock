@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env_file="${project_root}/.env"
+
+if [[ -f "${env_file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${env_file}"
+    set +a
+fi
+
 service_name="${BNHMM_SERVICE_NAME:-bnhmm-web.service}"
-host="${BNHMM_WEB_HOST:-127.0.0.1}"
+health_host="${BNHMM_WEB_HEALTH_HOST:-127.0.0.1}"
 port="${BNHMM_WEB_PORT:-8765}"
-api_root="http://${host}:${port}/api"
+api_root="http://${health_host}:${port}/api"
 force=0
 
 case "${1:-}" in

@@ -8,6 +8,17 @@ ROOT = Path(__file__).parents[1] / "src" / "bnhmm" / "web" / "static"
 
 
 class SectorFlowStaticContractTests(unittest.TestCase):
+    def test_mobile_header_keeps_actions_compact(self) -> None:
+        styles = (ROOT / "styles.css").read_text(encoding="utf-8")
+
+        mobile = styles.split("@media (max-width: 820px)", 1)[1]
+        self.assertIn(".header-title { min-width: 0; flex: 1; }", mobile)
+        self.assertIn(
+            ".header-title p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+            mobile,
+        )
+        self.assertIn(".header-link span { display: none; }", mobile)
+
     def test_window_comparison_has_submit_entry_and_dedicated_result_view(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
@@ -108,7 +119,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('/static/app.js?v=0.27.5', html)
-        self.assertIn('/static/styles.css?v=0.27.5', html)
+        self.assertIn('/static/styles.css?v=0.28.0', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('name="boundary_maximum_branch_drawdown"', html)

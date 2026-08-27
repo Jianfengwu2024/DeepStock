@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import json
+import os
+import shlex
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -41,6 +42,50 @@ from .comparisons import (
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parents[2]
+
+
+def _load_environment_file(path: Path) -> None:
+    """Load a small dotenv-compatible file without overriding explicit variables."""
+
+    if not path.is_file():
+        return
+
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        try:
+            parts = shlex.split(raw_line, comments=True, posix=True)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"invalid environment file entry at {path}:{line_number}"
+            ) from exc
+
+        if not parts:
+            continue
+        if parts[0] == "export":
+            parts = parts[1:]
+        if len(parts) != 1 or "=" not in parts[0]:
+            raise RuntimeError(
+                f"invalid environment file entry at {path}:{line_number}"
+            )
+
+        key, value = parts[0].split("=", maxsplit=1)
+        if (
+            not key
+            or not key.isascii()
+            or key[0].isdigit()
+            or not key.replace("_", "").isalnum()
+        ):
+            raise RuntimeError(
+                f"invalid environment variable at {path}:{line_number}"
+            )
+        os.environ.setdefault(key, value)
+
+
+_load_environment_file(
+    Path(os.getenv("BNHMM_ENV_FILE", str(PROJECT_ROOT / ".env")))
+)
+
 STATIC_ROOT = PACKAGE_ROOT / "static"
 DEFAULT_JOB_ROOT = "/home/wujianfeng/private/bnhmm-storage/ui-runs"
 DEFAULT_SECTOR_DATASET_ROOT = "/home/share/data/sectors"
