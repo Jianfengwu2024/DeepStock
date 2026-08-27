@@ -198,12 +198,14 @@ requiring terminal commands. It keeps one GPU worker active at a time and
 persists each job, log, checkpoint, and report under the external storage tree.
 
 ```bash
-BNHMM_WEB_JOB_ROOT=/home/wujianfeng/private/bnhmm-storage/ui-runs \
+cp .env.example .env
+# Edit .env when the host, port, or storage path differs.
 python -m bnhmm.web.app
 ```
 
-Open `http://SERVER_IP:8765`. The console is intended for the trusted local
-network and must not be exposed directly to the public internet.
+The Python entry point loads `.env` from the repository root automatically. Open
+`http://SERVER_IP:8765` when using the example port. The console is intended for
+the trusted local network and must not be exposed directly to the public internet.
 
 The server installation includes convenience scripts in the repository root:
 
@@ -211,6 +213,11 @@ The server installation includes convenience scripts in the repository root:
 ./start.sh
 ./stop.sh
 ```
+
+Both scripts load the same root `.env`. The systemd template also loads it through
+`EnvironmentFile`; if the repository is installed elsewhere, update
+`WorkingDirectory`, `EnvironmentFile`, `PYTHONPATH`, and `ExecStart` in
+`deploy/bnhmm-web.service` together.
 
 `stop.sh` refuses to interrupt active training. Use `./stop.sh --force` only
 when the active jobs should be cancelled before the service stops.
