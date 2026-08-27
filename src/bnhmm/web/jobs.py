@@ -101,6 +101,7 @@ class WalkForwardJobRequest(BaseModel):
     boundary_minimum_signal_to_noise: float = Field(0.10, ge=0.0, le=10.0)
     boundary_minimum_survival_probability: float = Field(0.35, ge=0.0, le=1.0)
     boundary_relative_strength_lookback_sessions: int = Field(20, ge=2, le=252)
+    boundary_maximum_branch_drawdown: float = Field(0.05, gt=0.0, lt=1.0)
     regime_context_sessions: int = Field(5, ge=2, le=20)
     regime_hidden_channels: int = Field(16, ge=4, le=256)
     regime_latent_states: int = Field(12, ge=3, le=256)
@@ -511,6 +512,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.uncertainty_aversion),
         "--transaction-cost-bps",
         str(request.transaction_cost_bps),
+        "--maximum-branch-drawdown",
+        str(request.boundary_maximum_branch_drawdown),
         "--seed",
         str(request.seed),
     ]

@@ -110,6 +110,12 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
         "branch_target_exposures",
         "branch_flat_signal_counts",
         "gross_strategy_return",
+        "branch_equities",
+        "branch_peak_equities",
+        "branch_trailing_drawdowns",
+        "trailing_stop_pending",
+        "trailing_stop_triggered_branches",
+        "trailing_stop_forced_exit",
     }.issubset(predictions[0])
     assert not (tmp_path / "boundary-policy-ablation.json").exists()
     assert all(

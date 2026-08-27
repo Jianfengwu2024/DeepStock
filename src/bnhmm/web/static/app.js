@@ -45,6 +45,7 @@ const numberFields = new Set([
   "boundary_drift_half_life_sessions", "boundary_minimum_direction_probability",
   "boundary_minimum_signal_to_noise", "boundary_minimum_survival_probability",
   "boundary_relative_strength_lookback_sessions",
+  "boundary_maximum_branch_drawdown",
 ]);
 
 const strategyParameterFields = {
@@ -98,6 +99,7 @@ const strategyParameterFields = {
     "boundary_minimum_direction_probability", "boundary_minimum_signal_to_noise",
     "boundary_minimum_survival_probability", "transaction_cost_bps", "seed",
     "boundary_relative_strength_lookback_sessions",
+    "boundary_maximum_branch_drawdown",
   ],
 };
 
@@ -1210,7 +1212,7 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
   }
   if (returnDelta > 0) {
     return {
-      title: "背景外势版本超过纯路径效率基线",
+      title: "最强 1/3 超过全支流策略",
       level: "positive",
       returnDelta,
       drawdownImprovement,
@@ -1219,8 +1221,8 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
   }
   return {
     title: drawdownImprovement > 0
-      ? "背景外势降低了回撤，但没有提高收益，未通过改进标准"
-      : "背景外势未超过纯路径效率基线，未通过改进标准",
+      ? "最强 1/3 降低回撤，但没有提高收益，未通过改进标准"
+      : "最强 1/3 未改善全支流策略，未通过改进标准",
     level: drawdownImprovement > 0 ? "caution" : "negative",
     returnDelta,
     drawdownImprovement,
@@ -1259,6 +1261,12 @@ function paintBoundaryFlowResult(job, payload) {
   const metrics = stage.metrics || {};
   const baselineMetrics = baselineStage.metrics || {};
   const latest = predictions.at(-1);
+  const trailingStopEvents = predictions.filter(
+    item => (item.trailing_stop_triggered_branches || []).length > 0
+  ).length;
+  const trailingStopExitDays = predictions.filter(
+    item => item.trailing_stop_forced_exit
+  ).length;
   document.querySelector("#boundary-flow-result-status").textContent =
     `${formatInteger(predictions.length)} 个样本外交易日 · ${strategyLabel}`;
 
@@ -1279,6 +1287,8 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("平均实际仓位", formatPercent(metrics.average_exposure), "整个测试期平均"),
     boundaryMetric("涨停未买入", formatInteger(metrics.failed_buy_orders), "全天未打开涨停板"),
     boundaryMetric("跌停未卖出", formatInteger(metrics.failed_sell_orders), "全天未打开跌停板"),
+    boundaryMetric("支流止损触发", formatInteger(trailingStopEvents), "任一支流从持仓峰值回撤超过设定值"),
+    boundaryMetric("止损清仓日", formatInteger(trailingStopExitDays), "跌停未卖出时会持续清仓"),
   ].join("");
 
   if (!latest) {
@@ -1315,14 +1325,18 @@ function paintBoundaryFlowResult(job, payload) {
   const branchTargetExposures = latest.branch_target_exposures || [0, 0];
   const branchFlatSignalCounts = latest.branch_flat_signal_counts || [0, 0];
   const totalExposure = branchTargetExposures.reduce((total, value) => total + value, 0);
-  const holdings = latest.selected_symbols?.length
+  const normalHoldings = latest.selected_symbols?.length
     ? `当前持有 ${latest.selected_symbols.length} 只股票 · 目标仓位 ${formatPercent(totalExposure)} · 两支流仓位 ${branchTargetExposures.map(formatPercent).join(" / ")}`
     : `当前空仓 · 连续看平 ${branchFlatSignalCounts.join(" / ")}`;
+  const holdings = latest.trailing_stop_pending
+    ? `支流峰值回撤止损已触发 · 全局清仓锁生效 · 实际剩余 ${latest.actual_symbols?.length || 0} 只股票`
+    : normalHoldings;
   const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
   const potentialTrace = branches.map(branch =>
     `支流${branch.branch} 势能 ${formatNumber(branch.expected_effective_potential, 4)} / 存活率 ${formatPercent(branch.survival_confidence)}`
   ).join(" · ");
-  document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span><span>${escapeHtml(potentialTrace)}</span>`;
+  const riskTrace = `支流权益 ${latest.branch_equities?.map(value => formatNumber(value, 4)).join(" / ") || "—"} · 峰值回撤 ${latest.branch_trailing_drawdowns?.map(value => formatPercent(value)).join(" / ") || "—"}`;
+  document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span><span>${escapeHtml(potentialTrace)}</span><span>${escapeHtml(riskTrace)}</span>`;
 
   document.querySelector("#boundary-prediction-table").innerHTML = predictions.slice(-60).reverse().map(item => {
     const itemBranches = item.branches || [];
@@ -1366,6 +1380,7 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("FK 模拟路径", formatInteger(job.request.boundary_fk_paths)),
     boundaryMetric("模型版本", latest.model_version || posterior?.[0]?.model_name || "PathEfficiencyFK"),
     boundaryMetric("训练截止", latest.training_cutoff || "—"),
+    boundaryMetric("支流止损", `峰值回撤超过 ${formatPercent(job.request.boundary_maximum_branch_drawdown ?? 0.05)}`, "任一支流触发后全局清仓"),
     boundaryMetric("运行耗时", `${formatNumber(job.summary?.elapsed_seconds, 2)} 秒`),
   ].join("");
   switchBoundaryResultTab(state.boundaryTabByJob.get(job.id) || "evaluation", job.id);
@@ -1399,7 +1414,10 @@ function paintBoundaryReturnComparison(
     boundaryMetric(`${strategyLabel}收益`, formatPercent(metrics.net_total_return)),
     boundaryMetric(`${baselineLabel}收益`, formatPercent(baselineMetrics.net_total_return)),
     boundaryMetric("相对基线", formatPercent(Number(metrics.net_total_return || 0) - Number(baselineMetrics.net_total_return || 0))),
-    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
+    boundaryMetric(`${strategyLabel}最大回撤`, formatPercent(metrics.maximum_drawdown)),
+    boundaryMetric(`${baselineLabel}最大回撤`, formatPercent(baselineMetrics.maximum_drawdown)),
+    boundaryMetric(`${strategyLabel}平均仓位`, formatPercent(metrics.average_exposure)),
+    boundaryMetric(`${baselineLabel}平均仓位`, formatPercent(baselineMetrics.average_exposure)),
     boundaryMetric("盈利交易日", formatPercent(predictions.length ? wins / predictions.length : 0)),
     boundaryMetric("平均换手", formatPercent(metrics.average_turnover)),
   ].join("");

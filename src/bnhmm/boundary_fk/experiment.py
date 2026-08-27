@@ -62,6 +62,9 @@ def run_boundary_flow_experiment(args: Any) -> None:
                 args.relative_strength_lookback_sessions
             ),
             transaction_cost_bps=args.transaction_cost_bps,
+            maximum_branch_drawdown=getattr(
+                args, "maximum_branch_drawdown", 0.05
+            ),
         )
     ).run(data, output)
     summary = {
@@ -73,6 +76,9 @@ def run_boundary_flow_experiment(args: Any) -> None:
         "topology_lookback_sessions": args.topology_lookback_sessions,
         "relative_strength_lookback_sessions": (
             args.relative_strength_lookback_sessions
+        ),
+        "maximum_branch_drawdown": getattr(
+            args, "maximum_branch_drawdown", 0.05
         ),
         "elapsed_seconds": time.perf_counter() - started,
         "model_names": list(result.model_names),

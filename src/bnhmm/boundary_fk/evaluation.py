@@ -58,6 +58,12 @@ class TwoBranchForecastObservation:
     actual_weights: tuple[float, ...] = ()
     failed_buy_orders: int = 0
     failed_sell_orders: int = 0
+    branch_equities: tuple[float, float] = (1.0, 1.0)
+    branch_peak_equities: tuple[float, float] = (1.0, 1.0)
+    branch_trailing_drawdowns: tuple[float, float] = (0.0, 0.0)
+    trailing_stop_pending: bool = False
+    trailing_stop_triggered_branches: tuple[bool, bool] = (False, False)
+    trailing_stop_forced_exit: bool = False
 
 
 @dataclass(frozen=True, slots=True)

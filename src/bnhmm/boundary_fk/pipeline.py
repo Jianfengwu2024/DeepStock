@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from math import ceil
 from pathlib import Path
 
@@ -22,8 +22,14 @@ from .evaluation import (
     evaluate_two_branch_forecasts,
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
-from .policy import BoundaryPolicy, BoundaryPolicyConfig, BranchPositionState
+from .policy import (
+    FULL_BRANCH_EXPOSURE,
+    BoundaryPolicy,
+    BoundaryPolicyConfig,
+    BranchPositionState,
+)
 from .reporting import write_baseline_report, write_convection_report, write_json
+from .trailing_stop import TwoBranchTrailingStop
 from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
@@ -51,6 +57,7 @@ class BoundaryFlowPipelineConfig:
     relative_strength_lookback_sessions: int = 20
     drift_feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
     direction_label_sigma: float = 0.1
+    maximum_branch_drawdown: float = 0.05
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -77,6 +84,8 @@ class BoundaryFlowPipelineConfig:
             raise ValueError("drift half-life must be positive when provided")
         if not 0.0 <= self.direction_label_sigma <= 5.0:
             raise ValueError("direction label sigma must lie in [0, 5]")
+        if not 0.0 < self.maximum_branch_drawdown < 1.0:
+            raise ValueError("maximum branch drawdown must lie in (0, 1)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +115,8 @@ class PortfolioExecution:
     turnover: float
     failed_buy_orders: int
     failed_sell_orders: int
+    branch_returns: tuple[float, float]
+    symbol_branches: dict[str, int]
 
 
 class BoundaryFlowPipeline:
@@ -163,6 +174,11 @@ class BoundaryFlowPipeline:
         previous_weights = {name: {} for name in BOUNDARY_MODEL_NAMES}
         previous_branch_states = {
             name: (BranchPositionState(), BranchPositionState())
+            for name in BOUNDARY_MODEL_NAMES
+        }
+        previous_symbol_branches = {name: {} for name in BOUNDARY_MODEL_NAMES}
+        trailing_stops = {
+            name: TwoBranchTrailingStop(self.config.maximum_branch_drawdown)
             for name in BOUNDARY_MODEL_NAMES
         }
         policy = BoundaryPolicy(
@@ -272,6 +288,23 @@ class BoundaryFlowPipeline:
                         neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
                         previous_branch_states=previous_branch_states[model_name],
                     )
+                    trailing_stop_forced_exit = trailing_stops[
+                        model_name
+                    ].liquidation_pending
+                    if trailing_stop_forced_exit:
+                        decision = replace(
+                            decision,
+                            open_position=False,
+                            gate_reason="branch_trailing_stop",
+                            selected_symbols=(),
+                            target_weights=(),
+                            held_branches=(False, False),
+                            branch_target_exposures=(0.0, 0.0),
+                            branch_position_states=(
+                                BranchPositionState(),
+                                BranchPositionState(),
+                            ),
+                        )
                     current_weights = dict(
                         zip(
                             decision.selected_symbols,
@@ -279,11 +312,32 @@ class BoundaryFlowPipeline:
                             strict=True,
                         )
                     )
+                    decision_branches = (
+                        strongest_branches
+                        if model_name == BOUNDARY_MODEL_NAMES[1]
+                        else membership.branches
+                    )
+                    target_symbol_branches = {
+                        symbol: branch
+                        for branch, symbols in enumerate(decision_branches)
+                        for symbol in symbols
+                        if symbol in current_weights
+                    }
                     execution = self._execute_portfolio(
                         data,
                         int(row),
                         previous=previous_weights[model_name],
                         target=current_weights,
+                        previous_symbol_branches=previous_symbol_branches[model_name],
+                        target_symbol_branches=target_symbol_branches,
+                    )
+                    actual_held_branches = tuple(
+                        any(branch == index for branch in execution.symbol_branches.values())
+                        for index in range(2)
+                    )
+                    stop_snapshot = trailing_stops[model_name].update(
+                        execution.branch_returns,
+                        (actual_held_branches[0], actual_held_branches[1]),
                     )
                     observation = TwoBranchForecastObservation(
                         signal_time=signal,
@@ -307,9 +361,18 @@ class BoundaryFlowPipeline:
                         actual_weights=tuple(execution.weights.values()),
                         failed_buy_orders=execution.failed_buy_orders,
                         failed_sell_orders=execution.failed_sell_orders,
+                        branch_equities=stop_snapshot.branch_equities,
+                        branch_peak_equities=stop_snapshot.branch_peaks,
+                        branch_trailing_drawdowns=stop_snapshot.branch_drawdowns,
+                        trailing_stop_pending=stop_snapshot.liquidation_pending,
+                        trailing_stop_triggered_branches=(
+                            stop_snapshot.newly_triggered
+                        ),
+                        trailing_stop_forced_exit=trailing_stop_forced_exit,
                     )
                     observations_by_model[model_name].append(observation)
                     previous_weights[model_name] = execution.weights
+                    previous_symbol_branches[model_name] = execution.symbol_branches
                     previous_branch_states[model_name] = decision.branch_position_states
                     prediction_payloads.append(
                         self._prediction_payload(
@@ -541,7 +604,14 @@ class BoundaryFlowPipeline:
         *,
         previous: dict[str, float],
         target: dict[str, float],
+        previous_symbol_branches: dict[str, int] | None = None,
+        target_symbol_branches: dict[str, int] | None = None,
     ) -> PortfolioExecution:
+        previous_owners = previous_symbol_branches or {}
+        target_owners = target_symbol_branches or {}
+        for owner in (*previous_owners.values(), *target_owners.values()):
+            if owner not in (0, 1):
+                raise ValueError("symbol branch ownership must be zero or one")
         symbol_index = {symbol: index for index, symbol in enumerate(data.symbols)}
         weights = dict(previous)
         failed_sell_orders = 0
@@ -578,6 +648,14 @@ class BoundaryFlowPipeline:
             weights[symbol] = weights.get(symbol, 0.0) + increase * fill_ratio
 
         gross_return = 0.0
+        branch_contributions = [0.0, 0.0]
+
+        def add_contribution(owner: int | None, value: float) -> None:
+            nonlocal gross_return
+            gross_return += value
+            if owner is not None:
+                branch_contributions[owner] += value
+
         for symbol in set(previous) | set(weights):
             column = symbol_index[symbol]
             before = previous.get(symbol, 0.0)
@@ -586,16 +664,19 @@ class BoundaryFlowPipeline:
             if retained:
                 if not data.member_next_valid[row, column]:
                     raise ValueError(f"missing next-session return for held symbol {symbol}")
-                gross_return += retained * float(
-                    data.member_next_hold_returns[row, column]
+                add_contribution(
+                    target_owners.get(symbol, previous_owners.get(symbol)),
+                    retained * float(data.member_next_hold_returns[row, column]),
                 )
             if after > before:
-                gross_return += (after - before) * float(
-                    data.member_next_buy_returns[row, column]
+                add_contribution(
+                    target_owners.get(symbol),
+                    (after - before) * float(data.member_next_buy_returns[row, column]),
                 )
             elif before > after:
-                gross_return += (before - after) * float(
-                    data.member_next_sell_returns[row, column]
+                add_contribution(
+                    previous_owners.get(symbol),
+                    (before - after) * float(data.member_next_sell_returns[row, column]),
                 )
 
         cleaned = {
@@ -609,12 +690,26 @@ class BoundaryFlowPipeline:
                 for symbol in set(previous) | set(cleaned)
             )
         )
+        symbol_branches = {
+            symbol: (
+                target_owners[symbol]
+                if symbol in target_owners
+                else previous_owners[symbol]
+            )
+            for symbol in cleaned
+            if symbol in target_owners or symbol in previous_owners
+        }
         return PortfolioExecution(
             weights=cleaned,
             gross_return=float(gross_return),
             turnover=turnover,
             failed_buy_orders=failed_buy_orders,
             failed_sell_orders=failed_sell_orders,
+            branch_returns=(
+                branch_contributions[0] / FULL_BRANCH_EXPOSURE,
+                branch_contributions[1] / FULL_BRANCH_EXPOSURE,
+            ),
+            symbol_branches=symbol_branches,
         )
 
     @staticmethod
@@ -694,6 +789,20 @@ class BoundaryFlowPipeline:
             "turnover": observation.turnover,
             "failed_buy_orders": observation.failed_buy_orders,
             "failed_sell_orders": observation.failed_sell_orders,
+            "branch_equities": list(observation.branch_equities),
+            "branch_peak_equities": list(observation.branch_peak_equities),
+            "branch_trailing_drawdowns": list(
+                observation.branch_trailing_drawdowns
+            ),
+            "trailing_stop_pending": observation.trailing_stop_pending,
+            "trailing_stop_triggered_branches": [
+                index + 1
+                for index, triggered in enumerate(
+                    observation.trailing_stop_triggered_branches
+                )
+                if triggered
+            ],
+            "trailing_stop_forced_exit": observation.trailing_stop_forced_exit,
         }
 
     @staticmethod

@@ -1451,6 +1451,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--relative-strength-lookback-sessions", type=int, default=20
     )
     boundary_flow.add_argument("--transaction-cost-bps", type=float, default=5.0)
+    boundary_flow.add_argument(
+        "--maximum-branch-drawdown", type=float, default=0.05
+    )
     boundary_flow.add_argument("--seed", type=int, default=7)
     boundary_flow.add_argument("--max-folds", type=int)
     boundary_flow.set_defaults(handler=_boundary_flow_walk_forward)
@@ -1764,4 +1767,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
