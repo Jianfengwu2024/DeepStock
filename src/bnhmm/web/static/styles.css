@@ -148,12 +148,12 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .history-select-all { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--text); font-size: 12px; cursor: pointer; }
 .history-select-all input, .history-job-checkbox { width: 14px; height: 14px; margin: 0; accent-color: var(--green); }
 #history-selected-count { color: var(--muted); font-size: 12px; }
-.job-list { display: grid; gap: 5px; }
+.job-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
 .comparison-history-head { display: flex; align-items: center; justify-content: space-between; margin: 16px 5px 8px; padding-top: 12px; border-top: 1px solid var(--line); }
 .comparison-history-head h2 { margin: 0; font-size: 14px; }
 .comparison-history-head span { color: var(--muted); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
 .comparison-item { min-height: 64px; }
-.job-item { width: 100%; min-height: 70px; padding: 10px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--text); }
+.job-item { width: 100%; min-width: 0; max-width: 100%; min-height: 70px; overflow: hidden; padding: 10px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--text); }
 .job-item:hover { background: white; border-color: var(--line); }
 .job-item.active { background: white; border-color: var(--line-strong); box-shadow: var(--shadow); }
 .job-item.selection-mode { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 8px; cursor: pointer; }
