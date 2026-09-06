@@ -141,3 +141,126 @@ class NullThresholdTable:
             np.searchsorted(self.density_edges[1:-1], event_density, side="right")
         )
         return float(self.thresholds[min(index, len(self.thresholds) - 1)])
+
+
+@dataclass(frozen=True, slots=True)
+class MonthlyBackboneSupport:
+    month: np.datetime64
+    training_cutoff: np.datetime64
+    symbols: tuple[str, ...]
+    adjacency: NDArray[np.bool_]
+    similarity: NDArray[np.float64]
+    session_count: int
+    completeness: NDArray[np.float64]
+
+    def __post_init__(self) -> None:
+        count = len(self.symbols)
+        if self.adjacency.shape != (count, count):
+            raise ValueError("backbone adjacency must align with symbols")
+        if self.similarity.shape != self.adjacency.shape:
+            raise ValueError("backbone similarity must align with adjacency")
+        if self.completeness.shape != (count,):
+            raise ValueError("backbone completeness must align with symbols")
+        if np.any(np.diag(self.adjacency)) or not np.array_equal(
+            self.adjacency, self.adjacency.T
+        ):
+            raise ValueError("backbone support must be symmetric without self edges")
+        if self.session_count < 1:
+            raise ValueError("backbone requires completed sessions")
+        if self.training_cutoff >= self.month.astype("datetime64[M]").astype("datetime64[D]"):
+            raise ValueError("backbone training must precede its target month")
+
+
+@dataclass(frozen=True, slots=True)
+class DailyBranchingObservation:
+    parent_exposure: float
+    offspring: float
+    external: float
+    self_events: float = 0.0
+    session: np.datetime64 = np.datetime64("NaT")
+
+    def __post_init__(self) -> None:
+        values = (self.parent_exposure, self.offspring, self.external, self.self_events)
+        if any(not np.isfinite(value) or value < 0.0 for value in values):
+            raise ValueError("branching observations must be finite and nonnegative")
+
+    @property
+    def reproduction_estimate(self) -> float:
+        return float(self.offspring / max(self.parent_exposure, 1e-12))
+
+
+@dataclass(frozen=True, slots=True)
+class BranchingPosterior:
+    direction: Direction
+    symbols: tuple[str, ...]
+    adjacency: NDArray[np.bool_]
+    mean: NDArray[np.float64]
+    variance: NDArray[np.float64]
+    normalized_mean: NDArray[np.float64]
+    lag_weights: NDArray[np.float64]
+    external_rate: NDArray[np.float64]
+    self_rate: NDArray[np.float64]
+    training_cutoff: np.datetime64
+
+    def __post_init__(self) -> None:
+        count = len(self.symbols)
+        matrices = (self.adjacency, self.mean, self.variance, self.normalized_mean)
+        if any(matrix.shape != (count, count) for matrix in matrices):
+            raise ValueError("branching matrices must align with symbols")
+        if self.external_rate.shape != (count,) or self.self_rate.shape != (count,):
+            raise ValueError("branching rate vectors must align with symbols")
+        if self.lag_weights.ndim != 1 or len(self.lag_weights) == 0:
+            raise ValueError("branching lag weights are required")
+        if not np.isclose(float(self.lag_weights.sum()), 1.0):
+            raise ValueError("branching lag weights must sum to one")
+        if np.any(self.mean[~self.adjacency] != 0.0):
+            raise ValueError("branching mass must stay on candidate edges")
+
+    def observe(
+        self, events: ActivationPanel, session: np.datetime64
+    ) -> DailyBranchingObservation:
+        event_matrix = events.direction(self.direction)
+        rows = np.flatnonzero(
+            events.timestamps.astype("datetime64[D]")
+            == np.datetime64(session, "D")
+        )
+        if len(rows) == 0:
+            raise ValueError("observation session is unavailable")
+        local = event_matrix[rows]
+        exposure = 0.0
+        offspring = 0.0
+        self_events = 0.0
+        external = 0.0
+        for minute in range(len(rows)):
+            common = int(local[minute].sum()) >= max(2, int(np.ceil(len(self.symbols) * 0.3)))
+            for child in np.flatnonzero(local[minute]):
+                if common:
+                    external += 1.0
+                    continue
+                cross = 0.0
+                own = 0.0
+                for lag, lag_weight in enumerate(self.lag_weights, start=1):
+                    if minute < lag:
+                        continue
+                    parent_events = local[minute - lag]
+                    cross += float(
+                        np.sum(self.mean[parent_events, child]) * lag_weight
+                    )
+                    own += float(parent_events[child]) * self.self_rate[child] * lag_weight
+                    exposure += float(
+                        np.sum(self.normalized_mean[parent_events, child]) * lag_weight
+                    )
+                total = self.external_rate[child] + own + cross
+                if total <= 0.0:
+                    external += 1.0
+                else:
+                    offspring += cross / total
+                    self_events += own / total
+                    external += self.external_rate[child] / total
+        return DailyBranchingObservation(
+            parent_exposure=exposure,
+            offspring=offspring,
+            external=external,
+            self_events=self_events,
+            session=np.datetime64(session, "D"),
+        )
