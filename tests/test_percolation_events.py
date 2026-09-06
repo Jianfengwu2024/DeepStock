@@ -94,6 +94,34 @@ def test_price_sets_direction_and_volume_only_sets_mark() -> None:
     assert np.array_equal(events.direction("bull"), events.bull)
 
 
+def test_zero_volume_price_move_is_not_a_propagation_event() -> None:
+    panel = _panel()
+    volume = panel.volume.copy()
+    volume[-5, 0] = 0.0
+    corrupted = SectorMinutePanel(
+        symbols=panel.symbols,
+        timestamps=panel.timestamps,
+        open=panel.open,
+        close=panel.close,
+        volume=volume,
+        valid=panel.valid,
+    )
+
+    events = ActivationEventBuilder(
+        ActivationConfig(
+            velocity_lookback_sessions=3,
+            volume_lookback_sessions=3,
+            minimum_history_sessions=3,
+            minimum_minutes_per_session=4,
+            activation_threshold=0.5,
+        )
+    ).build(corrupted)
+
+    assert events.standardized_velocity[-5, 0] > 0.0
+    assert not events.bull[-5, 0]
+    assert not events.bear[-5, 0]
+
+
 def test_invalid_configuration_is_rejected() -> None:
     try:
         ActivationConfig(activation_threshold=0.0)

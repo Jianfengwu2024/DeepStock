@@ -113,7 +113,7 @@ class PercolationPipeline:
         constraints = build_member_execution_constraints(panel)
         sessions = np.unique(panel.timestamps.astype("datetime64[D]"))
         months = self._eligible_months(sessions)
-        if not months:
+        if len(months) == 0:
             raise ValueError("date range does not produce a mature sample-out month")
 
         rng = np.random.default_rng(self.config.random_seed)

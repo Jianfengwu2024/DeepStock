@@ -82,8 +82,9 @@ class ActivationEventBuilder:
                         }
                     )
 
-        bull = event_valid & (standardized >= self.config.activation_threshold)
-        bear = event_valid & (standardized <= -self.config.activation_threshold)
+        marked = np.isfinite(marks) & (marks > 0.0)
+        bull = event_valid & marked & (standardized >= self.config.activation_threshold)
+        bear = event_valid & marked & (standardized <= -self.config.activation_threshold)
         return ActivationPanel(
             symbols=panel.symbols,
             timestamps=panel.timestamps.copy(),

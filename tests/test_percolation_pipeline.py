@@ -26,7 +26,7 @@ class MemorySource:
 
 
 def _sector() -> dict[str, BarBatch]:
-    sessions = np.busday_offset(np.datetime64("2024-10-01"), np.arange(86))
+    sessions = np.busday_offset(np.datetime64("2024-10-01"), np.arange(110))
     slots = np.concatenate((np.arange(571, 691), np.arange(781, 901)))
     timestamps = np.asarray(
         [session + np.timedelta64(int(slot), "m") for session in sessions for slot in slots],
@@ -60,18 +60,19 @@ def test_pipeline_writes_causal_finite_artifacts(tmp_path: Path) -> None:
         symbols=tuple(source.batches),
         dataset_id="synthetic-sector",
         start="2024-10-01",
-        end="2025-02-15",
+        end="2025-04-01",
         activation_threshold=0.8,
         null_permutations=4,
         posterior_paths=40,
         minimum_valid_symbols=3,
-        max_folds=1,
+        max_folds=2,
         random_seed=23,
     )
 
     result = PercolationPipeline(config).run(source, tmp_path)
 
     assert result.predictions
+    assert len(result.folds) == 2
     required = {
         "run-summary.json",
         "percolation-evaluation.json",
@@ -89,4 +90,3 @@ def test_pipeline_writes_causal_finite_artifacts(tmp_path: Path) -> None:
     assert all(item["signal_time"] < item["available_at"] for item in payload)
     assert "NaN" not in (tmp_path / "percolation-evaluation.json").read_text()
     assert "渗流" in (tmp_path / "percolation-report-zh.md").read_text()
-

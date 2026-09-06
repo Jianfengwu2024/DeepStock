@@ -590,6 +590,8 @@ function formPayload() {
       payload.database_path = dataset.database_path;
       payload.symbols = [...dataset.symbols];
     }
+    payload.maximum_lag_minutes = 3;
+    payload.topology_lookback_sessions = 60;
     payload.training_scope = "sector-pooled";
     payload.device = "cpu";
   }
