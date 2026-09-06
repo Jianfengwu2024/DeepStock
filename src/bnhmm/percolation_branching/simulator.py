@@ -38,6 +38,7 @@ class PercolationSimulator:
         signal_time: np.datetime64,
         available_at: np.datetime64,
         target_session: np.datetime64,
+        training_cutoff: np.datetime64 | None = None,
         rng: np.random.Generator,
     ) -> PercolationPrediction:
         if bull_posterior.symbols != bear_posterior.symbols:
@@ -74,8 +75,10 @@ class PercolationSimulator:
             bull_giant_sum += bull_giant
             bear_giant_sum += bear_giant
         probabilities = tuple((phase_counts / self.paths).astype(float).tolist())
-        training_cutoff = max(
-            bull_posterior.training_cutoff, bear_posterior.training_cutoff
+        effective_cutoff = (
+            np.datetime64(training_cutoff)
+            if training_cutoff is not None
+            else max(bull_posterior.training_cutoff, bear_posterior.training_cutoff)
         )
         return PercolationPrediction(
             phase_probabilities=probabilities,
@@ -100,7 +103,7 @@ class PercolationSimulator:
             signal_time=np.datetime64(signal_time),
             available_at=np.datetime64(available_at),
             target_session=np.datetime64(target_session, "D"),
-            training_cutoff=training_cutoff,
+            training_cutoff=effective_cutoff,
             model_version=self.model_version,
         )
 
@@ -120,7 +123,7 @@ class PercolationSimulator:
             )
         )
         shape = self._sample_shape(posterior, rng) * reproduction
-        seed_total = int(rng.poisson(max(forecast.external_mean * count, 1e-9)))
+        seed_total = int(rng.poisson(max(forecast.external_mean, 1e-9)))
         active = np.zeros(count, dtype=np.int64)
         if seed_total:
             weights = np.maximum(posterior.external_rate, 0.0)

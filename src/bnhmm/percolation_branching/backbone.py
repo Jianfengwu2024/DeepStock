@@ -52,9 +52,13 @@ class SlowBackboneBuilder:
         )
         eligible = completeness >= self.minimum_complete_fraction
         raw = _pairwise_correlation(velocity, valid, self.correlation_shrinkage)
-        with np.errstate(invalid="ignore"):
-            common = np.nanmean(np.where(valid, velocity, np.nan), axis=1)
-        common = np.where(np.isfinite(common), common, 0.0)
+        valid_count = valid.sum(axis=1)
+        common = np.divide(
+            np.where(valid, velocity, 0.0).sum(axis=1),
+            valid_count,
+            out=np.zeros(len(velocity), dtype=np.float64),
+            where=valid_count > 0,
+        )
         residual = velocity - common[:, None]
         residual_corr = _pairwise_correlation(
             residual, valid, self.correlation_shrinkage
