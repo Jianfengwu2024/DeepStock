@@ -15,4 +15,4 @@ reports/
 *.npz
 .cursor/
 .triadmind/
-
+.worktrees/
