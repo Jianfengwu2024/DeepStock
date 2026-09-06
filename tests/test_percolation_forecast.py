@@ -42,6 +42,22 @@ def _forecast(reproduction: float) -> CriticalStateForecast:
     )
 
 
+def _isolated_posterior(direction: str, symbols: int = 5) -> BranchingPosterior:
+    empty = np.zeros((symbols, symbols), dtype=np.float64)
+    return BranchingPosterior(
+        direction=direction,
+        symbols=tuple(f"S{i}" for i in range(symbols)),
+        adjacency=np.zeros((symbols, symbols), dtype=np.bool_),
+        mean=empty.copy(),
+        variance=empty.copy(),
+        normalized_mean=empty.copy(),
+        lag_weights=np.asarray([0.5, 0.3, 0.2]),
+        external_rate=np.full(symbols, 0.2),
+        self_rate=np.zeros(symbols),
+        training_cutoff=np.datetime64("2025-01-30"),
+    )
+
+
 def test_supercritical_observations_raise_crossing_probability() -> None:
     model = CriticalStateFilter()
     state = model.initialize([])
@@ -115,6 +131,34 @@ def test_supercritical_simulation_grows_larger_clusters_deterministically() -> N
     assert sum(supercritical.phase_probabilities) == pytest.approx(1.0)
 
 
+def test_independent_external_seeds_do_not_merge_into_a_giant_cluster() -> None:
+    rainy = CriticalStateForecast(
+        log_reproduction_mean=float(np.log(1.5)),
+        log_reproduction_variance=0.0,
+        slope_mean=0.0,
+        slope_variance=0.0,
+        probability_supercritical=1.0,
+        external_mean=100.0,
+        external_variance=1.0,
+    )
+    prediction = PercolationSimulator(paths=100).predict(
+        _isolated_posterior("bull"),
+        _isolated_posterior("bear"),
+        rainy,
+        rainy,
+        bull_threshold=0.5,
+        bear_threshold=0.5,
+        signal_time=np.datetime64("2025-01-30T15:01"),
+        available_at=np.datetime64("2025-01-31T09:25"),
+        target_session=np.datetime64("2025-01-31"),
+        rng=np.random.default_rng(19),
+    )
+
+    assert prediction.bull_giant_fraction_mean == pytest.approx(0.2)
+    assert prediction.bear_giant_fraction_mean == pytest.approx(0.2)
+    assert prediction.phase_probabilities == pytest.approx((0.0, 1.0, 0.0, 0.0))
+
+
 def test_prediction_rejects_noncausal_timing() -> None:
     simulator = PercolationSimulator(paths=20)
     with pytest.raises(ValueError, match="causal"):
@@ -130,4 +174,3 @@ def test_prediction_rejects_noncausal_timing() -> None:
             target_session=np.datetime64("2025-01-31"),
             rng=np.random.default_rng(1),
         )
-

@@ -124,19 +124,36 @@ class PercolationSimulator:
         )
         shape = self._sample_shape(posterior, rng) * reproduction
         seed_total = int(rng.poisson(max(forecast.external_mean, 1e-9)))
-        active = np.zeros(count, dtype=np.int64)
-        if seed_total:
-            weights = np.maximum(posterior.external_rate, 0.0)
-            weights = weights / weights.sum() if weights.sum() > 0.0 else np.full(count, 1 / count)
-            seeds = rng.choice(count, size=seed_total, p=weights)
-            active += np.bincount(seeds, minlength=count)
+        if seed_total == 0:
+            return 0.0, np.zeros(count, dtype=np.float64)
+        weights = np.maximum(posterior.external_rate, 0.0)
+        weights = (
+            weights / weights.sum()
+            if weights.sum() > 0.0
+            else np.full(count, 1 / count)
+        )
+        seeds = np.unique(rng.choice(count, size=seed_total, p=weights))
+        largest = np.zeros(count, dtype=np.bool_)
+        for seed in seeds:
+            seen = self._simulate_cascade(shape, int(seed), rng)
+            if int(seen.sum()) > int(largest.sum()):
+                largest = seen
+                if bool(np.all(largest)):
+                    break
+        return float(largest.mean()), largest.astype(np.float64)
+
+    def _simulate_cascade(
+        self, shape: np.ndarray, seed: int, rng: np.random.Generator
+    ) -> np.ndarray:
+        """Simulate one source lineage so unrelated external rain stays separate."""
+        active = np.zeros(shape.shape[0], dtype=np.int64)
+        active[seed] = 1
         seen = active > 0
-        event_count = int(active.sum())
+        event_count = 1
         for _ in range(self.maximum_generations):
             if event_count >= self.maximum_events or int(active.sum()) == 0:
                 break
-            expected = active @ shape
-            offspring = rng.poisson(np.minimum(expected, self.maximum_events))
+            offspring = rng.poisson(np.minimum(active @ shape, self.maximum_events))
             remaining = self.maximum_events - event_count
             if int(offspring.sum()) > remaining:
                 scale = remaining / max(int(offspring.sum()), 1)
@@ -144,7 +161,7 @@ class PercolationSimulator:
             active = offspring.astype(np.int64)
             seen |= active > 0
             event_count += int(active.sum())
-        return float(seen.mean()), seen.astype(np.float64)
+        return seen
 
     @staticmethod
     def _sample_shape(
