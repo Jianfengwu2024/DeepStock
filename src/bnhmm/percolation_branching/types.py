@@ -89,3 +89,55 @@ class ActivationPanel:
         if name == "bear":
             return self.bear
         raise ValueError(f"unknown percolation direction: {name}")
+
+
+@dataclass(frozen=True, slots=True)
+class ReachabilityResult:
+    giant_fraction: float
+    source_membership: NDArray[np.bool_]
+    event_density: float
+    edge_count: int
+
+    def __post_init__(self) -> None:
+        if self.source_membership.ndim != 2 or (
+            self.source_membership.shape[0] != self.source_membership.shape[1]
+        ):
+            raise ValueError("source membership must be a square matrix")
+        if not 0.0 <= self.giant_fraction <= 1.0:
+            raise ValueError("giant fraction must be a probability")
+        if not 0.0 <= self.event_density <= 1.0:
+            raise ValueError("event density must be a probability")
+        if self.edge_count < 0:
+            raise ValueError("edge count cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class NullThresholdTable:
+    month: np.datetime64
+    training_cutoff: np.datetime64
+    direction: Direction
+    permutations: int
+    density_edges: NDArray[np.float64]
+    thresholds: NDArray[np.float64]
+
+    def __post_init__(self) -> None:
+        if self.density_edges.ndim != 1 or self.thresholds.ndim != 1:
+            raise ValueError("null threshold arrays must be one-dimensional")
+        if len(self.density_edges) != len(self.thresholds) + 1:
+            raise ValueError("density edges must bound every threshold bin")
+        if np.any(np.diff(self.density_edges) < 0.0):
+            raise ValueError("density edges must be ordered")
+        if np.any((self.thresholds < 0.0) | (self.thresholds > 1.0)):
+            raise ValueError("null thresholds must be probabilities")
+        if self.permutations < 1:
+            raise ValueError("at least one null permutation is required")
+        if self.training_cutoff >= self.month.astype("datetime64[M]").astype("datetime64[D]"):
+            raise ValueError("null calibration must end before its target month")
+
+    def threshold_for(self, event_density: float) -> float:
+        if not np.isfinite(event_density) or event_density < 0.0:
+            raise ValueError("event density must be finite and nonnegative")
+        index = int(
+            np.searchsorted(self.density_edges[1:-1], event_density, side="right")
+        )
+        return float(self.thresholds[min(index, len(self.thresholds) - 1)])
