@@ -27,8 +27,12 @@ class WebSectorFlowConfigTests(unittest.TestCase):
             self.assertEqual(defaults["percolation_activation_threshold"], 1.5)
             self.assertEqual(defaults["percolation_null_permutations"], 500)
             self.assertEqual(defaults["percolation_posterior_paths"], 10_000)
-            self.assertEqual(defaults["percolation_phase_probability_threshold"], 0.60)
+            self.assertEqual(defaults["percolation_phase_probability_threshold"], 0.51)
             self.assertEqual(defaults["device"], "cpu")
+            self.assertEqual(
+                WalkForwardJobRequest().percolation_phase_probability_threshold,
+                0.51,
+            )
 
             output = Path(directory, "percolation")
             output.mkdir()

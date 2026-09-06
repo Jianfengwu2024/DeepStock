@@ -54,6 +54,17 @@ def _sector() -> dict[str, BarBatch]:
     return result
 
 
+def test_pipeline_uses_narrow_percolation_threshold_by_default() -> None:
+    config = PercolationPipelineConfig(
+        symbols=tuple(f"S{index}" for index in range(20)),
+        dataset_id="synthetic-sector",
+        start="2024-01-01",
+        end="2025-01-01",
+    )
+
+    assert config.phase_probability_threshold == 0.51
+
+
 def test_pipeline_writes_causal_finite_artifacts(tmp_path: Path) -> None:
     source = MemorySource(_sector())
     config = PercolationPipelineConfig(

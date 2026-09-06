@@ -287,7 +287,7 @@ def config(request: Request) -> dict[str, Any]:
         "percolation_activation_threshold": 1.5,
         "percolation_null_permutations": 500,
         "percolation_posterior_paths": 10_000,
-        "percolation_phase_probability_threshold": 0.60,
+        "percolation_phase_probability_threshold": 0.51,
     }
     return {
         "devices": _devices(),

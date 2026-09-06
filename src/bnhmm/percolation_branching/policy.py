@@ -16,7 +16,7 @@ from .types import (
 
 @dataclass(frozen=True, slots=True)
 class PercolationPolicy:
-    bull_probability_threshold: float = 0.60
+    bull_probability_threshold: float = 0.51
     selection_fraction: float = 1.0 / 3.0
 
     def __post_init__(self) -> None:

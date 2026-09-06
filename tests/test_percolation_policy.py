@@ -34,7 +34,7 @@ def _prediction(probabilities: tuple[float, float, float, float]) -> Percolation
 def test_only_confident_bull_phase_opens_position() -> None:
     symbols = tuple(f"S{i}" for i in range(5))
     decision = PercolationPolicy().decide(
-        _prediction((0.08, 0.20, 0.11, 0.61)), symbols
+        _prediction((0.16, 0.17, 0.16, 0.51)), symbols
     )
 
     assert decision.open_position
@@ -43,7 +43,7 @@ def test_only_confident_bull_phase_opens_position() -> None:
     assert decision.selected_symbols == ("S0", "S3")
 
 
-@pytest.mark.parametrize("p_bull", [0.0, 0.40, 0.5999])
+@pytest.mark.parametrize("p_bull", [0.0, 0.40, 0.5099])
 def test_every_non_confident_phase_is_cash(p_bull: float) -> None:
     remainder = 1.0 - p_bull
     probabilities = (remainder * 0.4, remainder * 0.4, remainder * 0.2, p_bull)

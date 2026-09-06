@@ -106,7 +106,7 @@ class WalkForwardJobRequest(BaseModel):
     percolation_activation_threshold: float = Field(1.5, gt=0.0, le=20.0)
     percolation_null_permutations: int = Field(500, ge=20, le=100_000)
     percolation_posterior_paths: int = Field(10_000, ge=100, le=1_000_000)
-    percolation_phase_probability_threshold: float = Field(0.60, ge=0.5, le=1.0)
+    percolation_phase_probability_threshold: float = Field(0.51, ge=0.5, le=1.0)
     regime_context_sessions: int = Field(5, ge=2, le=20)
     regime_hidden_channels: int = Field(16, ge=4, le=256)
     regime_latent_states: int = Field(12, ge=3, le=256)

@@ -1477,7 +1477,7 @@ def build_parser() -> argparse.ArgumentParser:
     percolation.add_argument("--topology-lookback-sessions", type=int, choices=(60,), default=60)
     percolation.add_argument("--null-permutations", type=int, default=500)
     percolation.add_argument("--posterior-paths", type=int, default=10_000)
-    percolation.add_argument("--phase-probability-threshold", type=float, default=0.60)
+    percolation.add_argument("--phase-probability-threshold", type=float, default=0.51)
     percolation.add_argument("--transaction-cost-bps", type=float, default=5.0)
     percolation.add_argument("--seed", type=int, default=7)
     percolation.add_argument("--max-folds", type=int)

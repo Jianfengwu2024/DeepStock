@@ -25,8 +25,7 @@ def test_cli_exposes_fixed_physical_defaults() -> None:
     assert args.activation_threshold == 1.5
     assert args.maximum_lag_minutes == 3
     assert args.topology_lookback_sessions == 60
-    assert args.phase_probability_threshold == 0.60
+    assert args.phase_probability_threshold == 0.51
     assert args.null_permutations == 500
     assert args.posterior_paths == 10_000
     assert args.transaction_cost_bps == 5.0
-

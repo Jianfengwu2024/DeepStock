@@ -50,7 +50,7 @@ class PercolationPipelineConfig:
     topology_lookback_sessions: int = 60
     null_permutations: int = 500
     posterior_paths: int = 10_000
-    phase_probability_threshold: float = 0.60
+    phase_probability_threshold: float = 0.51
     transaction_cost_bps: float = 5.0
     random_seed: int = 7
     max_folds: int | None = None
