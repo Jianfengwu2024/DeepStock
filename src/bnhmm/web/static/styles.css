@@ -49,7 +49,7 @@ svg { width: 16px; height: 16px; stroke-width: 1.8; flex: 0 0 auto; }
 input, textarea { caret-color: var(--green); }
 :focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; }
-.config-panel, .run-history, .table-scroll, .symbol-list, .scope-tabs, .boundary-result-tabs, pre { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.config-panel, .run-history, .table-scroll, .symbol-list, .scope-tabs, .boundary-result-tabs, .percolation-result-tabs, pre { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .hidden { display: none !important; }
 .mobile-only { display: none !important; }
 
@@ -283,6 +283,54 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .boundary-return-legend i.baseline { background: #69767c; }
 .positive-text { color: var(--green); }
 .negative-text { color: #b64b45; }
+.percolation-results { display: grid; gap: 14px; min-width: 0; margin-bottom: 18px; }
+.percolation-result-tabs { position: sticky; top: 0; z-index: 3; display: flex; overflow-x: auto; background: white; border: 1px solid var(--line); }
+.percolation-result-tabs button { flex: 1 0 auto; min-width: 112px; height: 46px; padding: 0 var(--s3); color: var(--muted); background: white; border: 0; border-right: 1px solid var(--line); border-bottom: 3px solid transparent; font-size: var(--fs-body); font-weight: 700; cursor: pointer; }
+.percolation-result-tabs button:last-child { border-right: 0; }
+.percolation-result-tabs button:hover { color: var(--text); background: var(--panel-muted); }
+.percolation-result-tabs button.active { color: var(--text); background: var(--green-soft); border-bottom-color: var(--green); }
+.percolation-result-panel { display: grid; gap: 14px; min-width: 0; }
+.percolation-phase-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.percolation-phase { min-width: 0; padding: 12px; background: white; border: 1px solid var(--line); border-top: 3px solid #7b878c; border-radius: 5px; }
+.percolation-phase.bear { border-top-color: #147f63; }
+.percolation-phase.conflict { border-top-color: #b57a20; }
+.percolation-phase.bull { border-top-color: #c8463f; }
+.percolation-phase.active { box-shadow: 0 0 0 2px rgba(23,107,135,.16); }
+.percolation-phase > span, .percolation-phase > strong { display: block; overflow-wrap: anywhere; }
+.percolation-phase > span { color: var(--muted); font-size: var(--fs-caption); font-weight: 650; }
+.percolation-phase > strong { margin: 8px 0; font-size: 20px; font-variant-numeric: tabular-nums; }
+.percolation-phase > div { height: 5px; overflow: hidden; background: var(--panel-muted); }
+.percolation-phase > div i { display: block; height: 100%; background: #69767c; }
+.percolation-phase.bear > div i { background: #147f63; }
+.percolation-phase.conflict > div i { background: #b57a20; }
+.percolation-phase.bull > div i { background: #c8463f; }
+.percolation-critical-grid, .percolation-network-grid, .percolation-diagnostic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.percolation-critical-card, .percolation-network-grid > section, .percolation-diagnostic-grid > section { min-width: 0; padding: 13px; background: white; border: 1px solid var(--line); border-radius: 5px; }
+.percolation-critical-card > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.percolation-critical-card span { color: var(--muted); font-size: var(--fs-caption); font-weight: 650; }
+.percolation-critical-card strong { font-size: 25px; font-variant-numeric: tabular-nums; }
+.percolation-critical-card.supercritical { border-top: 3px solid #c8463f; }
+.percolation-critical-card.subcritical { border-top: 3px solid #147f63; }
+.critical-line { position: relative; height: 8px; margin: 13px 0; background: #edf0f1; }
+.critical-line b { position: absolute; left: 50%; top: -4px; width: 2px; height: 16px; background: #34444a; }
+.critical-line i { position: absolute; top: -2px; width: 12px; height: 12px; margin-left: -6px; background: #176b87; border-radius: 50%; }
+.percolation-critical-card dl { display: grid; gap: 7px; margin: 0; }
+.percolation-critical-card dl div { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding-top: 7px; }
+.percolation-critical-card dt { color: var(--muted); font-size: var(--fs-caption); }
+.percolation-critical-card dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.percolation-network-grid h3, .percolation-diagnostic-grid h3 { margin: 0 0 10px; font-size: var(--fs-lead); }
+.percolation-canvas-wrap { width: 100%; min-width: 0; overflow: hidden; background: white; border: 1px solid var(--line); }
+.percolation-canvas-wrap canvas { display: block; width: 100%; height: auto; aspect-ratio: 15 / 4; }
+.boundary-return-legend i.percolation-net { background: #176b87; }
+.boundary-return-legend i.percolation-gross { background: #7b878c; }
+.boundary-return-legend i.percolation-drawdown { height: 8px; background: rgba(200,70,63,.30); }
+.calibration-row { display: grid; grid-template-columns: 52px minmax(110px, 1fr) 126px 44px; align-items: center; gap: 8px; min-height: 35px; color: var(--text-2); font-size: var(--fs-caption); }
+.calibration-row > div { position: relative; height: 12px; background: var(--panel-muted); }
+.calibration-row i, .calibration-row b { position: absolute; left: 0; height: 5px; }
+.calibration-row i { top: 0; background: #176b87; }
+.calibration-row b { bottom: 0; background: #c8463f; }
+.calibration-row strong { text-align: right; font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
+.calibration-row small { color: var(--muted); text-align: right; }
 .boundary-data-control { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid var(--line); background: var(--panel-muted); }
 .boundary-data-control > div { display: grid; gap: 3px; min-width: 0; }
 .boundary-data-control strong { font-size: var(--fs-body); }
@@ -372,10 +420,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 }
 
 @media (max-width: 820px) {
-  .boundary-result-grid, .boundary-dynamics { grid-template-columns: 1fr; }
+  .boundary-result-grid, .boundary-dynamics, .percolation-critical-grid, .percolation-network-grid, .percolation-diagnostic-grid { grid-template-columns: 1fr; }
   .boundary-key-metrics, .boundary-model-quality, .boundary-run-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .boundary-result-tabs { position: static; }
+  .percolation-result-tabs { position: static; }
   .boundary-probabilities { grid-template-columns: repeat(3, minmax(76px, 1fr)); }
+  .percolation-phase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sector-regime-probabilities, .sector-regime-summary-grid { grid-template-columns: 1fr; }
   .mobile-only { display: inline-flex !important; }
   .app-shell { display: block; }
@@ -401,4 +451,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .scope-tab { flex: 0 0 auto; }
   .symbol-list { grid-template-columns: repeat(2, 1fr); }
   .sector-flow-head, .sector-flow-table-head { align-items: flex-start; flex-direction: column; }
+  .calibration-row { grid-template-columns: 48px minmax(90px, 1fr) 108px; }
+  .calibration-row small { display: none; }
 }

@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.28.1">
+  <link rel="stylesheet" href="/static/styles.css?v=0.28.2">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.27.5" defer></script>
+  <script src="/static/app.js?v=0.27.6" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -35,8 +35,9 @@
             <label><input type="radio" name="strategy" value="fk-stock"><span>FKStock</span></label>
             <label><input type="radio" name="strategy" value="sector-flow-bayes"><span>SectorFlow</span></label>
             <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>路径效率 FK</span></label>
+            <label><input type="radio" name="strategy" value="percolation-branching"><span>渗流分枝</span></label>
           </div>
-          <label>训练范围
+          <label class="percolation-technical">训练范围
             <select name="training_scope" id="training-scope">
               <option value="sector-pooled">概念板块联合训练</option>
               <option value="per-symbol">单股独立训练</option>
@@ -46,9 +47,9 @@
             <label>板块数据集<select name="dataset_id" id="dataset-select"></select></label>
             <div class="dataset-summary" id="dataset-summary"></div>
           </div>
-          <label>数据文件<input name="database_path" required></label>
-          <div class="field-head"><span>股票</span><button class="mini-button" type="button" id="choose-symbols"><i data-lucide="list-filter"></i>选择</button></div>
-          <textarea name="symbols" rows="3" required spellcheck="false"></textarea>
+          <label class="percolation-technical">数据文件<input name="database_path" required></label>
+          <div class="field-head percolation-technical"><span>股票</span><button class="mini-button" type="button" id="choose-symbols"><i data-lucide="list-filter"></i>选择</button></div>
+          <textarea class="percolation-technical" name="symbols" rows="3" required spellcheck="false"></textarea>
           <div class="two-columns">
             <label>开始日期<input name="start" type="date" required></label>
             <label>结束日期<input name="end" type="date" required></label>
@@ -76,7 +77,7 @@
           <label class="stock-only hidden">守恒辅助损失权重<input name="conservation_weight" type="number" min="0" max="10" step="0.05"></label>
         </details>
 
-        <details class="form-section" open>
+        <details class="form-section non-percolation-only" open>
           <summary>滚动样本外验证</summary>
           <div class="two-columns">
             <label>最少训练日<input name="minimum_train_sessions" type="number"></label>
@@ -159,6 +160,29 @@
             <label>交易成本（BP）<input name="transaction_cost_bps" type="number" min="0" step="0.1"><small>默认 5 BP：佣金 2 BP + 滑点 3 BP</small></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
           </div>
+        </details>
+
+        <details class="form-section percolation-only hidden" open>
+          <summary>渗流分枝</summary>
+          <div class="fixed-spec-grid">
+            <div class="fixed-spec"><span>输入</span><strong>仅使用板块成分股 1 分钟价量</strong></div>
+            <div class="fixed-spec"><span>传播网络</span><strong>多头、空头两张独立网络</strong></div>
+            <div class="fixed-spec"><span>传播延迟</span><strong>固定 1 至 3 分钟传播</strong></div>
+            <div class="fixed-spec"><span>慢骨架</span><strong>固定 60 日月度骨架</strong></div>
+            <div class="fixed-spec"><span>下一日四相</span><strong>看空 / 无贯通 / 多空冲突 / 看多</strong></div>
+            <div class="fixed-spec"><span>交易规则</span><strong>看多相达标时买净贯通前三分之一</strong></div>
+          </div>
+          <input type="hidden" name="maximum_lag_minutes" value="3">
+          <input type="hidden" name="topology_lookback_sessions" value="60">
+          <div class="two-columns">
+            <label>激活阈值<input name="percolation_activation_threshold" type="number" min="0.1" max="20" step="0.1"></label>
+            <label>随机置换次数<input name="percolation_null_permutations" type="number" min="20" max="100000" step="20"></label>
+            <label>后验路径数<input name="percolation_posterior_paths" type="number" min="100" max="1000000" step="100"></label>
+            <label>多头开仓概率<input name="percolation_phase_probability_threshold" type="number" min="0.5" max="1" step="0.01"></label>
+            <label>交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"><small>默认 5 BP：佣金 2 BP + 滑点 3 BP</small></label>
+            <label>随机种子<input name="seed" type="number" min="0"></label>
+          </div>
+          <div class="isolation-note"><i data-lucide="shield-check"></i><span>同分钟共振只算外部激活，不算股票间传播；所有预测只使用当时已成熟的数据。</span></div>
         </details>
 
         <details class="form-section holo-only hidden" open>
@@ -269,7 +293,7 @@
           </div>
         </details>
 
-        <details class="form-section non-sector-flow-only" open>
+        <details class="form-section non-sector-flow-only non-percolation-only" open>
           <summary>输出定义</summary>
           <div class="fixed-spec-grid">
             <div class="fixed-spec"><span>预测目标</span><strong>下一交易日</strong></div>
@@ -311,7 +335,7 @@
           </div>
         </details>
 
-        <details class="form-section">
+        <details class="form-section non-percolation-only">
           <summary id="policy-section-title">仓位策略</summary>
           <div class="two-columns">
             <label class="non-sector-flow-only non-boundary-flow-only">认知不确定性惩罚<input name="uncertainty_aversion" type="number" min="0" step="0.1"></label>
@@ -492,6 +516,67 @@
                 <div class="boundary-panel-intro"><strong>本次运行</strong><span>数据范围、模型版本、关键配置和结果文件集中在这里。</span></div>
                 <div class="boundary-run-summary" id="boundary-run-summary"></div>
                 <div class="download-row" id="boundary-flow-downloads"></div>
+              </div>
+            </section>
+
+            <section class="percolation-results hidden" id="percolation-results">
+              <div class="sector-flow-head">
+                <div><h3>渗流分枝</h3><span id="percolation-result-status" role="status" aria-live="polite"></span></div>
+                <span class="scope-badge">下一交易日四相</span>
+              </div>
+              <div class="percolation-result-tabs" id="percolation-result-tabs" role="tablist" aria-label="渗流分枝结果">
+                <button class="active" type="button" data-percolation-tab="evaluation">策略评估</button>
+                <button type="button" data-percolation-tab="prediction">相变预测</button>
+                <button type="button" data-percolation-tab="critical">临界后验</button>
+                <button type="button" data-percolation-tab="network">传播网络</button>
+                <button type="button" data-percolation-tab="returns">收益分析</button>
+                <button type="button" data-percolation-tab="calibration">校准诊断</button>
+                <button type="button" data-percolation-tab="summary">运行摘要</button>
+              </div>
+
+              <div class="percolation-result-panel" data-percolation-panel="evaluation">
+                <div class="boundary-evaluation-summary" id="percolation-evaluation-summary"></div>
+                <div class="boundary-key-metrics" id="percolation-evaluation-metrics"></div>
+                <div class="table-scroll"><table><thead><tr><th>基线</th><th>正确</th><th>样本</th><th>准确率</th></tr></thead><tbody id="percolation-baseline-table"></tbody></table></div>
+              </div>
+
+              <div class="percolation-result-panel hidden" data-percolation-panel="prediction">
+                <div class="boundary-panel-intro"><strong>下一日相变概率</strong><span>只有看多贯通概率最高且达到门槛时才开仓，其余状态保持空仓。</span></div>
+                <div class="percolation-phase-grid" id="percolation-phase-probabilities"></div>
+                <div class="percolation-canvas-wrap"><canvas id="percolation-phase-canvas" width="1200" height="280" aria-label="预测与实际四相时间线"></canvas></div>
+                <div class="table-scroll"><table><thead><tr><th>信号时间</th><th>目标日</th><th>预测</th><th>实际</th><th>看多概率</th><th>看空概率</th><th>持仓</th><th>交易限制</th></tr></thead><tbody id="percolation-prediction-table"></tbody></table></div>
+              </div>
+
+              <div class="percolation-result-panel hidden" data-percolation-panel="critical">
+                <div class="boundary-panel-intro"><strong>双网络临界状态</strong><span>R 大于 1 表示一次激活平均能继续传播；巨型簇比例表示贯通范围。</span></div>
+                <div class="percolation-critical-grid" id="percolation-critical-summary"></div>
+              </div>
+
+              <div class="percolation-result-panel hidden" data-percolation-panel="network">
+                <div class="boundary-panel-intro"><strong>月度传播源</strong><span>骨架每月固定一次，分别展示多头和空头网络中最强的传播源。</span></div>
+                <div class="percolation-network-grid" id="percolation-network-sources"></div>
+              </div>
+
+              <div class="percolation-result-panel hidden" data-percolation-panel="returns">
+                <div class="boundary-panel-intro"><strong>净值、回撤与仓位</strong><span>收益已扣除交易成本，并按涨跌停约束执行。</span></div>
+                <div class="boundary-key-metrics" id="percolation-return-metrics"></div>
+                <div class="boundary-return-legend"><span><i class="percolation-net"></i>成本后净值</span><span><i class="percolation-gross"></i>成本前净值</span><span><i class="percolation-drawdown"></i>回撤</span></div>
+                <div class="percolation-canvas-wrap"><canvas id="percolation-equity-canvas" width="1200" height="340" aria-label="渗流策略净值与回撤"></canvas></div>
+              </div>
+
+              <div class="percolation-result-panel hidden" data-percolation-panel="calibration">
+                <div class="boundary-panel-intro"><strong>概率是否可信</strong><span>混淆矩阵看四相误判方向；校准分组比较模型置信度和实际命中率。</span></div>
+                <div class="boundary-key-metrics" id="percolation-calibration-metrics"></div>
+                <div class="percolation-diagnostic-grid">
+                  <section><h3>混淆矩阵</h3><div class="table-scroll" id="percolation-confusion-matrix"></div></section>
+                  <section><h3>置信度校准</h3><div id="percolation-calibration"></div></section>
+                </div>
+              </div>
+
+              <div class="percolation-result-panel hidden" data-percolation-panel="summary">
+                <div class="boundary-panel-intro"><strong>本次运行</strong><span>数据范围、固定物理约束、样本外月份和结果文件。</span></div>
+                <div class="boundary-run-summary" id="percolation-run-summary"></div>
+                <div class="download-row" id="percolation-downloads"></div>
               </div>
             </section>
 

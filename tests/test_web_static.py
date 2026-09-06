@@ -128,8 +128,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.27.5', html)
-        self.assertIn('/static/styles.css?v=0.28.1', html)
+        self.assertIn('/static/app.js?v=0.27.6', html)
+        self.assertIn('/static/styles.css?v=0.28.2', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('name="boundary_maximum_branch_drawdown"', html)
@@ -274,6 +274,75 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertNotIn('"path-efficiency-direct"', script)
         self.assertNotIn("path-efficiency-evaluation.json", script)
         self.assertNotIn("path-efficiency-predictions.json", script)
+
+    def test_percolation_branching_has_a_dedicated_configuration_and_result_workspace(self) -> None:
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+        styles = (ROOT / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('value="percolation-branching"', html)
+        self.assertIn("渗流分枝", html)
+        for field in (
+            "percolation_activation_threshold",
+            "percolation_null_permutations",
+            "percolation_posterior_paths",
+            "percolation_phase_probability_threshold",
+            "transaction_cost_bps",
+            "seed",
+        ):
+            self.assertIn(f'name="{field}"', html)
+        self.assertIn('name="maximum_lag_minutes" value="3"', html)
+        self.assertIn('name="topology_lookback_sessions" value="60"', html)
+        self.assertIn("固定 1 至 3 分钟传播", html)
+        self.assertIn("固定 60 日月度骨架", html)
+
+        expected_tabs = (
+            ("evaluation", "策略评估"),
+            ("prediction", "相变预测"),
+            ("critical", "临界后验"),
+            ("network", "传播网络"),
+            ("returns", "收益分析"),
+            ("calibration", "校准诊断"),
+            ("summary", "运行摘要"),
+        )
+        for panel, label in expected_tabs:
+            self.assertIn(f'data-percolation-tab="{panel}"', html)
+            self.assertIn(f'data-percolation-panel="{panel}"', html)
+            self.assertIn(label, html)
+        for identifier in (
+            "percolation-results",
+            "percolation-phase-probabilities",
+            "percolation-prediction-table",
+            "percolation-critical-summary",
+            "percolation-network-sources",
+            "percolation-equity-canvas",
+            "percolation-confusion-matrix",
+            "percolation-calibration",
+            "percolation-run-summary",
+            "percolation-downloads",
+        ):
+            self.assertIn(f'id="{identifier}"', html)
+
+        self.assertIn('"percolation-branching": [', script)
+        self.assertIn('"percolation-branching": "PercolationBranching"', script)
+        self.assertIn("const percolation = strategy === \"percolation-branching\"", script)
+        self.assertIn("renderPercolationResult", script)
+        self.assertIn("switchPercolationResultTab", script)
+        self.assertIn("paintPercolationResult", script)
+        self.assertIn("drawPercolationEquity", script)
+        for artifact in (
+            "percolation-evaluation.json",
+            "percolation-baselines.json",
+            "percolation-predictions.json",
+            "percolation-posteriors.json",
+            "percolation-equity.json",
+            "percolation-network-summary.json",
+            "percolation-report-zh.md",
+        ):
+            self.assertIn(artifact, script)
+        self.assertIn('"fk-stock", "boundary-flow-fk", "percolation-branching"', script)
+        self.assertIn(".percolation-result-tabs", styles)
+        self.assertIn(".percolation-phase-grid", styles)
 
     def test_river_workspace_has_four_views_and_stock_inspector(self) -> None:
         html = (ROOT / "river.html").read_text(encoding="utf-8")

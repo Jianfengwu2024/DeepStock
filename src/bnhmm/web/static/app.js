@@ -12,6 +12,8 @@ const state = {
   symbolReportCache: new Map(),
   boundaryResultCache: new Map(),
   boundaryTabByJob: new Map(),
+  percolationResultCache: new Map(),
+  percolationTabByJob: new Map(),
   strategyFormValues: new Map(),
   activeStrategy: "bnhmm",
   historyEditing: false,
@@ -46,6 +48,8 @@ const numberFields = new Set([
   "boundary_minimum_signal_to_noise", "boundary_minimum_survival_probability",
   "boundary_relative_strength_lookback_sessions",
   "boundary_maximum_branch_drawdown",
+  "percolation_activation_threshold", "percolation_null_permutations",
+  "percolation_posterior_paths", "percolation_phase_probability_threshold",
 ]);
 
 const strategyParameterFields = {
@@ -101,6 +105,11 @@ const strategyParameterFields = {
     "boundary_relative_strength_lookback_sessions",
     "boundary_maximum_branch_drawdown",
   ],
+  "percolation-branching": [
+    "percolation_activation_threshold", "percolation_null_permutations",
+    "percolation_posterior_paths", "percolation_phase_probability_threshold",
+    "transaction_cost_bps", "seed",
+  ],
 };
 
 const strategyNamePrefixes = {
@@ -112,6 +121,7 @@ const strategyNamePrefixes = {
   "fk-stock": "FKStock",
   "sector-flow-bayes": "SectorFlow",
   "boundary-flow-fk": "PathEfficiencyFK-60D",
+  "percolation-branching": "PercolationBranching",
 };
 
 const statusText = {
@@ -242,12 +252,13 @@ function syncStrategySelection() {
   const fk = strategy === "fk-stock";
   const sectorFlow = strategy === "sector-flow-bayes";
   const boundaryFlow = strategy === "boundary-flow-fk";
+  const percolation = strategy === "percolation-branching";
   const holoLite = strategy === "holo-bnhmm-lite";
   const repair = strategy === "holo-repair";
   const repairName = document.querySelector("#repair-variant")?.value || "HoloRepair";
   const holo = strategy === "holo-bnhmm" || holoLite || repair;
   const bayesianHmm = strategy === "bnhmm" || holo;
-  const neural = !fk && !sectorFlow && !boundaryFlow;
+  const neural = !fk && !sectorFlow && !boundaryFlow && !percolation;
   document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", strategy !== "bnhmm"));
   document.querySelectorAll(".holo-only").forEach(element => element.classList.toggle("hidden", !holo));
   document.querySelectorAll(".repair-only").forEach(element => element.classList.toggle("hidden", !repair));
@@ -257,21 +268,26 @@ function syncStrategySelection() {
   document.querySelectorAll(".fk-only").forEach(element => element.classList.toggle("hidden", !fk));
   document.querySelectorAll(".sector-flow-only").forEach(element => element.classList.toggle("hidden", !sectorFlow));
   document.querySelectorAll(".boundary-flow-only").forEach(element => element.classList.toggle("hidden", !boundaryFlow));
+  document.querySelectorAll(".percolation-only").forEach(element => element.classList.toggle("hidden", !percolation));
+  document.querySelectorAll(".non-percolation-only").forEach(element => element.classList.toggle("hidden", percolation));
+  document.querySelectorAll(".percolation-technical").forEach(element => element.classList.toggle("hidden", percolation));
   document.querySelectorAll(".non-boundary-flow-only").forEach(element => element.classList.toggle("hidden", boundaryFlow));
-  document.querySelectorAll(".non-sector-flow-only").forEach(element => element.classList.toggle("hidden", sectorFlow || boundaryFlow));
-  document.querySelectorAll(".legacy-walk-only").forEach(element => element.classList.toggle("hidden", sectorFlow || boundaryFlow));
+  document.querySelectorAll(".non-sector-flow-only").forEach(element => element.classList.toggle("hidden", sectorFlow || boundaryFlow || percolation));
+  document.querySelectorAll(".legacy-walk-only").forEach(element => element.classList.toggle("hidden", sectorFlow || boundaryFlow || percolation));
   document.querySelectorAll(".neural-only").forEach(element => element.classList.toggle("hidden", !neural));
-  document.querySelectorAll(".compute-only").forEach(element => element.classList.toggle("hidden", fk || boundaryFlow));
+  document.querySelectorAll(".compute-only").forEach(element => element.classList.toggle("hidden", fk || boundaryFlow || percolation));
   const scope = document.querySelector("#training-scope");
   const perSymbol = scope.querySelector('option[value="per-symbol"]');
-  perSymbol.disabled = stock || fk || holo || sectorFlow || boundaryFlow;
-  if (stock || fk || holo || sectorFlow || boundaryFlow) scope.value = "sector-pooled";
+  perSymbol.disabled = stock || fk || holo || sectorFlow || boundaryFlow || percolation;
+  if (stock || fk || holo || sectorFlow || boundaryFlow || percolation) scope.value = "sector-pooled";
   document.querySelector('[name="profile_protocol"]').value = holo
     ? (holoLite
       ? "price-volume-holographic-lite-v1"
       : "price-volume-holographic-flow-v1")
     : "phase-space-10m-local-flow-v8";
-  document.querySelector("#brand-subtitle").textContent = boundaryFlow
+  document.querySelector("#brand-subtitle").textContent = percolation
+    ? "PercolationBranching · dual propagation networks"
+    : boundaryFlow
     ? "PathEfficiencyFK · Bayesian drift and potential"
     : sectorFlow
     ? "SectorFlow · Bayesian sector dynamics"
@@ -280,7 +296,7 @@ function syncStrategySelection() {
     : stock ? "StockTransformer · conservation language model"
       : holo ? `${repair ? repairName : holoLite ? "HoloLite" : "HoloBNHMM"} · 2D Bayesian flow field`
         : "BNHMM · Bayesian hidden-state model";
-  document.querySelector("#policy-section-title").textContent = sectorFlow || boundaryFlow
+  document.querySelector("#policy-section-title").textContent = sectorFlow || boundaryFlow || percolation
     ? "评估与成本"
     : "仓位策略";
   document.querySelector("#state-section-title").textContent = stock || fk
@@ -294,10 +310,10 @@ function syncStrategySelection() {
       ? "守恒 Token Transformer"
       : holo ? "二维局部场编码器 + Transformer" : "确定性 Transformer";
   }
-  const noDataset = (stock || fk || holo || sectorFlow || boundaryFlow) && state.datasets.length === 0;
+  const noDataset = (stock || fk || holo || sectorFlow || boundaryFlow || percolation) && state.datasets.length === 0;
   document.querySelector("#run-button").disabled = noDataset;
   document.querySelector("#form-error").textContent = noDataset
-    ? `${boundaryFlow ? "路径效率 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
+    ? `${percolation ? "渗流分枝" : boundaryFlow ? "路径效率 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
     : "";
   syncStrategyControlAvailability();
 }
@@ -558,11 +574,25 @@ function formPayload() {
       payload[name] = value;
     }
   }
-  payload.deterministic_training = form.elements.deterministic_training.checked;
-  payload.holographic_fields = currentStrategy() === "holo-bnhmm-lite"
-    ? ["density", "price_current", "volume_current", "divergence", "vorticity"]
-    : ["density", "price_current", "volume_current", "price_temperature", "volume_temperature", "covariance_flux", "divergence", "vorticity"];
-  payload.holographic_conv_layers = currentStrategy() === "holo-bnhmm-lite" ? 1 : 2;
+  const deterministicField = preferredFormControl(form, "deterministic_training");
+  if (deterministicField && !deterministicField.disabled) {
+    payload.deterministic_training = deterministicField.checked;
+  }
+  if (["holo-bnhmm", "holo-bnhmm-lite", "holo-repair"].includes(currentStrategy())) {
+    payload.holographic_fields = currentStrategy() === "holo-bnhmm-lite"
+      ? ["density", "price_current", "volume_current", "divergence", "vorticity"]
+      : ["density", "price_current", "volume_current", "price_temperature", "volume_temperature", "covariance_flux", "divergence", "vorticity"];
+    payload.holographic_conv_layers = currentStrategy() === "holo-bnhmm-lite" ? 1 : 2;
+  }
+  if (currentStrategy() === "percolation-branching") {
+    const dataset = state.datasets.find(item => item.dataset_id === payload.dataset_id);
+    if (dataset) {
+      payload.database_path = dataset.database_path;
+      payload.symbols = [...dataset.symbols];
+    }
+    payload.training_scope = "sector-pooled";
+    payload.device = "cpu";
+  }
   return payload;
 }
 
@@ -893,13 +923,16 @@ function renderJob(job) {
   const fk = job.request.strategy === "fk-stock";
   const sectorFlow = job.request.strategy === "sector-flow-bayes";
   const boundaryFlow = job.request.strategy === "boundary-flow-fk";
+  const percolation = job.request.strategy === "percolation-branching";
   const holoLite = job.request.strategy === "holo-bnhmm-lite";
   const repair = job.request.strategy === "holo-repair";
   const holo = job.request.strategy === "holo-bnhmm" || holoLite || repair;
   const dataset = state.datasets.find(
     item => item.dataset_id === job.request.dataset_id,
   );
-  if (boundaryFlow) {
+  if (percolation) {
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 双向分枝网络 · 固定 1–3 分钟传播 · 60 日月度骨架 · ${formatInteger(job.request.percolation_posterior_paths)} 条后验路径 · CPU`;
+  } else if (boundaryFlow) {
     document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 路径效率 FK · 两支流月度冻结 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
   } else if (sectorFlow) {
     const water = job.summary?.latest_water_state || {};
@@ -981,8 +1014,8 @@ function renderJob(job) {
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
-    ? (boundaryFlow ? "等待路径效率 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
-    : boundaryFlow ? "路径效率 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
+    ? (percolation ? "等待渗流分枝任务" : boundaryFlow ? "等待路径效率 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
+    : percolation ? "渗流分枝月度样本外计算中" : boundaryFlow ? "路径效率 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -1036,14 +1069,20 @@ function renderResultScope(job) {
 function renderSelectedResult(job) {
   const sectorFlow = job.request.strategy === "sector-flow-bayes";
   const boundaryFlow = job.request.strategy === "boundary-flow-fk";
+  const percolation = job.request.strategy === "percolation-branching";
   document.querySelector("#sector-flow-results").classList.toggle("hidden", !sectorFlow);
   document.querySelector("#boundary-flow-results").classList.toggle("hidden", !boundaryFlow);
+  document.querySelector("#percolation-results").classList.toggle("hidden", !percolation);
   const activePanel = document.querySelector(".tab.active")?.dataset.tab || "overview";
   document.querySelectorAll(".standard-result-only").forEach(element => {
-    if (sectorFlow || boundaryFlow) element.classList.add("hidden");
+    if (sectorFlow || boundaryFlow || percolation) element.classList.add("hidden");
     else if (element.matches(".tab-panel")) element.classList.toggle("hidden", element.dataset.panel !== activePanel);
     else element.classList.remove("hidden");
   });
+  if (percolation) {
+    renderPercolationResult(job);
+    return;
+  }
   if (boundaryFlow) {
     renderBoundaryFlowResult(job);
     return;
@@ -1535,6 +1574,289 @@ function drawBoundaryLine(canvas, values, label, color, baseline) {
   context.fillText(minimum.toFixed(3), 4, height - padding.bottom + 5);
 }
 
+const percolationPhaseNames = ["bear", "none", "conflict", "bull"];
+const percolationPhaseLabels = {
+  bear: "看空贯通",
+  none: "无贯通",
+  conflict: "多空冲突",
+  bull: "看多贯通",
+};
+
+function renderPercolationResult(job) {
+  const status = document.querySelector("#percolation-result-status");
+  const artifactLabels = {
+    "percolation-report-zh.md": "中文报告",
+    "percolation-evaluation.json": "策略评估",
+    "percolation-baselines.json": "基线结果",
+    "percolation-predictions.json": "相变预测",
+    "percolation-posteriors.json": "临界后验",
+    "percolation-equity.json": "收益序列",
+    "percolation-network-summary.json": "传播网络",
+    "run-summary.json": "运行摘要",
+  };
+  document.querySelector("#percolation-downloads").innerHTML = Object.entries(artifactLabels)
+    .filter(([name]) => job.artifacts?.[name])
+    .map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`)
+    .join("");
+
+  const cached = state.percolationResultCache.get(job.id);
+  if (cached?.error) {
+    status.textContent = `结果读取失败：${cached.error}`;
+    return;
+  }
+  if (cached?.evaluation && cached?.predictions) {
+    paintPercolationResult(job, cached);
+    return;
+  }
+  const evaluationUrl = job.artifacts?.["percolation-evaluation.json"];
+  const predictionsUrl = job.artifacts?.["percolation-predictions.json"];
+  if (!evaluationUrl || !predictionsUrl) {
+    status.textContent = job.status === "failed"
+      ? "运行失败，请查看日志"
+      : ["queued", "running"].includes(job.status) ? "双网络样本外计算中" : "暂无可读取的结果";
+    return;
+  }
+  if (cached?.loading) {
+    status.textContent = "正在读取结果";
+    return;
+  }
+
+  state.percolationResultCache.set(job.id, { loading: true });
+  status.textContent = "正在读取结果";
+  const load = name => job.artifacts?.[name] ? api(job.artifacts[name]) : Promise.resolve(name.endsWith(".json") ? {} : null);
+  Promise.all([
+    load("percolation-evaluation.json"),
+    load("percolation-baselines.json"),
+    load("percolation-predictions.json"),
+    load("percolation-posteriors.json"),
+    load("percolation-equity.json"),
+    load("percolation-network-summary.json"),
+  ]).then(([evaluation, baselines, predictions, posteriors, equity, networks]) => {
+    const payload = {
+      evaluation: evaluation || {},
+      baselines: baselines || {},
+      predictions: Array.isArray(predictions) ? predictions : [],
+      posteriors: Array.isArray(posteriors) ? posteriors : [],
+      equity: Array.isArray(equity) ? equity : [],
+      networks: Array.isArray(networks) ? networks : [],
+    };
+    state.percolationResultCache.set(job.id, payload);
+    if (state.selectedId === job.id) paintPercolationResult(job, payload);
+  }).catch(exception => {
+    state.percolationResultCache.set(job.id, { error: exception.message });
+    if (state.selectedId === job.id) status.textContent = `结果读取失败：${exception.message}`;
+  });
+}
+
+function switchPercolationResultTab(name, jobId = state.selectedId) {
+  if (jobId) state.percolationTabByJob.set(jobId, name);
+  document.querySelectorAll("[data-percolation-tab]").forEach(button => {
+    const active = button.dataset.percolationTab === name;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll("[data-percolation-panel]").forEach(panel => {
+    panel.classList.toggle("hidden", panel.dataset.percolationPanel !== name);
+  });
+}
+
+function paintPercolationResult(job, payload) {
+  const metrics = payload.evaluation || {};
+  const predictions = payload.predictions || [];
+  const latest = predictions.at(-1) || {};
+  const probabilities = Array.isArray(latest.phase_probabilities) ? latest.phase_probabilities : [0, 0, 0, 0];
+  document.querySelector("#percolation-result-status").textContent = job.status === "completed"
+    ? `${formatInteger(metrics.observations ?? predictions.length)} 次样本外预测`
+    : job.status === "failed" ? "运行失败，请查看日志" : "计算中";
+
+  document.querySelector("#percolation-phase-probabilities").innerHTML = percolationPhaseNames.map((name, index) => `
+    <div class="percolation-phase ${name}${latest.predicted_phase === name ? " active" : ""}">
+      <span>${percolationPhaseLabels[name]}</span>
+      <strong>${formatPercent(probabilities[index])}</strong>
+      <div><i style="width:${Math.max(0, Math.min(100, Number(probabilities[index] || 0) * 100))}%"></i></div>
+    </div>`).join("");
+
+  const bestBaseline = Math.max(0, ...Object.values(payload.baselines || {}).map(item => Number(item?.accuracy || 0)));
+  const summary = document.querySelector("#percolation-evaluation-summary");
+  summary.className = "boundary-evaluation-summary caution";
+  summary.innerHTML = `<strong>结果用于人机协同评估，不自动判定策略有效</strong><span>四相均衡准确率 ${formatPercent(metrics.balanced_accuracy)}；最高简单基线准确率 ${formatPercent(bestBaseline)}。还要结合概率校准、回撤和样本数量判断。</span>`;
+  document.querySelector("#percolation-evaluation-metrics").innerHTML = [
+    boundaryMetric("均衡准确率", formatPercent(metrics.balanced_accuracy)),
+    boundaryMetric("Macro F1", formatNumber(metrics.macro_f1, 4)),
+    boundaryMetric("Brier", formatNumber(metrics.brier_score, 4), "越低越好"),
+    boundaryMetric("校准误差 ECE", formatNumber(metrics.ece, 4), "越接近 0 越好"),
+    boundaryMetric("成本后收益", formatPercent(metrics.net_total_return)),
+    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
+  ].join("");
+  document.querySelector("#percolation-baseline-table").innerHTML = Object.entries(payload.baselines || {}).map(([name, item]) => `
+    <tr><td>${escapeHtml(percolationBaselineLabel(name))}</td><td>${formatInteger(item.correct)}</td><td>${formatInteger(item.observations)}</td><td>${formatPercent(item.accuracy)}</td></tr>`).join("");
+
+  document.querySelector("#percolation-prediction-table").innerHTML = predictions.slice(-80).reverse().map(item => {
+    const failed = Number(item.failed_buy_orders || 0) + Number(item.failed_sell_orders || 0);
+    return `<tr><td>${escapeHtml(item.signal_time || "—")}</td><td>${escapeHtml(item.target_session || "—")}</td><td>${escapeHtml(percolationPhaseLabels[item.predicted_phase] || item.predicted_phase || "—")}</td><td>${escapeHtml(percolationPhaseLabels[item.actual_phase] || item.actual_phase || "—")}</td><td>${formatPercent(item.phase_probabilities?.[3])}</td><td>${formatPercent(item.phase_probabilities?.[0])}</td><td>${formatInteger(item.selected_symbols?.length || 0)} 只</td><td>${failed ? `${failed} 笔受限` : "无"}</td></tr>`;
+  }).join("");
+  drawPercolationPhaseTimeline(document.querySelector("#percolation-phase-canvas"), predictions);
+
+  const latestBullPosterior = [...payload.posteriors].reverse().find(item => item.direction === "bull") || {};
+  const latestBearPosterior = [...payload.posteriors].reverse().find(item => item.direction === "bear") || {};
+  document.querySelector("#percolation-critical-summary").innerHTML = [
+    percolationCriticalCard("R+ 多头传播", latest.bull_reproduction_mean, latest.bull_supercritical_probability, latest.bull_giant_fraction_mean, latestBullPosterior),
+    percolationCriticalCard("R− 空头传播", latest.bear_reproduction_mean, latest.bear_supercritical_probability, latest.bear_giant_fraction_mean, latestBearPosterior),
+  ].join("");
+
+  const latestNetwork = payload.networks.at(-1) || {};
+  document.querySelector("#percolation-network-sources").innerHTML = [
+    percolationSourceTable("多头传播源", latestNetwork.bull_sources || []),
+    percolationSourceTable("空头传播源", latestNetwork.bear_sources || []),
+  ].join("");
+
+  document.querySelector("#percolation-return-metrics").innerHTML = [
+    boundaryMetric("成本前收益", formatPercent(metrics.gross_total_return)),
+    boundaryMetric("成本后收益", formatPercent(metrics.net_total_return)),
+    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
+    boundaryMetric("平均仓位", formatPercent(metrics.average_exposure)),
+    boundaryMetric("平均换手", formatPercent(metrics.average_turnover)),
+    boundaryMetric("开仓比例", formatPercent(metrics.open_rate)),
+    boundaryMetric("涨停买入受限", formatInteger(metrics.failed_buy_orders)),
+    boundaryMetric("跌停卖出受限", formatInteger(metrics.failed_sell_orders)),
+  ].join("");
+  drawPercolationEquity(document.querySelector("#percolation-equity-canvas"), payload.equity || []);
+
+  document.querySelector("#percolation-calibration-metrics").innerHTML = [
+    boundaryMetric("Brier", formatNumber(metrics.brier_score, 4)),
+    boundaryMetric("Log Loss", formatNumber(metrics.log_loss, 4)),
+    boundaryMetric("ECE", formatNumber(metrics.ece, 4)),
+    boundaryMetric("样本数量", formatInteger(metrics.observations)),
+  ].join("");
+  paintPercolationConfusion(metrics.confusion_matrix || []);
+  paintPercolationCalibration(predictions);
+
+  const configuration = job.summary?.configuration || {};
+  document.querySelector("#percolation-run-summary").innerHTML = [
+    boundaryMetric("数据集", job.request.dataset_id || "—"),
+    boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
+    boundaryMetric("成分股", `${formatInteger(job.summary?.symbols || job.request.symbols?.length)} 只`),
+    boundaryMetric("有效预测", formatInteger(metrics.observations ?? predictions.length)),
+    boundaryMetric("月度折数", formatInteger(job.summary?.folds?.length)),
+    boundaryMetric("固定骨架", `${configuration.topology_lookback_sessions ?? 60} 日`),
+    boundaryMetric("传播延迟", `1 至 ${configuration.maximum_lag_minutes ?? 3} 分钟`),
+    boundaryMetric("置换次数", formatInteger(configuration.null_permutations ?? job.request.percolation_null_permutations)),
+    boundaryMetric("后验路径", formatInteger(configuration.posterior_paths ?? job.request.percolation_posterior_paths)),
+    boundaryMetric("模型版本", job.summary?.model_version || latest.model_version || "percolation-branching-v1"),
+    boundaryMetric("训练截止", latest.training_cutoff || "—"),
+    boundaryMetric("排除股票", formatInteger(job.summary?.excluded_symbols?.length || 0)),
+  ].join("");
+  switchPercolationResultTab(state.percolationTabByJob.get(job.id) || "evaluation", job.id);
+}
+
+function percolationBaselineLabel(name) {
+  return ({ majority: "多数相", persistence: "昨日相延续", transition: "相位转移", simple_reproduction: "简单再生数" })[name] || name;
+}
+
+function percolationCriticalCard(title, reproduction, supercritical, giantFraction, posterior) {
+  const variances = (posterior.variance || []).flat(2).map(Number).filter(Number.isFinite);
+  const meanVariance = variances.length ? variances.reduce((sum, value) => sum + value, 0) / variances.length : NaN;
+  const critical = Number(reproduction) >= 1;
+  return `<section class="percolation-critical-card ${critical ? "supercritical" : "subcritical"}"><div><span>${title}</span><strong>${formatNumber(reproduction, 3)}</strong></div><div class="critical-line"><i style="left:${Math.max(0, Math.min(100, Number(reproduction || 0) / 2 * 100))}%"></i><b></b></div><dl><div><dt>临界线</dt><dd>1.000</dd></div><div><dt>超过临界概率</dt><dd>${formatPercent(supercritical)}</dd></div><div><dt>巨型簇比例</dt><dd>${formatPercent(giantFraction)}</dd></div><div><dt>边强度平均方差</dt><dd>${formatNumber(meanVariance, 5)}</dd></div></dl></section>`;
+}
+
+function percolationSourceTable(title, sources) {
+  const rows = sources.slice(0, 10).map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(item.symbol)}</td><td>${formatNumber(item.outgoing_strength, 4)}</td></tr>`).join("");
+  return `<section><h3>${title}</h3><div class="table-scroll"><table><thead><tr><th>#</th><th>股票</th><th>传播强度</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+
+function paintPercolationConfusion(matrix) {
+  const header = percolationPhaseNames.map(name => `<th>${percolationPhaseLabels[name]}</th>`).join("");
+  const rows = percolationPhaseNames.map((name, row) => `<tr><th>${percolationPhaseLabels[name]}</th>${percolationPhaseNames.map((_, column) => `<td>${formatInteger(matrix?.[row]?.[column] ?? 0)}</td>`).join("")}</tr>`).join("");
+  document.querySelector("#percolation-confusion-matrix").innerHTML = `<table><thead><tr><th>实际＼预测</th>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function paintPercolationCalibration(predictions) {
+  const bins = [
+    { minimum: 0.25, maximum: 0.40, values: [] },
+    { minimum: 0.40, maximum: 0.55, values: [] },
+    { minimum: 0.55, maximum: 0.70, values: [] },
+    { minimum: 0.70, maximum: 0.85, values: [] },
+    { minimum: 0.85, maximum: 1.01, values: [] },
+  ];
+  predictions.forEach(item => {
+    const probabilities = item.phase_probabilities || [];
+    const confidence = Math.max(...probabilities.map(Number).filter(Number.isFinite), 0);
+    const bin = bins.find(entry => confidence >= entry.minimum && confidence < entry.maximum);
+    if (bin) bin.values.push({ confidence, correct: item.predicted_phase === item.actual_phase ? 1 : 0 });
+  });
+  document.querySelector("#percolation-calibration").innerHTML = bins.map(bin => {
+    const count = bin.values.length;
+    const confidence = count ? bin.values.reduce((sum, item) => sum + item.confidence, 0) / count : 0;
+    const accuracy = count ? bin.values.reduce((sum, item) => sum + item.correct, 0) / count : 0;
+    return `<div class="calibration-row"><span>${Math.round(bin.minimum * 100)}–${Math.round(Math.min(bin.maximum, 1) * 100)}%</span><div><i style="width:${confidence * 100}%"></i><b style="width:${accuracy * 100}%"></b></div><strong>${count ? `${formatPercent(accuracy)} / ${formatPercent(confidence)}` : "无样本"}</strong><small>${count} 次</small></div>`;
+  }).join("");
+}
+
+function drawPercolationPhaseTimeline(canvas, predictions) {
+  if (!canvas || !predictions.length) return;
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = { left: 86, right: 22, top: 30, bottom: 34 };
+  const colors = { bear: "#147f63", none: "#7b878c", conflict: "#b57a20", bull: "#c8463f" };
+  const x = index => padding.left + index * (width - padding.left - padding.right) / Math.max(predictions.length - 1, 1);
+  const y = phase => padding.top + (3 - Math.max(0, percolationPhaseNames.indexOf(phase))) * (height - padding.top - padding.bottom) / 3;
+  context.clearRect(0, 0, width, height);
+  context.font = "14px sans-serif";
+  percolationPhaseNames.forEach(name => {
+    context.strokeStyle = "#d9dfe1";
+    context.beginPath(); context.moveTo(padding.left, y(name)); context.lineTo(width - padding.right, y(name)); context.stroke();
+    context.fillStyle = "#58676d";
+    context.fillText(percolationPhaseLabels[name], 4, y(name) + 5);
+  });
+  [["actual_phase", 6], ["predicted_phase", -6]].forEach(([field, offset]) => {
+    predictions.forEach((item, index) => {
+      context.fillStyle = field === "actual_phase" ? colors[item[field]] || "#7b878c" : "#ffffff";
+      context.strokeStyle = colors[item[field]] || "#7b878c";
+      context.lineWidth = 2;
+      context.beginPath(); context.arc(x(index), y(item[field]) + offset, 3.5, 0, Math.PI * 2); context.fill(); context.stroke();
+    });
+  });
+  context.fillStyle = "#58676d";
+  context.fillText("实心：实际　空心：预测", padding.left, height - 8);
+}
+
+function drawPercolationEquity(canvas, rows) {
+  if (!canvas || !rows.length) return;
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = { left: 58, right: 22, top: 22, bottom: 28 };
+  const split = Math.round(height * 0.70);
+  const gross = rows.map(item => Number(item.gross_equity)).filter(Number.isFinite);
+  const net = rows.map(item => Number(item.net_equity)).filter(Number.isFinite);
+  const drawdown = rows.map(item => Number(item.drawdown)).filter(Number.isFinite);
+  const all = [...gross, ...net, 1];
+  const minimum = Math.min(...all);
+  const maximum = Math.max(...all);
+  const span = Math.max(maximum - minimum, 1e-9);
+  const x = index => padding.left + index * (width - padding.left - padding.right) / Math.max(rows.length - 1, 1);
+  const y = value => padding.top + (maximum - value) * (split - padding.top - 12) / span;
+  context.clearRect(0, 0, width, height);
+  context.strokeStyle = "#d9dfe1";
+  context.beginPath(); context.moveTo(padding.left, split); context.lineTo(width - padding.right, split); context.stroke();
+  [[gross, "#7b878c"], [net, "#176b87"]].forEach(([values, color]) => {
+    context.strokeStyle = color; context.lineWidth = 3; context.beginPath();
+    values.forEach((value, index) => index ? context.lineTo(x(index), y(value)) : context.moveTo(x(index), y(value)));
+    context.stroke();
+  });
+  const maxDrawdown = Math.max(...drawdown, 1e-9);
+  context.fillStyle = "rgba(200,70,63,.20)";
+  context.beginPath(); context.moveTo(padding.left, split);
+  drawdown.forEach((value, index) => context.lineTo(x(index), split + value / maxDrawdown * (height - split - padding.bottom)));
+  context.lineTo(width - padding.right, split); context.closePath(); context.fill();
+  context.fillStyle = "#34444a"; context.font = "14px sans-serif";
+  context.fillText(maximum.toFixed(3), 4, padding.top + 5);
+  context.fillText(minimum.toFixed(3), 4, split - 12);
+  context.fillText(`最大回撤 ${formatPercent(maxDrawdown)}`, 4, height - 8);
+}
+
 function renderSectorFlowResult(job) {
   const summary = job.summary || {};
   const regimeMode = summary.protocol === "river-regime-v3";
@@ -1695,7 +2017,7 @@ function renderSymbolResult(job, symbol, summary) {
 
 function renderJobGpuMemory(job) {
   const element = document.querySelector("#run-gpu-memory");
-  const isGpu = !["fk-stock", "boundary-flow-fk"].includes(job.request.strategy) && String(job.request.device).startsWith("cuda:");
+  const isGpu = !["fk-stock", "boundary-flow-fk", "percolation-branching"].includes(job.request.strategy) && String(job.request.device).startsWith("cuda:");
   const trackingAvailable = Object.prototype.hasOwnProperty.call(job, "peak_gpu_memory_mib");
   if (isGpu && job.status === "running" && !trackingAvailable) {
     element.classList.remove("hidden");
@@ -1933,6 +2255,9 @@ function setupEvents() {
   document.querySelector("#boundary-data-build").addEventListener("click", buildBoundaryData);
   document.querySelectorAll("[data-boundary-tab]").forEach(button => {
     button.addEventListener("click", () => switchBoundaryResultTab(button.dataset.boundaryTab));
+  });
+  document.querySelectorAll("[data-percolation-tab]").forEach(button => {
+    button.addEventListener("click", () => switchPercolationResultTab(button.dataset.percolationTab));
   });
   document.querySelector("#apply-symbols").addEventListener("click", applySymbols);
   document.querySelector("#symbol-search").addEventListener("input", event => renderSymbolOptions(event.target.value));
