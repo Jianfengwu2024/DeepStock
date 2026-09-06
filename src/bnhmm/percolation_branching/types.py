@@ -264,3 +264,98 @@ class BranchingPosterior:
             self_events=self_events,
             session=np.datetime64(session, "D"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CriticalFilterState:
+    mean: NDArray[np.float64]
+    covariance: NDArray[np.float64]
+    external_shape: float
+    external_rate: float
+    last_session: np.datetime64 = np.datetime64("NaT")
+
+    def __post_init__(self) -> None:
+        if self.mean.shape != (2,) or self.covariance.shape != (2, 2):
+            raise ValueError("critical filter state must contain log R and slope")
+        if np.any(~np.isfinite(self.mean)) or np.any(~np.isfinite(self.covariance)):
+            raise ValueError("critical filter state must be finite")
+        if self.external_shape <= 0.0 or self.external_rate <= 0.0:
+            raise ValueError("external Gamma state must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class CriticalStateForecast:
+    log_reproduction_mean: float
+    log_reproduction_variance: float
+    slope_mean: float
+    slope_variance: float
+    probability_supercritical: float
+    external_mean: float
+    external_variance: float
+
+    def __post_init__(self) -> None:
+        values = (
+            self.log_reproduction_mean,
+            self.log_reproduction_variance,
+            self.slope_mean,
+            self.slope_variance,
+            self.probability_supercritical,
+            self.external_mean,
+            self.external_variance,
+        )
+        if any(not np.isfinite(value) for value in values):
+            raise ValueError("critical forecast values must be finite")
+        if self.log_reproduction_variance < 0.0 or self.slope_variance < 0.0:
+            raise ValueError("critical forecast variances cannot be negative")
+        if not 0.0 <= self.probability_supercritical <= 1.0:
+            raise ValueError("supercritical probability must be valid")
+        if self.external_mean < 0.0 or self.external_variance < 0.0:
+            raise ValueError("external forecast moments cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class PercolationPrediction:
+    phase_probabilities: tuple[float, float, float, float]
+    bull_reproduction_mean: float
+    bear_reproduction_mean: float
+    bull_supercritical_probability: float
+    bear_supercritical_probability: float
+    bull_giant_fraction_mean: float
+    bear_giant_fraction_mean: float
+    bull_membership_probability: NDArray[np.float64]
+    bear_membership_probability: NDArray[np.float64]
+    signal_time: np.datetime64
+    available_at: np.datetime64
+    target_session: np.datetime64
+    training_cutoff: np.datetime64
+    model_version: str = "percolation-branching-v1"
+
+    def __post_init__(self) -> None:
+        probabilities = np.asarray(self.phase_probabilities, dtype=np.float64)
+        if probabilities.shape != (4,) or np.any(probabilities < 0.0):
+            raise ValueError("four phase probabilities are required")
+        if not np.isclose(float(probabilities.sum()), 1.0, atol=1e-6):
+            raise ValueError("phase probabilities must sum to one")
+        if self.bull_membership_probability.shape != self.bear_membership_probability.shape:
+            raise ValueError("directional membership probabilities must align")
+        if np.any(
+            (self.bull_membership_probability < 0.0)
+            | (self.bull_membership_probability > 1.0)
+            | (self.bear_membership_probability < 0.0)
+            | (self.bear_membership_probability > 1.0)
+        ):
+            raise ValueError("membership probabilities must be valid")
+        target_day = self.target_session.astype("datetime64[D]")
+        if not (
+            self.training_cutoff <= self.signal_time
+            and self.signal_time < self.available_at
+            and self.signal_time.astype("datetime64[D]") < target_day
+            and self.available_at.astype("datetime64[D]") <= target_day
+        ):
+            raise ValueError("prediction timestamps must be causal")
+        if not self.model_version:
+            raise ValueError("prediction model version is required")
+
+    @property
+    def predicted_phase(self) -> PhaseName:
+        return PHASE_NAMES[int(np.argmax(self.phase_probabilities))]
