@@ -359,3 +359,80 @@ class PercolationPrediction:
     @property
     def predicted_phase(self) -> PhaseName:
         return PHASE_NAMES[int(np.argmax(self.phase_probabilities))]
+
+
+@dataclass(frozen=True, slots=True)
+class PercolationDecision:
+    open_position: bool
+    symbols: tuple[str, ...]
+    selected_symbols: tuple[str, ...]
+    target_weights: tuple[float, ...]
+    scores: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.target_weights) != len(self.symbols) or len(self.scores) != len(self.symbols):
+            raise ValueError("decision vectors must align with symbols")
+        if any(weight < 0.0 or not np.isfinite(weight) for weight in self.target_weights):
+            raise ValueError("target weights must be finite and nonnegative")
+        total = float(sum(self.target_weights))
+        if total > 1.0 + 1e-9 or self.open_position != (total > 0.0):
+            raise ValueError("decision open state must match target exposure")
+
+
+@dataclass(frozen=True, slots=True)
+class PercolationExecution:
+    actual_weights: NDArray[np.float64]
+    cash_weight: float
+    gross_return: float
+    net_return: float
+    turnover: float
+    failed_buy_orders: int
+    failed_sell_orders: int
+
+    def __post_init__(self) -> None:
+        values = (self.cash_weight, self.gross_return, self.net_return, self.turnover)
+        if any(not np.isfinite(value) for value in values):
+            raise ValueError("execution values must be finite")
+        if np.any(~np.isfinite(self.actual_weights)) or np.any(self.actual_weights < 0.0):
+            raise ValueError("actual weights must be finite and nonnegative")
+        if self.cash_weight < -1e-9 or self.turnover < 0.0:
+            raise ValueError("execution cash and turnover cannot be negative")
+        if self.failed_buy_orders < 0 or self.failed_sell_orders < 0:
+            raise ValueError("failed order counts cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class PercolationEvaluationObservation:
+    prediction: PercolationPrediction
+    actual_phase: PhaseName
+    decision: PercolationDecision
+    execution: PercolationExecution
+
+
+@dataclass(frozen=True, slots=True)
+class PercolationMetrics:
+    observations: int
+    confusion_matrix: NDArray[np.int64]
+    balanced_accuracy: float
+    macro_f1: float
+    precision: tuple[float, float, float, float]
+    recall: tuple[float, float, float, float]
+    brier_score: float
+    log_loss: float
+    ece: float
+    gross_total_return: float
+    net_total_return: float
+    maximum_drawdown: float
+    average_exposure: float
+    average_turnover: float
+    open_rate: float
+    failed_buy_orders: int
+    failed_sell_orders: int
+
+
+@dataclass(frozen=True, slots=True)
+class PhaseBaselines:
+    majority: PhaseName
+    persistence: PhaseName
+    transition: PhaseName
+    simple_reproduction: PhaseName
