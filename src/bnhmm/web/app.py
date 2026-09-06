@@ -276,6 +276,19 @@ def config(request: Request) -> dict[str, Any]:
         "boundary_relative_strength_lookback_sessions": 20,
         "boundary_maximum_branch_drawdown": 0.05,
     })
+    percolation_defaults = {
+        **defaults,
+        "strategy": "percolation-branching",
+        "training_scope": "sector-pooled",
+        "device": "cpu",
+        "maximum_lag_minutes": 3,
+        "topology_lookback_sessions": 60,
+        "transaction_cost_bps": 5.0,
+        "percolation_activation_threshold": 1.5,
+        "percolation_null_permutations": 500,
+        "percolation_posterior_paths": 10_000,
+        "percolation_phase_probability_threshold": 0.60,
+    }
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
@@ -291,6 +304,7 @@ def config(request: Request) -> dict[str, Any]:
             "fk-stock": fk_defaults,
             "sector-flow-bayes": sector_flow_defaults,
             "boundary-flow-fk": boundary_flow_defaults,
+            "percolation-branching": percolation_defaults,
         },
         "datasets": [item.as_json() for item in datasets],
         "repair_variants": [
@@ -736,6 +750,13 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "path-efficiency-convection-potential-report.md",
             "convection-potential-evaluation.json",
             "boundary-residual-analysis.json",
+            "percolation-evaluation.json",
+            "percolation-baselines.json",
+            "percolation-predictions.json",
+            "percolation-posteriors.json",
+            "percolation-equity.json",
+            "percolation-network-summary.json",
+            "percolation-report-zh.md",
             "ranking.csv",
             "predictions.csv",
         )

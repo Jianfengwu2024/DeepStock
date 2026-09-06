@@ -24,6 +24,33 @@ from bnhmm.web.jobs import (
 
 
 class WebJobTests(unittest.TestCase):
+    def test_percolation_job_requires_sector_dataset_and_builds_cpu_command(self) -> None:
+        request = WalkForwardJobRequest(
+            strategy="percolation-branching",
+            training_scope="sector-pooled",
+            dataset_id="semiconductor",
+            symbols=[f"S{index}" for index in range(20)],
+            maximum_lag_minutes=3,
+            topology_lookback_sessions=60,
+        )
+
+        command = build_command(request, Path("/tmp/percolation"))
+
+        self.assertIn("percolation-branching-walk-forward", command)
+        self.assertEqual(command[command.index("--maximum-lag-minutes") + 1], "3")
+        self.assertEqual(command[command.index("--topology-lookback-sessions") + 1], "60")
+        self.assertEqual(command[command.index("--null-permutations") + 1], "500")
+        self.assertEqual(command[command.index("--posterior-paths") + 1], "10000")
+        self.assertNotIn("--device", command)
+        self.assertNotIn("--epochs", command)
+
+        with self.assertRaises(ValidationError):
+            WalkForwardJobRequest(strategy="percolation-branching")
+        with self.assertRaises(ValidationError):
+            request.model_copy(update={"maximum_lag_minutes": 2}).model_validate(
+                request.model_copy(update={"maximum_lag_minutes": 2}).model_dump()
+            )
+
     def test_completed_artifact_directory_without_job_metadata_is_discovered(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, "20260826-PathEfficiencyFK-StrongestThird-20D-5BP")

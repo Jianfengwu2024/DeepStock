@@ -11,6 +11,58 @@ from bnhmm.web.jobs import JobManager, JobRecord, WalkForwardJobRequest
 
 
 class WebSectorFlowConfigTests(unittest.TestCase):
+    def test_config_exposes_percolation_defaults_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = JobManager(directory, Path.cwd())
+            request = SimpleNamespace(
+                app=SimpleNamespace(
+                    state=SimpleNamespace(
+                        jobs=manager,
+                        sector_datasets=SimpleNamespace(list=lambda: []),
+                    )
+                )
+            )
+            payload = config(request)
+            defaults = payload["strategy_defaults"]["percolation-branching"]
+            self.assertEqual(defaults["percolation_activation_threshold"], 1.5)
+            self.assertEqual(defaults["percolation_null_permutations"], 500)
+            self.assertEqual(defaults["percolation_posterior_paths"], 10_000)
+            self.assertEqual(defaults["percolation_phase_probability_threshold"], 0.60)
+            self.assertEqual(defaults["device"], "cpu")
+
+            output = Path(directory, "percolation")
+            output.mkdir()
+            names = (
+                "percolation-evaluation.json",
+                "percolation-baselines.json",
+                "percolation-predictions.json",
+                "percolation-posteriors.json",
+                "percolation-equity.json",
+                "percolation-network-summary.json",
+                "percolation-report-zh.md",
+            )
+            for name in names:
+                (output / name).write_text("{}", encoding="utf-8")
+            record = JobRecord(
+                id="percolation",
+                status="completed",
+                created_at=datetime.now(timezone.utc),
+                output_dir=str(output),
+                request=WalkForwardJobRequest(
+                    strategy="percolation-branching",
+                    training_scope="sector-pooled",
+                    dataset_id="semiconductor",
+                    symbols=[f"S{index}" for index in range(20)],
+                    maximum_lag_minutes=3,
+                ),
+            )
+            with manager._lock:
+                manager._jobs[record.id] = record
+            job_payload = _job_payload(manager, record, detail=False)
+            manager.close()
+
+        self.assertTrue(all(name in job_payload["artifacts"] for name in names))
+
     def test_walk_forward_request_accepts_120_day_boundary_window(self) -> None:
         request = WalkForwardJobRequest(
             strategy="boundary-flow-fk",

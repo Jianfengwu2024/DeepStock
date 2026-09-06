@@ -44,6 +44,7 @@ class WalkForwardJobRequest(BaseModel):
         "fk-stock",
         "sector-flow-bayes",
         "boundary-flow-fk",
+        "percolation-branching",
     ] = "bnhmm"
     repair_variant: str | None = None
     name: str = "experiment"
@@ -102,6 +103,10 @@ class WalkForwardJobRequest(BaseModel):
     boundary_minimum_survival_probability: float = Field(0.35, ge=0.0, le=1.0)
     boundary_relative_strength_lookback_sessions: int = Field(20, ge=2, le=252)
     boundary_maximum_branch_drawdown: float = Field(0.05, gt=0.0, lt=1.0)
+    percolation_activation_threshold: float = Field(1.5, gt=0.0, le=20.0)
+    percolation_null_permutations: int = Field(500, ge=20, le=100_000)
+    percolation_posterior_paths: int = Field(10_000, ge=100, le=1_000_000)
+    percolation_phase_probability_threshold: float = Field(0.60, ge=0.5, le=1.0)
     regime_context_sessions: int = Field(5, ge=2, le=20)
     regime_hidden_channels: int = Field(16, ge=4, le=256)
     regime_latent_states: int = Field(12, ge=3, le=256)
@@ -225,6 +230,7 @@ class WalkForwardJobRequest(BaseModel):
             not in {
                 "sector-flow-bayes",
                 "boundary-flow-fk",
+                "percolation-branching",
             }
             and self.minimum_train_sessions <= self.tuning_sessions
         ):
@@ -277,9 +283,17 @@ class WalkForwardJobRequest(BaseModel):
                 "fk-stock",
                 "sector-flow-bayes",
                 "boundary-flow-fk",
+                "percolation-branching",
             }
             if self.strategy in sector_only and self.training_scope != "sector-pooled":
                 raise ValueError(f"{self.strategy} currently requires a sector dataset")
+            if self.strategy == "percolation-branching":
+                if len(self.symbols) < 20:
+                    raise ValueError("percolation-branching requires at least twenty symbols")
+                if self.maximum_lag_minutes != 3:
+                    raise ValueError("percolation propagation lag is fixed at three minutes")
+                if self.topology_lookback_sessions != 60:
+                    raise ValueError("percolation topology is fixed at sixty sessions")
             if self.strategy == "holo-repair" and self.repair_variant is None:
                 raise ValueError("holo-repair requires a named repair variant")
             if self.strategy != "holo-repair" and self.repair_variant is not None:
@@ -399,6 +413,8 @@ def gpu_memory_for_pid(process_id: int) -> int:
 
 
 def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]:
+    if request.strategy == "percolation-branching":
+        return _build_percolation_command(request, output_dir)
     if request.strategy == "boundary-flow-fk":
         return _build_boundary_flow_command(request, output_dir)
     if request.strategy == "sector-flow-bayes":
@@ -540,6 +556,48 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         command.extend(("--max-folds", str(request.max_folds)))
     if request.deterministic_training:
         command.append("--deterministic-training")
+    return command
+
+
+def _build_percolation_command(
+    request: WalkForwardJobRequest, output_dir: Path
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "bnhmm.cli",
+        "percolation-branching-walk-forward",
+        "--duckdb-path",
+        request.database_path,
+        "--symbols",
+        ",".join(request.symbols),
+        "--dataset-id",
+        request.dataset_id or "",
+        "--start",
+        request.start.isoformat(),
+        "--end",
+        request.end.isoformat(),
+        "--output-dir",
+        str(output_dir),
+        "--activation-threshold",
+        str(request.percolation_activation_threshold),
+        "--maximum-lag-minutes",
+        str(request.maximum_lag_minutes),
+        "--topology-lookback-sessions",
+        str(request.topology_lookback_sessions),
+        "--null-permutations",
+        str(request.percolation_null_permutations),
+        "--posterior-paths",
+        str(request.percolation_posterior_paths),
+        "--phase-probability-threshold",
+        str(request.percolation_phase_probability_threshold),
+        "--transaction-cost-bps",
+        str(request.transaction_cost_bps),
+        "--seed",
+        str(request.seed),
+    ]
+    if request.max_folds is not None:
+        command.extend(("--max-folds", str(request.max_folds)))
     return command
 
 
