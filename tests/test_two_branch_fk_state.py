@@ -95,6 +95,26 @@ def test_builder_emits_causal_direction_features() -> None:
     assert result.states.feature("signed_member_synchronization")[-1, 1] == -1.0
 
 
+def test_first_membership_does_not_require_prior_sessions_to_have_topology() -> None:
+    panel, topologies = _inputs()
+    sessions = np.unique(panel.timestamps.astype("datetime64[D]"))
+    first = replace(
+        topologies[0],
+        effective_session=sessions[5],
+        training_cutoff=sessions[4].astype("datetime64[ns]"),
+    )
+
+    result = TwoBranchDailyStateBuilder(
+        minimum_valid_minutes=3, history_sessions=5
+    ).build(
+        panel,
+        (first,),
+    )
+
+    assert not result.states.valid[5].any()
+    assert result.states.valid[9].all()
+
+
 def test_path_efficiency_uses_displacement_over_total_variation() -> None:
     panel, topologies = _inputs()
     changed_raw = panel.raw_velocity.copy()

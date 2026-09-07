@@ -154,9 +154,14 @@ class TwoBranchDailyStateBuilder:
                 coherence = branch_coherence[row, branch]
                 intraday = path_efficiency[row, branch]
                 recent_path = path_efficiency[row - 2 : row + 1, branch]
-                same_topology = np.all(
-                    [self._membership_at(membership_by_session, item).effective_session
-                     == membership.effective_session for item in sessions[row - 2 : row + 1]]
+                recent_memberships = tuple(
+                    self._membership_at(membership_by_session, item)
+                    for item in sessions[row - 2 : row + 1]
+                )
+                same_topology = all(
+                    item is not None
+                    and item.effective_session == membership.effective_session
+                    for item in recent_memberships
                 )
                 if (
                     np.any(~np.isfinite(trailing))
