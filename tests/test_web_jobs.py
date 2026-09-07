@@ -134,6 +134,10 @@ class WebJobTests(unittest.TestCase):
 
     def test_request_checks_related_model_and_window_values(self) -> None:
         self.assertEqual(WalkForwardJobRequest().transaction_cost_bps, 5.0)
+        self.assertEqual(
+            WalkForwardJobRequest().boundary_minimum_direction_probability,
+            0.51,
+        )
         with self.assertRaises(ValidationError):
             WalkForwardJobRequest(training_scope="sector-pooled")
         sector_request = WalkForwardJobRequest(

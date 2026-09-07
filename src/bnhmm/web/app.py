@@ -270,7 +270,7 @@ def config(request: Request) -> dict[str, Any]:
         "regime_neutral_sigma": 0.35,
         "boundary_fk_paths": 10_000,
         "boundary_drift_half_life_sessions": 60.0,
-        "boundary_minimum_direction_probability": 0.60,
+        "boundary_minimum_direction_probability": 0.51,
         "boundary_minimum_signal_to_noise": 0.10,
         "boundary_minimum_survival_probability": 0.35,
         "boundary_relative_strength_lookback_sessions": 20,

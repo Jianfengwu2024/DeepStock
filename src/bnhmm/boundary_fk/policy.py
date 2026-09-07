@@ -10,7 +10,7 @@ from .feynman_kac import BoundaryFeynmanKacForecast
 
 @dataclass(frozen=True, slots=True)
 class BoundaryPolicyConfig:
-    minimum_direction_probability: float = 0.60
+    minimum_direction_probability: float = 0.51
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
 

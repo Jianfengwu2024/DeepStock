@@ -120,7 +120,7 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         self.assertEqual(defaults["boundary_fk_paths"], 10_000)
         self.assertEqual(defaults["boundary_maximum_branch_drawdown"], 0.05)
         self.assertEqual(defaults["boundary_drift_half_life_sessions"], 60.0)
-        self.assertEqual(defaults["boundary_minimum_direction_probability"], 0.60)
+        self.assertEqual(defaults["boundary_minimum_direction_probability"], 0.51)
         self.assertEqual(defaults["boundary_minimum_signal_to_noise"], 0.10)
         self.assertEqual(defaults["boundary_minimum_survival_probability"], 0.35)
         self.assertEqual(

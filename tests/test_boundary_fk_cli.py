@@ -29,7 +29,7 @@ def test_boundary_flow_cli_exposes_only_current_model_parameters() -> None:
     assert args.neutral_sigma == 0.35
     assert args.fk_paths == 10_000
     assert args.drift_half_life_sessions == 60.0
-    assert args.minimum_direction_probability == 0.60
+    assert args.minimum_direction_probability == 0.51
     assert args.minimum_signal_to_noise == 0.10
     assert args.minimum_survival_probability == 0.35
     for obsolete in (

@@ -50,7 +50,7 @@ class BoundaryFlowPipelineConfig:
     minimum_neutral_threshold: float = 0.002
     transaction_cost_bps: float = 5.0
     drift_half_life_sessions: float | None = 60.0
-    minimum_direction_probability: float = 0.60
+    minimum_direction_probability: float = 0.51
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
     relative_strength_lookback_sessions: int = 20

@@ -1451,7 +1451,7 @@ def build_parser() -> argparse.ArgumentParser:
     boundary_flow.add_argument("--neutral-sigma", type=float, default=0.35)
     boundary_flow.add_argument("--fk-paths", type=int, default=10_000)
     boundary_flow.add_argument("--drift-half-life-sessions", type=float, default=60.0)
-    boundary_flow.add_argument("--minimum-direction-probability", type=float, default=0.60)
+    boundary_flow.add_argument("--minimum-direction-probability", type=float, default=0.51)
     boundary_flow.add_argument("--minimum-signal-to-noise", type=float, default=0.10)
     boundary_flow.add_argument("--minimum-survival-probability", type=float, default=0.35)
     boundary_flow.add_argument(

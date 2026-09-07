@@ -13,6 +13,23 @@ from bnhmm.boundary_fk.policy import (
 )
 
 
+def test_policy_default_accepts_a_narrow_bayesian_direction_edge() -> None:
+    assert BoundaryPolicyConfig().minimum_direction_probability == 0.51
+
+    weak_bull = replace(
+        _forecast("bull"),
+        bullish_drift_probability=0.51,
+    )
+    decision = BoundaryPolicy().decide(
+        (weak_bull, weak_bull),
+        branches=(("A",), ("B",)),
+        neutral_thresholds=(0.002, 0.002),
+    )
+
+    assert decision.branch_directions == ("bull", "bull")
+    assert decision.open_position
+
+
 def _forecast(direction: str) -> BoundaryFeynmanKacForecast:
     probabilities = {
         "bear": (0.75, 0.15, 0.10),
