@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import numpy as np
 
@@ -91,10 +92,49 @@ class PercolationPipeline:
         self.config = config
 
     def run(
-        self, source: MinuteBarSource, output_dir: str | Path
+        self,
+        source: MinuteBarSource,
+        output_dir: str | Path,
+        *,
+        progress: Callable[[dict[str, object]], None] | None = None,
     ) -> PercolationRunResult:
         root = Path(output_dir)
         root.mkdir(parents=True, exist_ok=True)
+        started_at = time.monotonic()
+
+        def publish(
+            *,
+            stage: str,
+            message: str,
+            completed_folds: int = 0,
+            total_folds: int = 0,
+            completed_predictions: int = 0,
+            current_month: np.datetime64 | None = None,
+        ) -> None:
+            elapsed_seconds = max(0.0, time.monotonic() - started_at)
+            estimated_remaining_seconds: float | None = None
+            if stage == "completed":
+                estimated_remaining_seconds = 0.0
+            if completed_folds and total_folds > completed_folds:
+                estimated_remaining_seconds = elapsed_seconds / completed_folds * (
+                    total_folds - completed_folds
+                )
+            payload: dict[str, object] = {
+                "stage": stage,
+                "message": message,
+                "completed_folds": completed_folds,
+                "total_folds": total_folds,
+                "completed_predictions": completed_predictions,
+                "elapsed_seconds": elapsed_seconds,
+                "estimated_remaining_seconds": estimated_remaining_seconds,
+            }
+            if current_month is not None:
+                payload["current_month"] = str(current_month)
+            _write_json(root / "progress.json", payload)
+            if progress is not None:
+                progress(payload)
+
+        publish(stage="loading", message="正在读取板块一分钟数据")
         requested = {
             symbol: source.fetch(symbol, "1m", self.config.start, self.config.end)
             for symbol in self.config.symbols
@@ -115,6 +155,11 @@ class PercolationPipeline:
         months = self._eligible_months(sessions)
         if len(months) == 0:
             raise ValueError("date range does not produce a mature sample-out month")
+        publish(
+            stage="walk_forward",
+            message=f"已准备完成，等待计算 {len(months)} 个月度折",
+            total_folds=len(months),
+        )
 
         rng = np.random.default_rng(self.config.random_seed)
         observations: list[PercolationEvaluationObservation] = []
@@ -129,7 +174,15 @@ class PercolationPipeline:
             for index, session in enumerate(constraints.sessions)
         }
 
-        for month in months:
+        for fold_index, month in enumerate(months, start=1):
+            publish(
+                stage="walk_forward",
+                message=f"正在计算第 {fold_index}/{len(months)} 个月度折：{month}",
+                completed_folds=fold_index - 1,
+                total_folds=len(months),
+                completed_predictions=len(observations),
+                current_month=month,
+            )
             support = SlowBackboneBuilder(
                 lookback_sessions=self.config.topology_lookback_sessions,
                 candidate_neighbors=min(self.config.candidate_neighbors, len(panel.symbols) - 1),
@@ -268,6 +321,14 @@ class PercolationPipeline:
                     "candidate_edges": int(support.adjacency.sum() // 2),
                 }
             )
+            publish(
+                stage="walk_forward",
+                message=f"已完成第 {fold_index}/{len(months)} 个月度折：{month}",
+                completed_folds=fold_index,
+                total_folds=len(months),
+                completed_predictions=len(observations),
+                current_month=month,
+            )
 
         if not observations:
             raise ValueError("percolation walk-forward produced no predictions")
@@ -288,7 +349,21 @@ class PercolationPipeline:
             folds=tuple(fold_payloads),
             excluded_symbols=excluded,
         )
+        publish(
+            stage="writing",
+            message="正在汇总评估、净值和报告",
+            completed_folds=len(months),
+            total_folds=len(months),
+            completed_predictions=len(observations),
+        )
         self._write_artifacts(root, result, posterior_payloads, network_payloads)
+        publish(
+            stage="completed",
+            message="样本外计算完成",
+            completed_folds=len(months),
+            total_folds=len(months),
+            completed_predictions=len(observations),
+        )
         return result
 
     def _eligible_months(self, sessions: np.ndarray) -> np.ndarray:

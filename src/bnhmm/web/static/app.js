@@ -1018,6 +1018,19 @@ function renderJob(job) {
   document.querySelector("#progress-label").textContent = job.status === "queued"
     ? (percolation ? "等待渗流分枝任务" : boundaryFlow ? "等待路径效率 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
     : percolation ? "渗流分枝月度样本外计算中" : boundaryFlow ? "路径效率 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
+  const progress = job.progress || {};
+  const completedFolds = Number(progress.completed_folds || 0);
+  const totalFolds = Number(progress.total_folds || 0);
+  const completedPredictions = Number(progress.completed_predictions || 0);
+  const remaining = progress.estimated_remaining_seconds == null
+    ? ""
+    : ` · 预计剩余 ${formatDuration(progress.estimated_remaining_seconds)}`;
+  const progressDetail = progress.message
+    ? `${progress.message} · 已完成 ${completedFolds}/${totalFolds} 折 · ${completedPredictions} 个预测${remaining}`
+    : "";
+  document.querySelector("#progress-detail").textContent = progressDetail;
+  const progressPercent = totalFolds > 0 ? Math.min(100, completedFolds / totalFolds * 100) : 0;
+  document.querySelector("#progress-band .progress-track span").style.width = `${progressPercent}%`;
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -2319,6 +2332,7 @@ function formatNumber(value, digits = 2) { return Number.isFinite(Number(value))
 function formatInteger(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString("zh-CN") : "—"; }
 function formatPercent(value) { return Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(2)}%` : "—"; }
 function formatMemory(value) { const mib = Number(value || 0); return mib >= 1024 ? `${(mib / 1024).toFixed(2)} GB` : `${Math.round(mib)} MiB`; }
+function formatDuration(value) { const seconds = Math.max(0, Math.round(Number(value) || 0)); return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`; }
 function elapsed(start, end) { const seconds = Math.max(0, (new Date(end || Date.now()) - new Date(start)) / 1000); return seconds < 60 ? `${Math.floor(seconds)} 秒` : `${Math.floor(seconds / 60)} 分 ${Math.floor(seconds % 60)} 秒`; }
 function escapeHtml(value) { return String(value).replace(/[&<>"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[character])); }
 

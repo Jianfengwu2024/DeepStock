@@ -984,6 +984,19 @@ class JobManager:
             return None
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def progress(self, identifier: str) -> dict[str, Any] | None:
+        record = self.get(identifier)
+        if record is None:
+            return None
+        path = Path(record.output_dir) / "progress.json"
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
     def artifact_path(self, identifier: str, name: str) -> Path | None:
         record = self.get(identifier)
         if record is None or "/" in name or "\\" in name:

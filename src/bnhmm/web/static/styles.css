@@ -185,8 +185,9 @@ input[role="switch"]:checked::after { transform: translateX(15px); }
 .run-gpu-memory { display: inline-flex; justify-self: start; margin-top: 7px; padding: 5px var(--s2); color: var(--blue); background: #eaf3f9; border-radius: 3px; font-size: var(--fs-caption); font-weight: 700; font-variant-numeric: tabular-nums; }
 .progress-band { margin: 15px 0; padding: 12px; background: var(--amber-soft); border-left: 3px solid #d78a1c; }
 .progress-track { height: 3px; margin-bottom: 9px; overflow: hidden; background: #f0d6ad; }
-.progress-track span { display: block; width: 35%; height: 100%; background: var(--amber); animation: progress 1.2s infinite ease-in-out; }
-.progress-band div:last-child { display: flex; justify-content: space-between; color: var(--amber-dark); font-size: var(--fs-body); font-variant-numeric: tabular-nums; }
+.progress-track span { display: block; width: 0; height: 100%; background: var(--amber); transition: width 180ms ease-out; }
+.progress-band div:last-child { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; color: var(--amber-dark); font-size: var(--fs-body); font-variant-numeric: tabular-nums; }
+#progress-detail { flex: 1 1 440px; }
 @keyframes progress { 0% { transform: translateX(-110%); } 100% { transform: translateX(310%); } }
 
 .result-scope { margin: 15px 0; padding: 11px 12px; background: var(--panel); border: 1px solid var(--line-strong); }

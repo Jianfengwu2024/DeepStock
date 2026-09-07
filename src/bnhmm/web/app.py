@@ -722,6 +722,7 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
     payload = record.model_dump(mode="json")
     payload.pop("process_id", None)
     payload["summary"] = store.summary(record.id)
+    payload["progress"] = store.progress(record.id)
     payload["artifacts"] = {
         name: f"/api/jobs/{record.id}/artifacts/{name}"
         for name in (
