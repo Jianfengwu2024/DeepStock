@@ -54,6 +54,7 @@ class TwoBranchForecastObservation:
     decision: BoundaryPolicyDecision
     gross_strategy_return: float
     turnover: float
+    branch_ids: tuple[int, ...] = ()
     actual_symbols: tuple[str, ...] = ()
     actual_weights: tuple[float, ...] = ()
     failed_buy_orders: int = 0
@@ -339,8 +340,21 @@ def _validate_two_branch_observation(item: TwoBranchForecastObservation) -> None
     cutoff = np.datetime64(item.training_cutoff, "ns")
     if cutoff > signal or available < signal or available >= target or target <= signal:
         raise ValueError("two-branch forecast timing is not causal")
-    if len(item.forecasts) != 2 or len(item.actual_returns) != 2:
-        raise ValueError("two-branch observation requires two forecasts and returns")
+    branch_count = len(item.forecasts)
+    if not 2 <= branch_count <= 8:
+        raise ValueError("branch observation requires two to eight forecasts")
+    if (
+        len(item.actual_returns) != branch_count
+        or len(item.neutral_thresholds) != branch_count
+        or len(item.decision.branch_directions) != branch_count
+    ):
+        raise ValueError("branch forecasts, returns, thresholds, and decisions must align")
+    if item.branch_ids and (
+        len(item.branch_ids) != branch_count
+        or len(set(item.branch_ids)) != branch_count
+        or any(branch_id < 0 or branch_id >= 8 for branch_id in item.branch_ids)
+    ):
+        raise ValueError("stable branch ids must be unique values in [0, 7]")
     values = (*item.actual_returns, *item.neutral_thresholds, item.gross_strategy_return, item.turnover)
     if any(not np.isfinite(value) for value in values) or item.turnover < 0.0:
         raise ValueError("two-branch evaluation values must be finite")

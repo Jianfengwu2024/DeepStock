@@ -359,11 +359,14 @@ class RiverTopologyBuilder:
             for row, match in zip(rows, matches, strict=True)
             if overlap[row, match] > 0
         }
-        next_label = int(previous_labels.max()) + 1
+        available_labels = iter(
+            label
+            for label in range(8)
+            if label not in set(mapping.values())
+        )
         for label in current_labels:
             if int(label) not in mapping:
-                mapping[int(label)] = next_label
-                next_label += 1
+                mapping[int(label)] = next(available_labels)
         return np.asarray([mapping[int(label)] for label in labels], dtype=np.int64)
 
     def _row_order(

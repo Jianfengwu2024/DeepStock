@@ -19,7 +19,7 @@ from bnhmm.boundary_fk.precompute import (
     topology_months_for_available_data,
     topology_months_with_minimum_history,
 )
-from test_boundary_fk_pipeline import _walk_forward_data
+from test_boundary_fk_pipeline import _walk_forward_data, _with_stable_branch_ids
 
 
 def _key(tmp_path: Path, lookback: int = 60) -> BoundaryDataCacheKey:
@@ -38,13 +38,18 @@ def _key(tmp_path: Path, lookback: int = 60) -> BoundaryDataCacheKey:
 def test_boundary_cache_round_trips_dataset_without_pickle(tmp_path: Path) -> None:
     cache = BoundaryDataCache(tmp_path / "cache")
     key = _key(tmp_path)
-    original = _walk_forward_data(180)
+    original = _with_stable_branch_ids(
+        _walk_forward_data(180),
+        branch_ids=(0, 2, 5),
+        branches=(("A",), ("B",), ("C", "D")),
+    )
 
     cache.save(key, original)
     restored = cache.load(key, evaluation_start="2025-01-01", evaluation_end="2025-06-30")
 
     assert restored.symbols == original.symbols
     assert restored.memberships == original.memberships
+    assert restored.memberships[0].branch_ids == (0, 2, 5)
     np.testing.assert_array_equal(restored.states.sessions, original.states.sessions)
     np.testing.assert_allclose(restored.states.values, original.states.values, equal_nan=True)
     np.testing.assert_allclose(restored.labels.next_return, original.labels.next_return, equal_nan=True)

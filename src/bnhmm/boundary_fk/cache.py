@@ -97,6 +97,7 @@ class BoundaryDataCache:
                     "effective_session": str(item.effective_session),
                     "training_cutoff": str(item.training_cutoff),
                     "branches": [list(branch) for branch in item.branches],
+                    "branch_ids": list(item.branch_ids),
                 }
                 for item in data.memberships
             ],
@@ -187,6 +188,12 @@ class BoundaryDataCache:
                     ),
                     training_cutoff=np.datetime64(item["training_cutoff"], "ns"),
                     branches=tuple(tuple(branch) for branch in item["branches"]),
+                    branch_ids=tuple(
+                        int(value)
+                        for value in item.get(
+                            "branch_ids", range(len(item["branches"]))
+                        )
+                    ),
                 )
                 for item in json.loads(str(payload["memberships_json"]))
             )

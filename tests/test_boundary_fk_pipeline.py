@@ -54,6 +54,128 @@ def _walk_forward_data(rows: int = 180) -> TwoBranchDataset:
     )
 
 
+def _with_stable_branch_ids(
+    data: TwoBranchDataset,
+    branch_ids: tuple[int, ...],
+    branches: tuple[tuple[str, ...], ...],
+) -> TwoBranchDataset:
+    width = max(branch_ids) + 1
+    rows = len(data.states.sessions)
+    features = data.states.values.shape[2]
+    state_values = np.full((rows, width, features), np.nan, dtype=np.float64)
+    state_valid = np.zeros((rows, width), dtype=np.bool_)
+    next_return = np.full((rows, width), np.nan, dtype=np.float64)
+    volatility = np.full((rows, width), np.nan, dtype=np.float64)
+    label_valid = np.zeros((rows, width), dtype=np.bool_)
+    convection_strength = np.full((rows, width, 4), np.nan, dtype=np.float64)
+    convection_valid = np.zeros((rows, width, 4), dtype=np.bool_)
+    for compact_index, branch_id in enumerate(branch_ids):
+        source = compact_index % data.states.values.shape[1]
+        state_values[:, branch_id] = data.states.values[:, source]
+        state_valid[:, branch_id] = data.states.valid[:, source]
+        next_return[:, branch_id] = data.labels.next_return[:, source]
+        volatility[:, branch_id] = data.labels.historical_volatility[:, source]
+        label_valid[:, branch_id] = data.labels.valid[:, source]
+        convection_strength[:, branch_id] = data.convection_strength[:, source]
+        convection_valid[:, branch_id] = data.convection_valid[:, source]
+    memberships = tuple(
+        MonthlyBranchMembership(
+            effective_session=item.effective_session,
+            training_cutoff=item.training_cutoff,
+            branches=branches,
+            branch_ids=branch_ids,
+        )
+        for item in data.memberships
+    )
+    return replace(
+        data,
+        states=replace(data.states, values=state_values, valid=state_valid),
+        labels=replace(
+            data.labels,
+            next_return=next_return,
+            historical_volatility=volatility,
+            valid=label_valid,
+        ),
+        memberships=memberships,
+        convection_strength=convection_strength,
+        convection_valid=convection_valid,
+        convection_total_flow=np.zeros_like(convection_strength),
+        convection_observations=np.zeros_like(convection_strength, dtype=np.int64),
+    )
+
+
+def test_pipeline_uses_non_contiguous_stable_branch_ids(tmp_path) -> None:
+    data = _with_stable_branch_ids(
+        _walk_forward_data(),
+        branch_ids=(0, 2, 5),
+        branches=(("A",), ("B",), ("C", "D")),
+    )
+
+    result = BoundaryFlowPipeline(
+        BoundaryFlowPipelineConfig(
+            minimum_train_sessions=60,
+            max_folds=1,
+            fk_paths=1000,
+        )
+    ).run(data, tmp_path)
+
+    assert all(stage.status == "completed" for stage in result.stages)
+    posteriors = json.loads(
+        (tmp_path / "boundary-model-posterior.json").read_text(encoding="utf-8")
+    )
+    assert {item["branch_id"] for item in posteriors} == {0, 2, 5}
+    predictions = json.loads(
+        (tmp_path / "feynman-kac-predictions.json").read_text(encoding="utf-8")
+    )
+    assert predictions
+    assert all(
+        [branch["branch_id"] for branch in item["branches"]] == [0, 2, 5]
+        for item in predictions
+    )
+
+
+def test_pipeline_keeps_ids_when_a_branch_disappears_and_reappears(tmp_path) -> None:
+    data = _with_stable_branch_ids(
+        _walk_forward_data(),
+        branch_ids=(0, 2, 5, 6),
+        branches=(("A",), ("B",), ("C",), ("D",)),
+    )
+    memberships = []
+    for index in range(0, len(data.states.sessions), 5):
+        session = data.states.sessions[index].astype("datetime64[D]")
+        branch_ids = (0, 2, 5) if (index // 5) % 2 == 0 else (0, 2, 6)
+        memberships.append(
+            MonthlyBranchMembership(
+                effective_session=session,
+                training_cutoff=session.astype("datetime64[ns]")
+                - np.timedelta64(1, "ns"),
+                branches=(("A",), ("B",), ("C", "D")),
+                branch_ids=branch_ids,
+            )
+        )
+    data = replace(data, memberships=tuple(memberships))
+
+    BoundaryFlowPipeline(
+        BoundaryFlowPipelineConfig(
+            minimum_train_sessions=60,
+            max_folds=1,
+            fk_paths=1000,
+        )
+    ).run(data, tmp_path)
+
+    predictions = json.loads(
+        (tmp_path / "feynman-kac-predictions.json").read_text(encoding="utf-8")
+    )
+    active_ids = [tuple(item["branch_ids"]) for item in predictions]
+    assert (0, 2, 5) in active_ids
+    assert (0, 2, 6) in active_ids
+    assert all(
+        tuple(branch["branch_id"] for branch in item["branches"])
+        == tuple(item["branch_ids"])
+        for item in predictions
+    )
+
+
 def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
     base = _walk_forward_data()
     shape = (len(base.states.sessions), 2, 4)

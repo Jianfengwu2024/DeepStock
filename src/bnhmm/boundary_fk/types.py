@@ -219,6 +219,7 @@ class PeriodicBranchMembership:
     effective_session: np.datetime64
     training_cutoff: np.datetime64
     branches: tuple[tuple[str, ...], ...]
+    branch_ids: tuple[int, ...]
 
     def __init__(
         self,
@@ -227,6 +228,7 @@ class PeriodicBranchMembership:
         branches: tuple[tuple[str, ...], ...],
         effective_session: np.datetime64 | None = None,
         month: np.datetime64 | None = None,
+        branch_ids: tuple[int, ...] | None = None,
     ) -> None:
         if effective_session is None:
             if month is None:
@@ -237,6 +239,11 @@ class PeriodicBranchMembership:
         object.__setattr__(self, "effective_session", np.datetime64(effective_session, "D"))
         object.__setattr__(self, "training_cutoff", np.datetime64(training_cutoff, "ns"))
         object.__setattr__(self, "branches", tuple(tuple(branch) for branch in branches))
+        object.__setattr__(
+            self,
+            "branch_ids",
+            tuple(range(len(branches))) if branch_ids is None else tuple(branch_ids),
+        )
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -245,6 +252,12 @@ class PeriodicBranchMembership:
             raise ValueError("branch membership must be fixed before its effective session")
         if not 2 <= len(self.branches) <= 8 or any(not branch for branch in self.branches):
             raise ValueError("a periodic membership must contain two to eight non-empty branches")
+        if (
+            len(self.branch_ids) != len(self.branches)
+            or len(set(self.branch_ids)) != len(self.branch_ids)
+            or any(branch_id < 0 or branch_id >= 8 for branch_id in self.branch_ids)
+        ):
+            raise ValueError("branch ids must be unique values in [0, 7]")
         flattened = tuple(symbol for branch in self.branches for symbol in branch)
         if len(flattened) != len(set(flattened)):
             raise ValueError("a symbol cannot belong to both branches")

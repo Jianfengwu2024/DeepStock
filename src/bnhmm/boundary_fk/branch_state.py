@@ -76,7 +76,7 @@ class TwoBranchDailyStateBuilder:
                 "check completed sessions and minimum member size"
             )
         max_branches = self.config.max_branches or max(
-            len(item.branches) for item in memberships
+            max(item.branch_ids) + 1 for item in memberships
         )
         membership_by_session = {item.effective_session: item for item in memberships}
         sessions = np.unique(panel.timestamps.astype("datetime64[D]"))
@@ -90,7 +90,7 @@ class TwoBranchDailyStateBuilder:
         valid = np.zeros((len(sessions), max_branches), dtype=np.bool_)
         branch_returns = np.full((len(sessions), max_branches), np.nan, dtype=np.float64)
         branch_coherence = np.full_like(branch_returns, np.nan)
-        path_efficiency = np.full((len(sessions), 2), np.nan, dtype=np.float64)
+        path_efficiency = np.full((len(sessions), max_branches), np.nan, dtype=np.float64)
         convection_shape = (len(sessions), max_branches, len(CONVECTION_LOOKBACKS))
         convection_strength = np.full(convection_shape, np.nan, dtype=np.float64)
         convection_valid = np.zeros(convection_shape, dtype=np.bool_)
@@ -106,7 +106,9 @@ class TwoBranchDailyStateBuilder:
             if membership is None:
                 continue
             minute_rows = minute_rows_by_session[row]
-            for branch, symbols in enumerate(membership.branches):
+            for branch, symbols in zip(
+                membership.branch_ids, membership.branches, strict=True
+            ):
                 columns = np.asarray([symbol_index[symbol] for symbol in symbols])
                 available = daily_valid[row, columns]
                 if float(np.mean(available)) < self.config.minimum_member_fraction:
@@ -145,7 +147,9 @@ class TwoBranchDailyStateBuilder:
             membership = self._membership_at(membership_by_session, sessions[row])
             if membership is None:
                 continue
-            for branch in range(len(membership.branches)):
+            for branch, symbols in zip(
+                membership.branch_ids, membership.branches, strict=True
+            ):
                 trailing = branch_returns[row - history + 1 : row + 1, branch]
                 coherence = branch_coherence[row, branch]
                 intraday = path_efficiency[row, branch]
@@ -169,9 +173,7 @@ class TwoBranchDailyStateBuilder:
                     else direction
                     * float(np.mean(np.sign(recent_path) == direction))
                 )
-                columns = np.asarray(
-                    [symbol_index[symbol] for symbol in membership.branches[branch]]
-                )
+                columns = np.asarray([symbol_index[symbol] for symbol in symbols])
                 available = daily_valid[row, columns]
                 synchronization = (
                     0.0
@@ -225,7 +227,9 @@ class TwoBranchDailyStateBuilder:
             membership = self._membership_at(membership_by_session, sessions[row])
             if membership is None:
                 continue
-            for branch, symbols in enumerate(membership.branches):
+            for branch, symbols in zip(
+                membership.branch_ids, membership.branches, strict=True
+            ):
                 columns = np.asarray([symbol_index[symbol] for symbol in symbols])
                 available = daily_valid[row + 1, columns]
                 if (
@@ -405,6 +409,7 @@ class TwoBranchDailyStateBuilder:
                     ),
                     training_cutoff=topology.training_cutoff,
                     branches=branches,
+                    branch_ids=tuple(int(label) for label in labels),
                 )
             )
         return tuple(result)
