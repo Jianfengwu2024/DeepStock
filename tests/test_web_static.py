@@ -128,13 +128,15 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.27.7', html)
-        self.assertIn('/static/styles.css?v=0.28.3', html)
+        self.assertIn('/static/app.js?v=0.27.6', html)
+        self.assertIn('/static/styles.css?v=0.28.2', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('name="boundary_maximum_branch_drawdown"', html)
         self.assertIn("贝叶斯基础漂移截距", html)
-        self.assertIn("同时比较全支流等权与最强 1/3", html)
+        self.assertIn("支流内最强前 1/2", html)
+        self.assertIn("每 5 个交易日冻结一次", html)
+        self.assertIn("自动识别 2 至 8 条支流", html)
         self.assertIn('id="boundary-data-build"', html)
         self.assertIn('id="boundary-data-status"', html)
         self.assertIn('type="hidden" name="topology_lookback_sessions" value="60"', html)
@@ -236,7 +238,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("未通过改进标准", script)
         self.assertIn("相对基线收益", script)
         self.assertIn("回撤改善", script)
-        self.assertIn("最强 1/3 未改善全支流策略", script)
+        self.assertIn("最强 1/2 未改善全支流策略", script)
         self.assertIn("支流止损触发", script)
         for field in ("expected_effective_potential", "survival_confidence"):
             self.assertIn(field, script)
@@ -260,14 +262,14 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(field, script)
         self.assertNotIn("旧衰减漂移", script)
 
-    def test_path_efficiency_fk_is_the_only_two_branch_strategy(self) -> None:
+    def test_path_efficiency_fk_uses_periodic_dynamic_branches(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
         self.assertEqual(html.count('value="boundary-flow-fk"'), 1)
         self.assertIn("路径效率 FK", html)
-        self.assertIn("看多：满仓", html)
-        self.assertIn("看平：每次减仓 25%", html)
+        self.assertIn("看多：该支流使用总资产的 1/N", html)
+        self.assertIn("每次减少该支流预算的 1/4", html)
         self.assertIn("连续四次看平清仓", html)
         self.assertIn("看空：立即清仓", html)
         self.assertNotIn('value="path-efficiency-direct"', html)

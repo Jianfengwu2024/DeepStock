@@ -16,8 +16,8 @@ def convection_potential_features(
     branch: int,
 ) -> tuple[tuple[str], np.ndarray, np.ndarray]:
     """Build the current one-day reverse-flow external potential input."""
-    if branch not in (0, 1):
-        raise ValueError("convection branch must be zero or one")
+    if branch < 0 or branch >= data.states.values.shape[1]:
+        raise ValueError("convection branch is outside the dataset")
     try:
         one_day_index = data.convection_lookbacks.index(1)
     except ValueError as exc:

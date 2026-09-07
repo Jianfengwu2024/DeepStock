@@ -1,4 +1,4 @@
-"""Long-only state machine for two independent FK branches."""
+"""Long-only state machine for a dynamically clustered FK river system."""
 
 from __future__ import annotations
 
@@ -6,11 +6,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from .feynman_kac import BoundaryFeynmanKacForecast
-
-
-FULL_BRANCH_EXPOSURE = 0.5
-BRANCH_EXPOSURE_STEP = 0.125
-ALLOWED_BRANCH_EXPOSURES = (0.0, 0.125, 0.25, 0.375, 0.5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +29,8 @@ class BranchPositionState:
     consecutive_flat_signals: int = 0
 
     def __post_init__(self) -> None:
-        if self.exposure not in ALLOWED_BRANCH_EXPOSURES:
-            raise ValueError("branch exposure must use 12.5% reduction steps")
+        if not 0.0 <= self.exposure <= 1.0:
+            raise ValueError("branch exposure must lie in [0, 1]")
         if self.consecutive_flat_signals not in range(4):
             raise ValueError("flat signal count must be between 0 and 3")
         if self.exposure == 0.0 and self.consecutive_flat_signals:
@@ -49,13 +44,10 @@ class BoundaryPolicyDecision:
     survival_conditional_bullish_probability: float
     selected_symbols: tuple[str, ...] = ()
     target_weights: tuple[float, ...] = ()
-    branch_directions: tuple[str, str] = ("flat", "flat")
-    held_branches: tuple[bool, bool] = (False, False)
-    branch_target_exposures: tuple[float, float] = (0.0, 0.0)
-    branch_position_states: tuple[BranchPositionState, BranchPositionState] = (
-        BranchPositionState(),
-        BranchPositionState(),
-    )
+    branch_directions: tuple[str, ...] = ()
+    held_branches: tuple[bool, ...] = ()
+    branch_target_exposures: tuple[float, ...] = ()
+    branch_position_states: tuple[BranchPositionState, ...] = ()
 
 
 class BoundaryPolicy:
@@ -64,32 +56,30 @@ class BoundaryPolicy:
 
     def decide(
         self,
-        forecasts: tuple[BoundaryFeynmanKacForecast, BoundaryFeynmanKacForecast],
+        forecasts: tuple[BoundaryFeynmanKacForecast, ...],
         *,
-        branches: tuple[tuple[str, ...], tuple[str, ...]],
-        neutral_thresholds: tuple[float, float],
-        previous_branch_states: tuple[
-            BranchPositionState, BranchPositionState
-        ] = (BranchPositionState(), BranchPositionState()),
+        branches: tuple[tuple[str, ...], ...],
+        neutral_thresholds: tuple[float, ...],
+        previous_branch_states: tuple[BranchPositionState, ...] | None = None,
     ) -> BoundaryPolicyDecision:
-        if (
-            len(forecasts) != 2
-            or len(branches) != 2
-            or len(neutral_thresholds) != 2
-        ):
-            raise ValueError("two-branch policy requires exactly two branches")
+        branch_count = len(branches)
+        if not branch_count or len(forecasts) != branch_count or len(neutral_thresholds) != branch_count:
+            raise ValueError("forecasts, branches, and thresholds must share a non-zero length")
+        previous = previous_branch_states or (BranchPositionState(),) * branch_count
+        if len(previous) != branch_count:
+            raise ValueError("previous branch state must align with dynamic branches")
         directions = tuple(
             self._direction(item, threshold)
             for item, threshold in zip(forecasts, neutral_thresholds, strict=True)
         )
         if "bear" in directions:
-            states = (BranchPositionState(), BranchPositionState())
+            states = (BranchPositionState(),) * branch_count
         else:
             states = tuple(
-                self._next_position_state(direction, previous)
-                for direction, previous in zip(
+                self._next_position_state(direction, old, branch_count)
+                for direction, old in zip(
                     directions,
-                    previous_branch_states,
+                    previous,
                     strict=True,
                 )
             )
@@ -114,21 +104,23 @@ class BoundaryPolicy:
             survival_conditional_bullish_probability=bullish,
             selected_symbols=tuple(selected),
             target_weights=tuple(target_weights),
-            branch_directions=(directions[0], directions[1]),
-            held_branches=(exposures[0] > 0.0, exposures[1] > 0.0),
-            branch_target_exposures=(exposures[0], exposures[1]),
-            branch_position_states=(states[0], states[1]),
+            branch_directions=directions,
+            held_branches=tuple(value > 0.0 for value in exposures),
+            branch_target_exposures=exposures,
+            branch_position_states=states,
         )
 
     @staticmethod
     def _next_position_state(
-        direction: str, previous: BranchPositionState
+        direction: str, previous: BranchPositionState, branch_count: int
     ) -> BranchPositionState:
+        branch_budget = 1.0 / branch_count
         if direction == "bull":
-            return BranchPositionState(exposure=FULL_BRANCH_EXPOSURE)
+            return BranchPositionState(exposure=branch_budget)
         if previous.exposure == 0.0:
             return BranchPositionState()
-        exposure = round(previous.exposure - BRANCH_EXPOSURE_STEP, 3)
+        # A neutral day only unwinds the capital allocated to this branch.
+        exposure = max(0.0, previous.exposure - branch_budget / 4.0)
         if exposure <= 0.0:
             return BranchPositionState()
         return BranchPositionState(

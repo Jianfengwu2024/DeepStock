@@ -56,6 +56,7 @@ class RiverTopologyBuilder:
         cutoff: np.datetime64,
         month: np.datetime64,
         previous: MonthlyRiverTopology | None = None,
+        effective_session: np.datetime64 | None = None,
     ) -> MonthlyRiverTopology:
         canonical = self._canonical_panel(panel)
         rows = self._window_rows(canonical.timestamps, cutoff)
@@ -98,6 +99,11 @@ class RiverTopologyBuilder:
             graph=graph,
             cohesion=cohesion,
             centrality=centrality,
+            effective_session=(
+                np.datetime64(effective_session, "D")
+                if effective_session is not None
+                else np.datetime64(month, "D")
+            ),
         )
 
     def _window_rows(

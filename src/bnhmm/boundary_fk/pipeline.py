@@ -23,19 +23,18 @@ from .evaluation import (
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
 from .policy import (
-    FULL_BRANCH_EXPOSURE,
     BoundaryPolicy,
     BoundaryPolicyConfig,
     BranchPositionState,
 )
 from .reporting import write_baseline_report, write_convection_report, write_json
-from .trailing_stop import TwoBranchTrailingStop
+from .trailing_stop import BranchTrailingStop
 from .types import MonthlyBranchMembership, TwoBranchDataset
 
 
 BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Beta0PlusC1-Baseline",
-    "PathEfficiencyFK-60D-StrongestThird",
+                "PathEfficiencyFK-60D-StrongestHalf",
 )
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
@@ -115,7 +114,7 @@ class PortfolioExecution:
     turnover: float
     failed_buy_orders: int
     failed_sell_orders: int
-    branch_returns: tuple[float, float]
+    branch_returns: tuple[float, ...]
     symbol_branches: dict[str, int]
 
 
@@ -123,12 +122,12 @@ class BoundaryFlowPipeline:
     def __init__(self, config: BoundaryFlowPipelineConfig | None = None) -> None:
         self.config = config or BoundaryFlowPipelineConfig()
 
-    def _strongest_third_branches(
+    def _strongest_half_branches(
         self,
         data: TwoBranchDataset,
         row: int,
-        branches: tuple[tuple[str, ...], tuple[str, ...]],
-    ) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], dict[str, float]]:
+        branches: tuple[tuple[str, ...], ...],
+    ) -> tuple[tuple[tuple[str, ...], ...], dict[str, float]]:
         start = max(0, row - self.config.relative_strength_lookback_sessions)
         if row - start < 2:
             raise ValueError("insufficient completed returns for relative strength")
@@ -148,10 +147,14 @@ class BoundaryFlowPipeline:
             branch_center = float(np.mean(cumulative[finite])) if np.any(finite) else 0.0
             for symbol, value in zip(symbols, cumulative, strict=True):
                 scores[symbol] = float(value - branch_center) if np.isfinite(value) else -np.inf
-            keep = max(1, ceil(len(symbols) / 3))
+            keep = max(1, ceil(len(symbols) / 2))
             ranked = sorted(symbols, key=lambda symbol: (-scores[symbol], symbol))
             selected_branches.append(tuple(ranked[:keep]))
-        return (selected_branches[0], selected_branches[1]), scores
+        return tuple(selected_branches), scores
+
+    # Compatibility shim for callers that still use the pre-multibranch name.
+    def _strongest_third_branches(self, data, row, branches):
+        return self._strongest_half_branches(data, row, branches)
 
     def run(
         self,
@@ -164,7 +167,7 @@ class BoundaryFlowPipeline:
         if not folds:
             raise ValueError("no monthly fold has enough mature PathEfficiencyFK history")
 
-        membership_by_month = {item.month: item for item in data.memberships}
+        membership_by_session = {item.effective_session: item for item in data.memberships}
         observations_by_model: dict[str, list[TwoBranchForecastObservation]] = {
             name: [] for name in BOUNDARY_MODEL_NAMES
         }
@@ -172,15 +175,11 @@ class BoundaryFlowPipeline:
         posterior_payloads: list[dict[str, object]] = []
         fit_rows: list[int] = []
         previous_weights = {name: {} for name in BOUNDARY_MODEL_NAMES}
-        previous_branch_states = {
-            name: (BranchPositionState(), BranchPositionState())
-            for name in BOUNDARY_MODEL_NAMES
+        previous_branch_states: dict[str, tuple[BranchPositionState, ...]] = {
+            name: () for name in BOUNDARY_MODEL_NAMES
         }
         previous_symbol_branches = {name: {} for name in BOUNDARY_MODEL_NAMES}
-        trailing_stops = {
-            name: TwoBranchTrailingStop(self.config.maximum_branch_drawdown)
-            for name in BOUNDARY_MODEL_NAMES
-        }
+        trailing_stops: dict[str, BranchTrailingStop] = {}
         policy = BoundaryPolicy(
             BoundaryPolicyConfig(
                 minimum_direction_probability=self.config.minimum_direction_probability,
@@ -190,12 +189,13 @@ class BoundaryFlowPipeline:
         )
         drift_names: tuple[str, ...] = ()
         potential_inputs = tuple(
-            convection_potential_features(data, branch) for branch in range(2)
+            convection_potential_features(data, branch)
+            for branch in range(data.states.values.shape[1])
         )
         for fold_index, test_start, training_rows, test_rows in folds:
             cutoff = test_start - np.timedelta64(1, "ns")
             posteriors: list[BayesianBranchPosterior] = []
-            for branch in range(2):
+            for branch in range(data.states.values.shape[1]):
                 _, potential_values, potential_valid = potential_inputs[branch]
                 model = BayesianBranchModel(
                     BayesianBranchModelConfig(
@@ -242,23 +242,31 @@ class BoundaryFlowPipeline:
                 )
 
             for row in test_rows:
-                membership = membership_by_month.get(data.states.topology_months[row])
+                membership = self._membership_at(membership_by_session, data.states.sessions[row])
                 if (
                     membership is None
-                    or not data.labels.valid[row].all()
-                    or not all(item[2][row] for item in potential_inputs)
+                    or not data.labels.valid[row, : len(membership.branches)].all()
+                    or not all(item[2][row] for item in potential_inputs[: len(membership.branches)])
                 ):
                     continue
+                branch_count = len(membership.branches)
+                for model_name in BOUNDARY_MODEL_NAMES:
+                    if model_name not in trailing_stops or trailing_stops[model_name].branch_count != branch_count:
+                        trailing_stops[model_name] = BranchTrailingStop(
+                            branch_count, self.config.maximum_branch_drawdown
+                        )
+                    if len(previous_branch_states[model_name]) != branch_count:
+                        previous_branch_states[model_name] = (BranchPositionState(),) * branch_count
                 thresholds = tuple(
                     max(
                         self.config.minimum_neutral_threshold,
                         self.config.neutral_sigma
                         * data.labels.historical_volatility[row, branch],
                     )
-                    for branch in range(2)
+                    for branch in range(branch_count)
                 )
                 signal = data.states.sessions[row].astype("datetime64[D]") + np.timedelta64(15, "h")
-                strongest_branches, strength_scores = self._strongest_third_branches(
+                strongest_branches, strength_scores = self._strongest_half_branches(
                     data, int(row), membership.branches
                 )
                 for model_name in BOUNDARY_MODEL_NAMES:
@@ -276,16 +284,16 @@ class BoundaryFlowPipeline:
                             potential_features=potential_inputs[branch][1][row],
                             neutral_threshold=float(thresholds[branch]),
                         )
-                        for branch in range(2)
+                        for branch in range(branch_count)
                     )
                     decision = policy.decide(
-                        (forecasts[0], forecasts[1]),
+                        forecasts,
                         branches=(
                             strongest_branches
                             if model_name == BOUNDARY_MODEL_NAMES[1]
                             else membership.branches
                         ),
-                        neutral_thresholds=(float(thresholds[0]), float(thresholds[1])),
+                        neutral_thresholds=tuple(float(value) for value in thresholds),
                         previous_branch_states=previous_branch_states[model_name],
                     )
                     trailing_stop_forced_exit = trailing_stops[
@@ -298,12 +306,9 @@ class BoundaryFlowPipeline:
                             gate_reason="branch_trailing_stop",
                             selected_symbols=(),
                             target_weights=(),
-                            held_branches=(False, False),
-                            branch_target_exposures=(0.0, 0.0),
-                            branch_position_states=(
-                                BranchPositionState(),
-                                BranchPositionState(),
-                            ),
+                            held_branches=(False,) * branch_count,
+                            branch_target_exposures=(0.0,) * branch_count,
+                            branch_position_states=(BranchPositionState(),) * branch_count,
                         )
                     current_weights = dict(
                         zip(
@@ -333,11 +338,11 @@ class BoundaryFlowPipeline:
                     )
                     actual_held_branches = tuple(
                         any(branch == index for branch in execution.symbol_branches.values())
-                        for index in range(2)
+                        for index in range(branch_count)
                     )
                     stop_snapshot = trailing_stops[model_name].update(
                         execution.branch_returns,
-                        (actual_held_branches[0], actual_held_branches[1]),
+                        actual_held_branches,
                     )
                     observation = TwoBranchForecastObservation(
                         signal_time=signal,
@@ -345,15 +350,9 @@ class BoundaryFlowPipeline:
                         target_time=data.labels.target_time[row],
                         training_cutoff=cutoff,
                         model_version=model_name,
-                        forecasts=(forecasts[0], forecasts[1]),
-                        actual_returns=(
-                            float(data.labels.next_return[row, 0]),
-                            float(data.labels.next_return[row, 1]),
-                        ),
-                        neutral_thresholds=(
-                            float(thresholds[0]),
-                            float(thresholds[1]),
-                        ),
+                        forecasts=forecasts,
+                        actual_returns=tuple(float(data.labels.next_return[row, branch]) for branch in range(branch_count)),
+                        neutral_thresholds=tuple(float(value) for value in thresholds),
                         decision=decision,
                         gross_strategy_return=execution.gross_return,
                         turnover=execution.turnover,
@@ -504,7 +503,7 @@ class BoundaryFlowPipeline:
     ) -> None:
         labels = {
             BOUNDARY_MODEL_NAMES[0]: "β0+C1 基线",
-            BOUNDARY_MODEL_NAMES[1]: "β0+C1 + 支流内最强 1/3",
+            BOUNDARY_MODEL_NAMES[1]: "β0+C1 + 支流内最强 1/2",
         }
         lines = [
             "# 路径效率 FK 相对强弱选股实验",
@@ -545,7 +544,7 @@ class BoundaryFlowPipeline:
                 "## 判断方法",
                 "",
                 "- 两组使用完全相同的 β0+C1 FK 支流方向与仓位。",
-                f"- 修正版仅交易每支流近 {relative_strength_lookback_sessions} 日相对强度最高的前 1/3 股票。",
+                f"- 修正版仅交易每支流近 {relative_strength_lookback_sessions} 日相对强度最高的前 1/2 股票。",
                 "- 收益改善但换手显著上升时，需要同时检查交易成本后的结果。",
             ]
         )
@@ -555,7 +554,9 @@ class BoundaryFlowPipeline:
         self, data: TwoBranchDataset
     ) -> tuple[tuple[int, np.datetime64, np.ndarray, np.ndarray], ...]:
         sessions = data.states.sessions.astype("datetime64[ns]")
-        eligible = np.all(data.states.valid & data.labels.valid, axis=1)
+        # Padding branches are intentionally invalid; a day is usable when at
+        # least one currently active branch has a mature state and label.
+        eligible = np.any(data.states.valid & data.labels.valid, axis=1)
         if data.evaluation_start is not None:
             eligible &= sessions >= np.datetime64(data.evaluation_start, "ns")
         if data.evaluation_end is not None:
@@ -568,7 +569,7 @@ class BoundaryFlowPipeline:
             test_start = month.astype("datetime64[ns]")
             test_end = (month + np.timedelta64(1, "M")).astype("datetime64[ns]")
             cutoff = test_start - np.timedelta64(1, "ns")
-            matured = np.all(data.states.valid & data.labels.valid, axis=1)
+            matured = np.any(data.states.valid & data.labels.valid, axis=1)
             training_rows = np.flatnonzero(
                 matured & (sessions < test_start) & (data.labels.target_time <= cutoff)
             )
@@ -578,13 +579,16 @@ class BoundaryFlowPipeline:
             direction_ready = self.config.direction_label_sigma <= 0.0 or all(
                 int(
                     np.sum(
-                        np.abs(data.labels.next_return[training_rows, branch])
+                        data.labels.valid[training_rows, branch]
+                        & (np.abs(data.labels.next_return[training_rows, branch])
                         > self.config.direction_label_sigma
-                        * data.labels.historical_volatility[training_rows, branch]
+                        * data.labels.historical_volatility[training_rows, branch])
                     )
                 )
                 >= self.config.minimum_train_sessions
-                for branch in range(2)
+                for branch in range(data.states.values.shape[1])
+                if int(data.labels.valid[training_rows, branch].sum())
+                >= self.config.minimum_train_sessions
             )
             if (
                 len(training_rows) < self.config.minimum_train_sessions
@@ -596,6 +600,14 @@ class BoundaryFlowPipeline:
             if self.config.max_folds is not None and len(folds) >= self.config.max_folds:
                 break
         return tuple(folds)
+
+    @staticmethod
+    def _membership_at(
+        memberships: dict[np.datetime64, MonthlyBranchMembership],
+        session: np.datetime64,
+    ) -> MonthlyBranchMembership | None:
+        eligible = [effective for effective in memberships if effective <= session]
+        return memberships[max(eligible)] if eligible else None
 
     @staticmethod
     def _execute_portfolio(
@@ -610,8 +622,8 @@ class BoundaryFlowPipeline:
         previous_owners = previous_symbol_branches or {}
         target_owners = target_symbol_branches or {}
         for owner in (*previous_owners.values(), *target_owners.values()):
-            if owner not in (0, 1):
-                raise ValueError("symbol branch ownership must be zero or one")
+            if owner < 0 or owner >= data.states.values.shape[1]:
+                raise ValueError("symbol branch ownership is outside the state tensor")
         symbol_index = {symbol: index for index, symbol in enumerate(data.symbols)}
         weights = dict(previous)
         failed_sell_orders = 0
@@ -648,7 +660,7 @@ class BoundaryFlowPipeline:
             weights[symbol] = weights.get(symbol, 0.0) + increase * fill_ratio
 
         gross_return = 0.0
-        branch_contributions = [0.0, 0.0]
+        branch_contributions = [0.0] * data.states.values.shape[1]
 
         def add_contribution(owner: int | None, value: float) -> None:
             nonlocal gross_return
@@ -699,15 +711,22 @@ class BoundaryFlowPipeline:
             for symbol in cleaned
             if symbol in target_owners or symbol in previous_owners
         }
+        branch_exposures = [0.0] * data.states.values.shape[1]
+        for symbol, weight in cleaned.items():
+            owner = symbol_branches.get(symbol)
+            if owner is not None:
+                branch_exposures[owner] += weight
         return PortfolioExecution(
             weights=cleaned,
             gross_return=float(gross_return),
             turnover=turnover,
             failed_buy_orders=failed_buy_orders,
             failed_sell_orders=failed_sell_orders,
-            branch_returns=(
-                branch_contributions[0] / FULL_BRANCH_EXPOSURE,
-                branch_contributions[1] / FULL_BRANCH_EXPOSURE,
+            branch_returns=tuple(
+                contribution / exposure if exposure > 1e-12 else 0.0
+                for contribution, exposure in zip(
+                    branch_contributions, branch_exposures, strict=True
+                )
             ),
             symbol_branches=symbol_branches,
         )
@@ -717,10 +736,7 @@ class BoundaryFlowPipeline:
         observation: TwoBranchForecastObservation,
         fold: int,
         row: int,
-        potential_inputs: tuple[
-            tuple[tuple[str, ...], np.ndarray, np.ndarray],
-            tuple[tuple[str, ...], np.ndarray, np.ndarray],
-        ],
+        potential_inputs: tuple[tuple[tuple[str, ...], np.ndarray, np.ndarray], ...],
         *,
         relative_strength_scores: dict[str, float] | None,
         relative_strength_lookback_sessions: int | None,

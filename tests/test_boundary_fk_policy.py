@@ -233,3 +233,25 @@ def test_bear_global_exit_clears_both_branches() -> None:
     )
 
     assert decision.branch_target_exposures == (0.0, 0.0)
+
+
+def test_multi_branch_bull_allocates_equal_branch_budgets() -> None:
+    decision = BoundaryPolicy().decide(
+        (_forecast("bull"),) * 4,
+        branches=(("A",), ("B",), ("C",), ("D",)),
+        neutral_thresholds=(0.002,) * 4,
+    )
+
+    assert decision.branch_target_exposures == pytest.approx((0.25,) * 4)
+    assert decision.target_weights == pytest.approx((0.25,) * 4)
+
+
+def test_any_bear_signal_exits_all_dynamic_branches() -> None:
+    decision = BoundaryPolicy().decide(
+        (_forecast("bull"), _forecast("flat"), _forecast("bear")),
+        branches=(("A",), ("B",), ("C",)),
+        neutral_thresholds=(0.002,) * 3,
+        previous_branch_states=(BranchPositionState(1 / 3),) * 3,
+    )
+
+    assert decision.branch_target_exposures == (0.0, 0.0, 0.0)

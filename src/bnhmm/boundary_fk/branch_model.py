@@ -85,8 +85,8 @@ class BayesianBranchPosterior:
     direction_fit_rows: int = 0
 
     def __post_init__(self) -> None:
-        if self.branch not in (0, 1):
-            raise ValueError("branch posterior index must be zero or one")
+        if self.branch < 0:
+            raise ValueError("branch posterior index must be non-negative")
         if not np.isfinite(self.diffusion_variance) or self.diffusion_variance <= 0.0:
             raise ValueError("branch diffusion variance must be finite and positive")
         if self.drift_model not in {"gaussian_return", "bayesian_direction_logit"}:
@@ -140,8 +140,8 @@ class BayesianBranchModel:
         branch: int,
         training_cutoff: np.datetime64,
     ) -> BayesianBranchPosterior:
-        if branch not in (0, 1):
-            raise ValueError("branch must be zero or one")
+        if branch < 0 or branch >= states.values.shape[1]:
+            raise ValueError("branch index is outside the state tensor")
         if not np.array_equal(states.sessions, labels.signal_sessions):
             raise ValueError("branch states and labels must align")
         potential_features = np.asarray(potential_features, dtype=np.float64)

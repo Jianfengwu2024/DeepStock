@@ -111,21 +111,13 @@ def build_boundary_experiment_data(
     panel = SectorMinutePanelBuilder().build(bars)
     normalized = CausalBoundaryNormalizer().transform(panel)
     execution = build_member_execution_constraints(panel)
-    topology_start = start - timedelta(days=300)
-    months = tuple(
-        np.arange(
-            np.datetime64(topology_start, "M"),
-            np.datetime64(end, "M") + np.timedelta64(1, "M"),
-            dtype="datetime64[M]",
-        )
-    )
     topologies = BoundaryTopologyBuilder(
         TopologyConfig(
             lookback_sessions=topology_lookback_sessions,
-            maximum_bands=2,
+            maximum_bands=8,
             minimum_band_size=max(2, int(np.ceil(len(symbols) * 0.10))),
         )
-    ).build(normalized, months)
+    ).build_periodic(normalized, every_sessions=5)
     built = TwoBranchDailyStateBuilder().build(normalized, topologies)
     data = TwoBranchDataset(
         states=built.states,
@@ -152,7 +144,7 @@ def _write_upstream_artifacts(output: Path, context: dict[str, Any]) -> None:
         output / "branch-topologies.json",
         [
             {
-                "month": str(item.month),
+                "effective_session": str(item.effective_session),
                 "training_cutoff": str(item.training_cutoff),
                 "symbols": list(item.symbols),
                 "assigned": item.assigned.tolist(),
@@ -166,10 +158,9 @@ def _write_upstream_artifacts(output: Path, context: dict[str, Any]) -> None:
         output / "branch-memberships.json",
         [
             {
-                "month": str(item.month),
+                "effective_session": str(item.effective_session),
                 "training_cutoff": str(item.training_cutoff),
-                "branch_1": list(item.branches[0]),
-                "branch_2": list(item.branches[1]),
+                "branches": [list(branch) for branch in item.branches],
             }
             for item in memberships
         ],

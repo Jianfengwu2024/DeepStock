@@ -212,26 +212,56 @@ class SyntheticSectorIndex:
         return self.weights_for(np.datetime64(timestamp, "M")).weights.copy()
 
 
-@dataclass(frozen=True, slots=True)
-class MonthlyBranchMembership:
-    month: np.datetime64
+@dataclass(frozen=True, slots=True, init=False)
+class PeriodicBranchMembership:
+    """A branch partition frozen before a five-session holding period."""
+
+    effective_session: np.datetime64
     training_cutoff: np.datetime64
-    branches: tuple[tuple[str, ...], tuple[str, ...]]
+    branches: tuple[tuple[str, ...], ...]
+
+    def __init__(
+        self,
+        *,
+        training_cutoff: np.datetime64,
+        branches: tuple[tuple[str, ...], ...],
+        effective_session: np.datetime64 | None = None,
+        month: np.datetime64 | None = None,
+    ) -> None:
+        if effective_session is None:
+            if month is None:
+                raise ValueError("membership requires an effective session")
+            effective_session = np.datetime64(month, "D")
+        elif month is not None:
+            raise ValueError("specify effective_session or legacy month, not both")
+        object.__setattr__(self, "effective_session", np.datetime64(effective_session, "D"))
+        object.__setattr__(self, "training_cutoff", np.datetime64(training_cutoff, "ns"))
+        object.__setattr__(self, "branches", tuple(tuple(branch) for branch in branches))
+        self.__post_init__()
 
     def __post_init__(self) -> None:
-        if self.month != self.month.astype("datetime64[M]"):
-            raise ValueError("branch membership month must use monthly precision")
-        if not self.training_cutoff < self.month.astype("datetime64[ns]"):
-            raise ValueError("branch membership must be fixed before its month")
-        flattened = self.branches[0] + self.branches[1]
-        if not self.branches[0] or not self.branches[1]:
-            raise ValueError("both frozen branches must contain symbols")
+        effective = np.datetime64(self.effective_session, "D")
+        if not self.training_cutoff < effective.astype("datetime64[ns]"):
+            raise ValueError("branch membership must be fixed before its effective session")
+        if not 1 <= len(self.branches) <= 8 or any(not branch for branch in self.branches):
+            raise ValueError("a periodic membership must contain one to eight non-empty branches")
+        flattened = tuple(symbol for branch in self.branches for symbol in branch)
         if len(flattened) != len(set(flattened)):
             raise ValueError("a symbol cannot belong to both branches")
 
+    @property
+    def month(self) -> np.datetime64:
+        """Compatibility view for older result readers."""
+        return self.effective_session.astype("datetime64[M]")
+
+
+# Public aliases retain import compatibility while the implementation is no longer
+# limited to a calendar month or two branches.
+MonthlyBranchMembership = PeriodicBranchMembership
+
 
 @dataclass(frozen=True, slots=True)
-class TwoBranchDailyStates:
+class BranchDailyStates:
     sessions: NDArray[np.datetime64]
     topology_months: NDArray[np.datetime64]
     feature_names: tuple[str, ...]
@@ -239,15 +269,18 @@ class TwoBranchDailyStates:
     valid: NDArray[np.bool_]
 
     def __post_init__(self) -> None:
-        expected = (len(self.sessions), 2, len(self.feature_names))
+        if self.values.ndim != 3 or self.values.shape[0] != len(self.sessions):
+            raise ValueError("branch states must use session, branch, feature axes")
+        branch_count = self.values.shape[1]
+        expected = (len(self.sessions), branch_count, len(self.feature_names))
         if not self.feature_names or len(set(self.feature_names)) != len(self.feature_names):
-            raise ValueError("two-branch feature names must be unique and non-empty")
+            raise ValueError("branch feature names must be unique and non-empty")
         if self.values.shape != expected or self.valid.shape != expected[:2]:
-            raise ValueError("two-branch states must use session, branch, feature axes")
+            raise ValueError("branch states must align with their branch axis")
         if self.topology_months.shape != (len(self.sessions),):
-            raise ValueError("two-branch topology months must align with sessions")
+            raise ValueError("branch topology sessions must align with states")
         if np.any(self.valid & ~np.all(np.isfinite(self.values), axis=2)):
-            raise ValueError("valid two-branch states must be finite")
+            raise ValueError("valid branch states must be finite")
 
     def feature(self, name: str) -> NDArray[np.float64]:
         try:
@@ -257,8 +290,11 @@ class TwoBranchDailyStates:
         return self.values[:, :, column]
 
 
+TwoBranchDailyStates = BranchDailyStates
+
+
 @dataclass(frozen=True, slots=True)
-class TwoBranchLabels:
+class BranchLabels:
     signal_sessions: NDArray[np.datetime64]
     target_time: NDArray[np.datetime64]
     next_return: NDArray[np.float64]
@@ -268,11 +304,13 @@ class TwoBranchLabels:
     def __post_init__(self) -> None:
         rows = len(self.signal_sessions)
         if self.target_time.shape != (rows,):
-            raise ValueError("two-branch target times must align with sessions")
-        expected = (rows, 2)
+            raise ValueError("branch target times must align with sessions")
+        if self.next_return.ndim != 2 or self.next_return.shape[0] != rows:
+            raise ValueError("branch labels must use session and branch axes")
+        expected = self.next_return.shape
         arrays = (self.next_return, self.historical_volatility, self.valid)
         if any(item.shape != expected for item in arrays):
-            raise ValueError("two-branch labels must align with both branches")
+            raise ValueError("branch labels must align with states")
         if np.any(self.valid & ~np.isfinite(self.next_return)):
             raise ValueError("valid branch returns must be finite")
         if np.any(
@@ -282,11 +320,14 @@ class TwoBranchLabels:
             raise ValueError("valid branch volatility must be finite and positive")
 
 
+TwoBranchLabels = BranchLabels
+
+
 @dataclass(frozen=True, slots=True)
-class TwoBranchDataset:
-    states: TwoBranchDailyStates
-    labels: TwoBranchLabels
-    memberships: tuple[MonthlyBranchMembership, ...]
+class BranchDataset:
+    states: BranchDailyStates
+    labels: BranchLabels
+    memberships: tuple[PeriodicBranchMembership, ...]
     symbols: tuple[str, ...]
     member_next_returns: NDArray[np.float64]
     member_next_valid: NDArray[np.bool_]
@@ -320,7 +361,7 @@ class TwoBranchDataset:
             raise ValueError(
                 f"convection lookbacks must be fixed at {CONVECTION_LOOKBACKS}"
             )
-        branch_shape = (rows, 2, len(self.convection_lookbacks))
+        branch_shape = (rows, self.states.values.shape[1], len(self.convection_lookbacks))
         if self.convection_strength is None:
             object.__setattr__(
                 self,
@@ -357,7 +398,7 @@ class TwoBranchDataset:
         if any(item is None or item.shape != expected for item in execution_arrays):
             raise ValueError("member execution constraints must align with sessions and symbols")
         if not np.array_equal(self.states.sessions, self.labels.signal_sessions):
-            raise ValueError("two-branch states and labels must align")
+            raise ValueError("branch states and labels must align")
         if np.any(self.member_next_valid & ~np.isfinite(self.member_next_returns)):
             raise ValueError("valid member next returns must be finite")
         if np.any(
@@ -392,3 +433,6 @@ class TwoBranchDataset:
                 self.evaluation_start, "D"
             ):
                 raise ValueError("evaluation end cannot precede evaluation start")
+
+
+TwoBranchDataset = BranchDataset

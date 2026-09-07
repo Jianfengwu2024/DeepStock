@@ -11,18 +11,17 @@ from bnhmm.boundary_fk.types import NormalizedBoundaryPanel
 from bnhmm.sector_flow.topology import TopologyConfig
 
 
-def test_boundary_flow_topology_is_fixed_to_two_branches() -> None:
+def test_boundary_flow_topology_preserves_multi_branch_cap() -> None:
     builder = BoundaryTopologyBuilder(
         TopologyConfig(maximum_bands=4, minimum_band_size=2)
     )
 
-    assert builder.builder.config.maximum_bands == 2
+    assert builder.builder.config.maximum_bands == 4
 
 
-def test_legacy_boundary_daily_state_rejects_non_two_branch_configuration() -> None:
+def test_daily_state_builder_accepts_dynamic_branch_configuration() -> None:
     assert BoundaryDailyStateBuilder().config.branch_count == 2
-    with pytest.raises(ValueError, match="exactly two"):
-        BoundaryDailyStateBuilder(branch_count=3)
+    assert BoundaryDailyStateBuilder(branch_count=3).config.branch_count == 3
 
 
 def test_boundary_topology_uses_only_rows_before_effective_month() -> None:

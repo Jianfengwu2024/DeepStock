@@ -935,7 +935,7 @@ function renderJob(job) {
   if (percolation) {
     document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 双向分枝网络 · 固定 1–3 分钟传播 · 60 日月度骨架 · ${formatInteger(job.request.percolation_posterior_paths)} 条后验路径 · CPU`;
   } else if (boundaryFlow) {
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 路径效率 FK · 两支流月度冻结 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 路径效率 FK · 60 日同步聚类、每 5 个交易日冻结 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
   } else if (sectorFlow) {
     const water = job.summary?.latest_water_state || {};
     document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 1分钟同步 · 最大滞后 ${job.request.maximum_lag_minutes} 分钟 · 水势 ${formatNumber(water.flow_strength, 3)} · ${job.request.normalization_lookback_sessions}日因果归一化`;
@@ -1018,19 +1018,6 @@ function renderJob(job) {
   document.querySelector("#progress-label").textContent = job.status === "queued"
     ? (percolation ? "等待渗流分枝任务" : boundaryFlow ? "等待路径效率 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
     : percolation ? "渗流分枝月度样本外计算中" : boundaryFlow ? "路径效率 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
-  const progress = job.progress || {};
-  const completedFolds = Number(progress.completed_folds || 0);
-  const totalFolds = Number(progress.total_folds || 0);
-  const completedPredictions = Number(progress.completed_predictions || 0);
-  const remaining = progress.estimated_remaining_seconds == null
-    ? ""
-    : ` · 预计剩余 ${formatDuration(progress.estimated_remaining_seconds)}`;
-  const progressDetail = progress.message
-    ? `${progress.message} · 已完成 ${completedFolds}/${totalFolds} 折 · ${completedPredictions} 个预测${remaining}`
-    : "";
-  document.querySelector("#progress-detail").textContent = progressDetail;
-  const progressPercent = totalFolds > 0 ? Math.min(100, completedFolds / totalFolds * 100) : 0;
-  document.querySelector("#progress-band .progress-track span").style.width = `${progressPercent}%`;
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -1266,7 +1253,7 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
   }
   if (returnDelta > 0) {
     return {
-      title: "最强 1/3 超过全支流策略",
+      title: "最强 1/2 超过全支流策略",
       level: "positive",
       returnDelta,
       drawdownImprovement,
@@ -1275,8 +1262,8 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
   }
   return {
     title: drawdownImprovement > 0
-      ? "最强 1/3 降低回撤，但没有提高收益，未通过改进标准"
-      : "最强 1/3 未改善全支流策略，未通过改进标准",
+      ? "最强 1/2 降低回撤，但没有提高收益，未通过改进标准"
+      : "最强 1/2 未改善全支流策略，未通过改进标准",
     level: drawdownImprovement > 0 ? "caution" : "negative",
     returnDelta,
     drawdownImprovement,
@@ -1293,7 +1280,7 @@ function selectBoundaryStages(stages) {
 
 function boundaryModelLabel(modelName) {
   const name = String(modelName || "");
-  if (name.includes("StrongestThird")) return "支流内最强 1/3";
+  if (name.includes("StrongestHalf")) return "支流内最强前 1/2";
   if (name.includes("Beta0PlusC1-Baseline")) return "β0 + C1 全支流基线";
   if (name.includes("PathEfficiencyFK-60D-OneDayPotential")) return "β0 + C1 外势 FK";
   if (name.includes("Baseline")) return "纯路径效率基线";
@@ -1376,11 +1363,11 @@ function paintBoundaryFlowResult(job, payload) {
     .map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`)
     .join("");
 
-  const branchTargetExposures = latest.branch_target_exposures || [0, 0];
-  const branchFlatSignalCounts = latest.branch_flat_signal_counts || [0, 0];
+  const branchTargetExposures = latest.branch_target_exposures || [];
+  const branchFlatSignalCounts = latest.branch_flat_signal_counts || [];
   const totalExposure = branchTargetExposures.reduce((total, value) => total + value, 0);
   const normalHoldings = latest.selected_symbols?.length
-    ? `当前持有 ${latest.selected_symbols.length} 只股票 · 目标仓位 ${formatPercent(totalExposure)} · 两支流仓位 ${branchTargetExposures.map(formatPercent).join(" / ")}`
+    ? `当前持有 ${latest.selected_symbols.length} 只股票 · 目标仓位 ${formatPercent(totalExposure)} · ${branchTargetExposures.length} 条支流仓位 ${branchTargetExposures.map(formatPercent).join(" / ")}`
     : `当前空仓 · 连续看平 ${branchFlatSignalCounts.join(" / ")}`;
   const holdings = latest.trailing_stop_pending
     ? `支流峰值回撤止损已触发 · 全局清仓锁生效 · 实际剩余 ${latest.actual_symbols?.length || 0} 只股票`
@@ -1398,14 +1385,14 @@ function paintBoundaryFlowResult(job, payload) {
     const label = branch => ({ bear: "空", flat: "平", bull: "多" })[branch?.direction] || "—";
     const potentialText = itemBranches.map(branch => formatPercent(branch.convection_potential_features?.reverse_flow_1d)).join(" · ");
     const blocked = Number(item.failed_buy_orders || 0) + Number(item.failed_sell_orders || 0);
-    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${label(itemBranches[0])}</td><td>${label(itemBranches[1])}</td><td>${escapeHtml(potentialText)}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.actual_symbols?.length || 0)}</td><td>${formatInteger(blocked)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
+    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${escapeHtml(itemBranches.map(label).join(" / "))}</td><td>${escapeHtml(potentialText)}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.actual_symbols?.length || 0)}</td><td>${formatInteger(blocked)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
   }).join("");
 
-  const latestBeta0 = [1, 2].map(branch =>
+  const latestBeta0 = [...new Set((posterior || []).map(item => item.branch))].sort((a, b) => a - b).map(branch =>
     [...(posterior || [])].reverse().find(item => item.branch === branch)?.potential_mean?.[0]
   );
   document.querySelector("#boundary-model-quality").innerHTML = [
-    boundaryMetric("最新 β0", latestBeta0.map(value => formatNumber(value, 4)).join(" / "), "支流 1 / 支流 2"),
+    boundaryMetric("最新 β0", latestBeta0.map(value => formatNumber(value, 4)).join(" / "), "按当前支流顺序"),
     boundaryMetric("概率整体误差", formatNumber(metrics.brier_score, 4), "越小越好"),
     boundaryMetric("概率校准偏差", formatPercent(metrics.ece), "预测概率与实际频率的差"),
     boundaryMetric("三状态均衡正确率", formatPercent(metrics.balanced_accuracy), "避免多数状态掩盖结果"),
@@ -2332,7 +2319,6 @@ function formatNumber(value, digits = 2) { return Number.isFinite(Number(value))
 function formatInteger(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString("zh-CN") : "—"; }
 function formatPercent(value) { return Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(2)}%` : "—"; }
 function formatMemory(value) { const mib = Number(value || 0); return mib >= 1024 ? `${(mib / 1024).toFixed(2)} GB` : `${Math.round(mib)} MiB`; }
-function formatDuration(value) { const seconds = Math.max(0, Math.round(Number(value) || 0)); return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`; }
 function elapsed(start, end) { const seconds = Math.max(0, (new Date(end || Date.now()) - new Date(start)) / 1000); return seconds < 60 ? `${Math.floor(seconds)} 秒` : `${Math.floor(seconds / 60)} 分 ${Math.floor(seconds % 60)} 秒`; }
 function escapeHtml(value) { return String(value).replace(/[&<>"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[character])); }
 

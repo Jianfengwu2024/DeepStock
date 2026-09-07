@@ -78,7 +78,7 @@ def test_pipeline_compares_baseline_with_one_day_potential_fk(tmp_path) -> None:
 
     assert result.model_names == BOUNDARY_MODEL_NAMES == (
         "PathEfficiencyFK-60D-Beta0PlusC1-Baseline",
-        "PathEfficiencyFK-60D-StrongestThird",
+            "PathEfficiencyFK-60D-StrongestHalf",
     )
     assert len(result.stages) == 2
     assert result.stages[0].status == "completed"
@@ -204,7 +204,7 @@ def test_walk_forward_skips_folds_without_enough_direction_labels() -> None:
         assert int(significant.sum()) >= 60
 
 
-def test_strongest_third_ranking_is_causal_and_keeps_one_of_three() -> None:
+def test_strongest_half_ranking_is_causal_and_keeps_top_half() -> None:
     data = _walk_forward_data(180)
     symbols = ("A", "B", "C", "D", "E", "F")
     returns = np.zeros((180, 6), dtype=np.float64)
@@ -235,18 +235,18 @@ def test_strongest_third_ranking_is_causal_and_keeps_one_of_three() -> None:
     )
     row = 100
 
-    selected, scores = pipeline._strongest_third_branches(
+    selected, scores = pipeline._strongest_half_branches(
         ranked_data, row, memberships[0].branches
     )
     changed = returns.copy()
     changed[row, 2] = 10.0
-    repeated, _ = pipeline._strongest_third_branches(
+    repeated, _ = pipeline._strongest_half_branches(
         replace(ranked_data, member_next_returns=changed),
         row,
         memberships[0].branches,
     )
 
-    assert selected == (("A",), ("D",))
+    assert selected == (("A", "B"), ("D", "E"))
     assert repeated == selected
     assert scores["A"] > scores["B"] > scores["C"]
 

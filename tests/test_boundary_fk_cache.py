@@ -104,7 +104,7 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
 def test_boundary_cache_uses_direction_feature_version() -> None:
     assert (
         CACHE_CONSTRUCTION_VERSION
-        == "path-efficiency-two-branch-v7-direction-features"
+        == "path-efficiency-periodic-multibranch-v1"
     )
 
 

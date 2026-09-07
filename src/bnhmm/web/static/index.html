@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.28.3">
+  <link rel="stylesheet" href="/static/styles.css?v=0.28.2">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.27.7" defer></script>
+  <script src="/static/app.js?v=0.27.6" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -132,14 +132,14 @@
         <details class="form-section boundary-flow-only hidden" open>
           <summary>路径效率 FK</summary>
           <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>支流</span><strong>固定 60 日同步聚类，每月固定两组</strong></div>
+            <div class="fixed-spec"><span>支流</span><strong>回看 60 日同步关系，每 5 个交易日冻结一次；自动识别 2 至 8 条支流</strong></div>
             <div class="fixed-spec"><span>后验</span><strong>贝叶斯基础漂移截距</strong></div>
             <div class="fixed-spec"><span>漂移输入</span><strong>带方向路径效率 + 板块成分股同步率</strong></div>
             <div class="fixed-spec"><span>训练标签</span><strong>忽略小于 0.1 倍历史波动率的模糊涨跌</strong></div>
             <div class="fixed-spec"><span>一日外势</span><strong>背景势 β0 + 一日反向流量集中度 C1</strong></div>
-            <div class="fixed-spec"><span>支流内选股</span><strong>同时比较全支流等权与最强 1/3</strong></div>
-            <div class="fixed-spec"><span>看多</span><strong>看多：满仓</strong></div>
-            <div class="fixed-spec"><span>看平</span><strong>看平：每次减仓 25%，连续四次看平清仓</strong></div>
+            <div class="fixed-spec"><span>支流内选股</span><strong>比较全支流等权与支流内最强前 1/2</strong></div>
+            <div class="fixed-spec"><span>看多</span><strong>看多：该支流使用总资产的 1/N</strong></div>
+            <div class="fixed-spec"><span>看平</span><strong>看平：每次减少该支流预算的 1/4，连续四次看平清仓</strong></div>
             <div class="fixed-spec"><span>看空</span><strong>看空：立即清仓；任一支流看空则全部清仓</strong></div>
             <div class="fixed-spec"><span>回撤止损</span><strong>任一支流从持仓权益峰值回撤超过 5%，全局清仓；跌停时持续等待可卖</strong></div>
           </div>
@@ -426,7 +426,7 @@
 
             <div class="progress-band hidden" id="progress-band">
               <div class="progress-track"><span></span></div>
-              <div><strong id="progress-label">任务运行中</strong><span id="progress-detail"></span><span id="elapsed-time"></span></div>
+              <div><strong id="progress-label">任务运行中</strong><span id="elapsed-time"></span></div>
             </div>
 
             <div class="result-scope hidden" id="result-scope">
@@ -487,7 +487,7 @@
 
               <div class="boundary-result-panel hidden" data-boundary-panel="predictions">
                 <div class="boundary-panel-intro"><strong>逐日样本外决策</strong><span>每一行都只使用当时已经成熟的数据，显示预测方向、目标仓位和下一日实际收益。</span></div>
-            <div class="table-scroll"><table><thead><tr><th>信号日</th><th>支流 1</th><th>支流 2</th><th>一日反向流量 C1</th><th>实际仓位</th><th>持股数</th><th>成交受限</th><th>下一日策略收益</th></tr></thead><tbody id="boundary-prediction-table"></tbody></table></div>
+            <div class="table-scroll"><table><thead><tr><th>信号日</th><th>支流判断</th><th>一日反向流量 C1</th><th>实际仓位</th><th>持股数</th><th>成交受限</th><th>下一日策略收益</th></tr></thead><tbody id="boundary-prediction-table"></tbody></table></div>
               </div>
 
               <div class="boundary-result-panel hidden" data-boundary-panel="posterior">

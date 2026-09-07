@@ -52,7 +52,9 @@ class BoundaryTopologyBuilder:
 
     def __init__(self, config: TopologyConfig | None = None) -> None:
         requested = config or TopologyConfig()
-        self.builder = RiverTopologyBuilder(replace(requested, maximum_bands=2))
+        self.builder = RiverTopologyBuilder(
+            replace(requested, maximum_bands=min(8, requested.maximum_bands))
+        )
 
     def build(
         self,
@@ -91,6 +93,51 @@ class BoundaryTopologyBuilder:
             previous = topology
         return tuple(result)
 
+    def build_periodic(
+        self,
+        panel: NormalizedBoundaryPanel,
+        *,
+        every_sessions: int = 5,
+    ) -> tuple[MonthlyRiverTopology, ...]:
+        """Freeze a topology every N completed trading sessions without look-ahead."""
+        if every_sessions < 1:
+            raise ValueError("topology period must be positive")
+        sessions = np.unique(panel.timestamps.astype("datetime64[D]"))
+        if len(sessions) < 2:
+            return ()
+        adapted = NormalizedSectorPanel(
+            symbols=panel.symbols,
+            timestamps=panel.timestamps,
+            raw_velocity=panel.raw_velocity,
+            velocity=panel.standardized_velocity,
+            activity=panel.relative_volume,
+            velocity_scale=panel.velocity_scale,
+            volume_baseline=panel.minute_volume_baseline,
+            valid=panel.velocity_valid,
+            activity_valid=panel.density_valid,
+        )
+        result: list[MonthlyRiverTopology] = []
+        previous: MonthlyRiverTopology | None = None
+        minimum = self.builder.config.minimum_sessions
+        for position in range(minimum, len(sessions), every_sessions):
+            effective = sessions[position]
+            prior = sessions[position - 1]
+            cutoff_rows = np.flatnonzero(panel.timestamps.astype("datetime64[D]") == prior)
+            if not len(cutoff_rows):
+                continue
+            topology = self.builder.build(
+                adapted,
+                cutoff=panel.timestamps[int(cutoff_rows[-1])],
+                # RiverTopology keeps this legacy field; the membership carries
+                # the true five-session effective date.
+                month=effective.astype("datetime64[M]"),
+                previous=previous,
+                effective_session=effective,
+            )
+            result.append(topology)
+            previous = topology
+        return tuple(result)
+
 
 @dataclass(frozen=True, slots=True)
 class BoundaryDailyStateConfig:
@@ -99,8 +146,8 @@ class BoundaryDailyStateConfig:
     minimum_valid_minutes: int = 30
 
     def __post_init__(self) -> None:
-        if self.branch_count != 2:
-            raise ValueError("branch_count must be exactly two")
+        if not 2 <= self.branch_count <= 8:
+            raise ValueError("branch_count must lie in [2, 8]")
         if not 0.0 < self.high_coherence_threshold < 1.0:
             raise ValueError("high coherence threshold must lie in (0, 1)")
         if self.minimum_valid_minutes < 1:

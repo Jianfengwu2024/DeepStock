@@ -96,31 +96,29 @@ def build_boundary_cache_variants(
     topology_start = start_date - timedelta(days=300)
     if not len(normalized.timestamps):
         raise ValueError("boundary cache requires available minute history")
-    months = tuple(
-        topology_months_for_available_data(
-            requested_start=np.datetime64(topology_start, "M"),
-            requested_end=np.datetime64(end_date, "M"),
-            first_timestamp=normalized.timestamps[0],
-        )
-    )
     rows: list[dict[str, object]] = []
     for lookback in lookbacks:
         minimum_sessions = max(2, int(np.ceil(lookback * 2.0 / 3.0)))
         minimum_pair_sessions = max(2, int(np.ceil(lookback / 2.0)))
-        eligible_months = topology_months_with_minimum_history(
-            months=months,
-            timestamps=normalized.timestamps,
-            minimum_sessions=minimum_sessions,
-        )
-        topologies = BoundaryTopologyBuilder(
+        topology_builder = BoundaryTopologyBuilder(
             TopologyConfig(
                 lookback_sessions=lookback,
                 minimum_sessions=minimum_sessions,
                 minimum_pair_sessions=minimum_pair_sessions,
-                maximum_bands=2,
+                maximum_bands=8,
                 minimum_band_size=max(2, int(np.ceil(len(symbols) * 0.10))),
             )
-        ).build(normalized, eligible_months)
+        )
+        # The fallback preserves compatibility with external topology adapters.
+        if hasattr(topology_builder, "build_periodic"):
+            topologies = topology_builder.build_periodic(normalized, every_sessions=5)
+        else:
+            months = topology_months_for_available_data(
+                requested_start=np.datetime64(start_date - timedelta(days=300), "M"),
+                requested_end=np.datetime64(end_date, "M"),
+                first_timestamp=normalized.timestamps[0],
+            )
+            topologies = topology_builder.build(normalized, tuple(months))
         built = TwoBranchDailyStateBuilder().build(normalized, topologies)
         if not np.array_equal(built.states.sessions, execution.sessions):
             raise ValueError("execution constraints do not align with daily states")

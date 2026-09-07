@@ -1,4 +1,4 @@
-"""Causal daily states for two frozen synchronization branches."""
+"""Causal daily states for periodically frozen synchronization branches."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ BRANCH_FEATURE_NAMES = (
 
 @dataclass(frozen=True, slots=True)
 class TwoBranchDailyStateConfig:
+    max_branches: int | None = None
     minimum_valid_minutes: int = 30
     history_sessions: int = 20
     minimum_member_fraction: float = 0.8
@@ -43,6 +44,8 @@ class TwoBranchDailyStateConfig:
             raise ValueError("branch history must contain at least five sessions")
         if not 0.0 < self.minimum_member_fraction <= 1.0:
             raise ValueError("minimum member fraction must lie in (0, 1]")
+        if self.max_branches is not None and not 2 <= self.max_branches <= 8:
+            raise ValueError("maximum branch count must lie in [2, 8]")
 
 
 class TwoBranchDailyStateBuilder:
@@ -52,11 +55,13 @@ class TwoBranchDailyStateBuilder:
         minimum_valid_minutes: int = 30,
         history_sessions: int = 20,
         minimum_member_fraction: float = 0.8,
+        max_branches: int | None = None,
     ) -> None:
         self.config = TwoBranchDailyStateConfig(
             minimum_valid_minutes=minimum_valid_minutes,
             history_sessions=history_sessions,
             minimum_member_fraction=minimum_member_fraction,
+            max_branches=max_branches,
         )
 
     def build(
@@ -65,20 +70,23 @@ class TwoBranchDailyStateBuilder:
         topologies: tuple[MonthlyRiverTopology, ...],
     ) -> TwoBranchDataset:
         memberships = self._memberships(panel.symbols, topologies)
-        membership_by_month = {item.month: item for item in memberships}
+        max_branches = self.config.max_branches or max(
+            len(item.branches) for item in memberships
+        )
+        membership_by_session = {item.effective_session: item for item in memberships}
         sessions = np.unique(panel.timestamps.astype("datetime64[D]"))
         minute_sessions = panel.timestamps.astype("datetime64[D]")
         daily_returns, daily_valid = self._member_daily_returns(
             panel, sessions, minute_sessions
         )
         values = np.full(
-            (len(sessions), 2, len(BRANCH_FEATURE_NAMES)), np.nan, dtype=np.float64
+            (len(sessions), max_branches, len(BRANCH_FEATURE_NAMES)), np.nan, dtype=np.float64
         )
-        valid = np.zeros((len(sessions), 2), dtype=np.bool_)
-        branch_returns = np.full((len(sessions), 2), np.nan, dtype=np.float64)
+        valid = np.zeros((len(sessions), max_branches), dtype=np.bool_)
+        branch_returns = np.full((len(sessions), max_branches), np.nan, dtype=np.float64)
         branch_coherence = np.full_like(branch_returns, np.nan)
         path_efficiency = np.full((len(sessions), 2), np.nan, dtype=np.float64)
-        convection_shape = (len(sessions), 2, len(CONVECTION_LOOKBACKS))
+        convection_shape = (len(sessions), max_branches, len(CONVECTION_LOOKBACKS))
         convection_strength = np.full(convection_shape, np.nan, dtype=np.float64)
         convection_valid = np.zeros(convection_shape, dtype=np.bool_)
         convection_total_flow = np.zeros(convection_shape, dtype=np.float64)
@@ -89,7 +97,7 @@ class TwoBranchDailyStateBuilder:
         )
 
         for row, session in enumerate(sessions):
-            membership = membership_by_month.get(session.astype("datetime64[M]"))
+            membership = self._membership_at(membership_by_session, session)
             if membership is None:
                 continue
             minute_rows = minute_rows_by_session[row]
@@ -129,14 +137,17 @@ class TwoBranchDailyStateBuilder:
 
         history = self.config.history_sessions
         for row in range(history - 1, len(sessions)):
-            for branch in range(2):
+            membership = self._membership_at(membership_by_session, sessions[row])
+            if membership is None:
+                continue
+            for branch in range(len(membership.branches)):
                 trailing = branch_returns[row - history + 1 : row + 1, branch]
                 coherence = branch_coherence[row, branch]
                 intraday = path_efficiency[row, branch]
                 recent_path = path_efficiency[row - 2 : row + 1, branch]
                 same_topology = np.all(
-                    sessions[row - 2 : row + 1].astype("datetime64[M]")
-                    == sessions[row].astype("datetime64[M]")
+                    [self._membership_at(membership_by_session, item).effective_session
+                     == membership.effective_session for item in sessions[row - 2 : row + 1]]
                 )
                 if (
                     np.any(~np.isfinite(trailing))
@@ -153,7 +164,6 @@ class TwoBranchDailyStateBuilder:
                     else direction
                     * float(np.mean(np.sign(recent_path) == direction))
                 )
-                membership = membership_by_month[sessions[row].astype("datetime64[M]")]
                 columns = np.asarray(
                     [symbol_index[symbol] for symbol in membership.branches[branch]]
                 )
@@ -181,7 +191,11 @@ class TwoBranchDailyStateBuilder:
                 )
                 valid[row, branch] = True
 
-        topology_months = sessions.astype("datetime64[M]")
+        topology_months = np.asarray([
+            (self._membership_at(membership_by_session, session).effective_session
+             if self._membership_at(membership_by_session, session) is not None else np.datetime64("NaT", "D"))
+            for session in sessions
+        ], dtype="datetime64[D]")
         states = TwoBranchDailyStates(
             sessions=sessions,
             topology_months=topology_months,
@@ -192,7 +206,7 @@ class TwoBranchDailyStateBuilder:
         target_time = np.full(
             len(sessions), np.datetime64("NaT", "ns"), dtype="datetime64[ns]"
         )
-        next_return = np.full((len(sessions), 2), np.nan, dtype=np.float64)
+        next_return = np.full((len(sessions), max_branches), np.nan, dtype=np.float64)
         historical_volatility = np.full_like(next_return, np.nan)
         label_valid = np.zeros_like(valid)
         member_next_returns = np.full_like(daily_returns, np.nan)
@@ -203,7 +217,7 @@ class TwoBranchDailyStateBuilder:
                 daily_valid[row + 1], daily_returns[row + 1], 0.0
             )
             member_next_valid[row] = True
-            membership = membership_by_month.get(sessions[row].astype("datetime64[M]"))
+            membership = self._membership_at(membership_by_session, sessions[row])
             if membership is None:
                 continue
             for branch, symbols in enumerate(membership.branches):
@@ -355,12 +369,12 @@ class TwoBranchDailyStateBuilder:
         topologies: tuple[MonthlyRiverTopology, ...],
     ) -> tuple[MonthlyBranchMembership, ...]:
         if not topologies:
-            raise ValueError("two-branch states require frozen monthly topologies")
+            raise ValueError("branch states require frozen periodic topologies")
         available = set(panel_symbols)
         result: list[MonthlyBranchMembership] = []
         for topology in sorted(topologies, key=lambda item: item.month):
             labels = sorted(np.unique(topology.band_ids[topology.assigned]).tolist())
-            if len(labels) != 2:
+            if not 2 <= len(labels) <= 8:
                 continue
             branches = tuple(
                 tuple(
@@ -375,13 +389,25 @@ class TwoBranchDailyStateBuilder:
                 )
                 for branch_label in labels
             )
-            if not branches[0] or not branches[1]:
+            if any(not branch for branch in branches):
                 continue
             result.append(
                 MonthlyBranchMembership(
-                    month=topology.month,
+                    effective_session=(
+                        topology.effective_session
+                        if topology.effective_session is not None
+                        else topology.month.astype("datetime64[D]")
+                    ),
                     training_cutoff=topology.training_cutoff,
                     branches=branches,
                 )
             )
         return tuple(result)
+
+    @staticmethod
+    def _membership_at(
+        memberships: dict[np.datetime64, MonthlyBranchMembership],
+        session: np.datetime64,
+    ) -> MonthlyBranchMembership | None:
+        eligible = [effective for effective in memberships if effective <= session]
+        return memberships[max(eligible)] if eligible else None

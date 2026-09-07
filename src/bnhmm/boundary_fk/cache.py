@@ -23,8 +23,8 @@ if TYPE_CHECKING:
     from ..sector_flow.types import MonthlyRiverTopology
 
 
-CACHE_FORMAT_VERSION = 1
-CACHE_CONSTRUCTION_VERSION = "path-efficiency-two-branch-v7-direction-features"
+CACHE_FORMAT_VERSION = 2
+CACHE_CONSTRUCTION_VERSION = "path-efficiency-periodic-multibranch-v1"
 CACHE_LOOKBACKS = (10, 20, 30, 40, 60, 90, 120)
 
 
@@ -94,9 +94,9 @@ class BoundaryDataCache:
         membership_payload = json.dumps(
             [
                 {
-                    "month": str(item.month),
+                    "effective_session": str(item.effective_session),
                     "training_cutoff": str(item.training_cutoff),
-                    "branches": [list(item.branches[0]), list(item.branches[1])],
+                    "branches": [list(branch) for branch in item.branches],
                 }
                 for item in data.memberships
             ],
@@ -182,9 +182,11 @@ class BoundaryDataCache:
         with np.load(path, allow_pickle=False) as payload:
             memberships = tuple(
                 MonthlyBranchMembership(
-                    month=np.datetime64(item["month"], "M"),
+                    effective_session=np.datetime64(
+                        item.get("effective_session", item.get("month")), "D"
+                    ),
                     training_cutoff=np.datetime64(item["training_cutoff"], "ns"),
-                    branches=(tuple(item["branches"][0]), tuple(item["branches"][1])),
+                    branches=tuple(tuple(branch) for branch in item["branches"]),
                 )
                 for item in json.loads(str(payload["memberships_json"]))
             )

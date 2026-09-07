@@ -48,9 +48,9 @@ class TwoBranchForecastObservation:
     target_time: np.datetime64
     training_cutoff: np.datetime64
     model_version: str
-    forecasts: tuple[BoundaryFeynmanKacForecast, BoundaryFeynmanKacForecast]
-    actual_returns: tuple[float, float]
-    neutral_thresholds: tuple[float, float]
+    forecasts: tuple[BoundaryFeynmanKacForecast, ...]
+    actual_returns: tuple[float, ...]
+    neutral_thresholds: tuple[float, ...]
     decision: BoundaryPolicyDecision
     gross_strategy_return: float
     turnover: float
@@ -58,11 +58,11 @@ class TwoBranchForecastObservation:
     actual_weights: tuple[float, ...] = ()
     failed_buy_orders: int = 0
     failed_sell_orders: int = 0
-    branch_equities: tuple[float, float] = (1.0, 1.0)
-    branch_peak_equities: tuple[float, float] = (1.0, 1.0)
-    branch_trailing_drawdowns: tuple[float, float] = (0.0, 0.0)
+    branch_equities: tuple[float, ...] = ()
+    branch_peak_equities: tuple[float, ...] = ()
+    branch_trailing_drawdowns: tuple[float, ...] = ()
     trailing_stop_pending: bool = False
-    trailing_stop_triggered_branches: tuple[bool, bool] = (False, False)
+    trailing_stop_triggered_branches: tuple[bool, ...] = ()
     trailing_stop_forced_exit: bool = False
 
 

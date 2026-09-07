@@ -275,6 +275,7 @@ class MonthlyRiverTopology:
     cohesion: NDArray[np.float64]
     centrality: NDArray[np.float64]
     stale: bool = False
+    effective_session: np.datetime64 | None = None
 
     def __post_init__(self) -> None:
         count = len(self.symbols)
@@ -303,6 +304,10 @@ class MonthlyRiverTopology:
             raise ValueError("topology matrices must be finite")
         if not np.allclose(self.graph, self.graph.T):
             raise ValueError("topology graph must be symmetric")
+        if self.effective_session is not None and np.datetime64(
+            self.effective_session, "D"
+        ) < self.training_cutoff.astype("datetime64[D]"):
+            raise ValueError("topology effective session cannot precede its cutoff")
 
 
 @dataclass(frozen=True, slots=True)

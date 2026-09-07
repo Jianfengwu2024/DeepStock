@@ -1,4 +1,4 @@
-"""Branch-level trailing equity stop for the two-branch FK strategy."""
+"""Branch-level trailing equity stop for dynamically clustered FK branches."""
 
 from __future__ import annotations
 
@@ -15,19 +15,22 @@ class BranchEquityState:
 
 @dataclass(frozen=True, slots=True)
 class TrailingStopSnapshot:
-    branch_equities: tuple[float, float]
-    branch_peaks: tuple[float, float]
-    branch_drawdowns: tuple[float, float]
-    newly_triggered: tuple[bool, bool]
+    branch_equities: tuple[float, ...]
+    branch_peaks: tuple[float, ...]
+    branch_drawdowns: tuple[float, ...]
+    newly_triggered: tuple[bool, ...]
     liquidation_pending: bool
 
 
-class TwoBranchTrailingStop:
-    def __init__(self, maximum_drawdown: float = 0.05) -> None:
+class BranchTrailingStop:
+    def __init__(self, branch_count: int = 2, maximum_drawdown: float = 0.05) -> None:
         if not math.isfinite(maximum_drawdown) or not 0.0 < maximum_drawdown < 1.0:
             raise ValueError("maximum branch drawdown must lie in (0, 1)")
+        if branch_count < 1:
+            raise ValueError("at least one branch is required")
         self.maximum_drawdown = maximum_drawdown
-        self._states = (BranchEquityState(), BranchEquityState())
+        self.branch_count = branch_count
+        self._states = (BranchEquityState(),) * branch_count
         self._liquidation_pending = False
 
     @property
@@ -36,9 +39,11 @@ class TwoBranchTrailingStop:
 
     def update(
         self,
-        branch_returns: tuple[float, float],
-        held_branches: tuple[bool, bool],
+        branch_returns: tuple[float, ...],
+        held_branches: tuple[bool, ...],
     ) -> TrailingStopSnapshot:
+        if len(branch_returns) != self.branch_count or len(held_branches) != self.branch_count:
+            raise ValueError("trailing stop inputs must align with branch count")
         states: list[BranchEquityState] = []
         drawdowns: list[float] = []
         triggered: list[bool] = []
@@ -65,21 +70,21 @@ class TwoBranchTrailingStop:
                 held and drawdown > self.maximum_drawdown + 1e-12
             )
 
-        newly_triggered = (
-            bool(triggered[0] and not self._liquidation_pending),
-            bool(triggered[1] and not self._liquidation_pending),
-        )
+        newly_triggered = tuple(bool(item and not self._liquidation_pending) for item in triggered)
         if any(triggered):
             self._liquidation_pending = True
         if self._liquidation_pending and not any(held_branches):
             self._liquidation_pending = False
-            states = [BranchEquityState(), BranchEquityState()]
-            drawdowns = [0.0, 0.0]
-        self._states = (states[0], states[1])
+            states = [BranchEquityState()] * self.branch_count
+            drawdowns = [0.0] * self.branch_count
+        self._states = tuple(states)
         return TrailingStopSnapshot(
-            branch_equities=(states[0].equity, states[1].equity),
-            branch_peaks=(states[0].peak, states[1].peak),
-            branch_drawdowns=(drawdowns[0], drawdowns[1]),
+            branch_equities=tuple(item.equity for item in states),
+            branch_peaks=tuple(item.peak for item in states),
+            branch_drawdowns=tuple(drawdowns),
             newly_triggered=newly_triggered,
             liquidation_pending=self._liquidation_pending,
         )
+
+
+TwoBranchTrailingStop = BranchTrailingStop

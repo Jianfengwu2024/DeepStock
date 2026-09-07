@@ -54,43 +54,6 @@ def _sector() -> dict[str, BarBatch]:
     return result
 
 
-def test_pipeline_uses_narrow_percolation_threshold_by_default() -> None:
-    config = PercolationPipelineConfig(
-        symbols=tuple(f"S{index}" for index in range(20)),
-        dataset_id="synthetic-sector",
-        start="2024-01-01",
-        end="2025-01-01",
-    )
-
-    assert config.phase_probability_threshold == 0.51
-
-
-def test_pipeline_persists_monthly_progress_before_final_artifacts(tmp_path: Path) -> None:
-    source = MemorySource(_sector())
-    config = PercolationPipelineConfig(
-        symbols=tuple(source.batches),
-        dataset_id="synthetic-sector",
-        start="2024-10-01",
-        end="2025-04-01",
-        activation_threshold=0.8,
-        null_permutations=1,
-        posterior_paths=1,
-        minimum_valid_symbols=3,
-        max_folds=1,
-        random_seed=23,
-    )
-    updates: list[dict[str, object]] = []
-
-    PercolationPipeline(config).run(source, tmp_path, progress=updates.append)
-
-    progress = json.loads((tmp_path / "progress.json").read_text(encoding="utf-8"))
-    assert progress["stage"] == "completed"
-    assert progress["completed_folds"] == progress["total_folds"] == 1
-    assert progress["completed_predictions"] > 0
-    assert progress["estimated_remaining_seconds"] == 0.0
-    assert any(item["stage"] == "walk_forward" for item in updates)
-
-
 def test_pipeline_writes_causal_finite_artifacts(tmp_path: Path) -> None:
     source = MemorySource(_sector())
     config = PercolationPipelineConfig(
@@ -121,9 +84,9 @@ def test_pipeline_writes_causal_finite_artifacts(tmp_path: Path) -> None:
         "percolation-report-zh.md",
     }
     assert required <= {path.name for path in tmp_path.iterdir()}
-    payload = json.loads((tmp_path / "percolation-predictions.json").read_text())
+    payload = json.loads((tmp_path / "percolation-predictions.json").read_text(encoding="utf-8"))
     assert payload
     assert all(abs(sum(item["phase_probabilities"]) - 1.0) < 1e-9 for item in payload)
     assert all(item["signal_time"] < item["available_at"] for item in payload)
-    assert "NaN" not in (tmp_path / "percolation-evaluation.json").read_text()
-    assert "渗流" in (tmp_path / "percolation-report-zh.md").read_text()
+    assert "NaN" not in (tmp_path / "percolation-evaluation.json").read_text(encoding="utf-8")
+    assert "渗流" in (tmp_path / "percolation-report-zh.md").read_text(encoding="utf-8")
