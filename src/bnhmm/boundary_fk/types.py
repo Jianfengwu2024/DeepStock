@@ -243,8 +243,8 @@ class PeriodicBranchMembership:
         effective = np.datetime64(self.effective_session, "D")
         if not self.training_cutoff < effective.astype("datetime64[ns]"):
             raise ValueError("branch membership must be fixed before its effective session")
-        if not 1 <= len(self.branches) <= 8 or any(not branch for branch in self.branches):
-            raise ValueError("a periodic membership must contain one to eight non-empty branches")
+        if not 2 <= len(self.branches) <= 8 or any(not branch for branch in self.branches):
+            raise ValueError("a periodic membership must contain two to eight non-empty branches")
         flattened = tuple(symbol for branch in self.branches for symbol in branch)
         if len(flattened) != len(set(flattened)):
             raise ValueError("a symbol cannot belong to both branches")

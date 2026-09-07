@@ -270,7 +270,23 @@ class RiverTopologyBuilder:
                 imbalance = abs(len(columns) - 2 * cut)
                 candidates.append((score, -imbalance, labels))
         if not candidates:
-            result[columns] = 0
+            # A highly coherent or short window can make every silhouette
+            # candidate invalid. Keep the data usable by making one stable,
+            # deterministic two-way cut instead of silently dropping the
+            # entire sector.
+            ordered = leaves_list(optimal_leaf_ordering(tree, condensed))
+            cut = len(ordered) // 2
+            if cut < self.config.minimum_band_size:
+                cut = self.config.minimum_band_size
+            if len(ordered) - cut < self.config.minimum_band_size:
+                cut = len(ordered) - self.config.minimum_band_size
+            labels = np.ones(len(columns), dtype=np.int64)
+            labels[ordered[:cut]] = 0
+            result[columns] = self._canonical_labels(labels, columns, symbols)
+            if previous is not None:
+                result[columns] = self._align_previous(
+                    result[columns], columns, symbols, previous
+                )
             return result
         labels = max(candidates, key=lambda item: (item[0], item[1]))[2]
         labels = self._canonical_labels(labels, columns, symbols)

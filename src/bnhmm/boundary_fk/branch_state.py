@@ -70,6 +70,11 @@ class TwoBranchDailyStateBuilder:
         topologies: tuple[MonthlyRiverTopology, ...],
     ) -> TwoBranchDataset:
         memberships = self._memberships(panel.symbols, topologies)
+        if not memberships:
+            raise ValueError(
+                "periodic topology produced no usable branches; "
+                "check completed sessions and minimum member size"
+            )
         max_branches = self.config.max_branches or max(
             len(item.branches) for item in memberships
         )
