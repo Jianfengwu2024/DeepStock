@@ -341,8 +341,8 @@ def _validate_two_branch_observation(item: TwoBranchForecastObservation) -> None
     if cutoff > signal or available < signal or available >= target or target <= signal:
         raise ValueError("two-branch forecast timing is not causal")
     branch_count = len(item.forecasts)
-    if not 2 <= branch_count <= 8:
-        raise ValueError("branch observation requires two to eight forecasts")
+    if not 1 <= branch_count <= 8:
+        raise ValueError("flow observation requires one to eight forecasts")
     if (
         len(item.actual_returns) != branch_count
         or len(item.neutral_thresholds) != branch_count
