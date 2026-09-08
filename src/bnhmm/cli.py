@@ -11,10 +11,6 @@ from typing import Sequence
 import numpy as np
 
 from .config import (
-    HOLOGRAPHIC_FIELD_NAMES,
-    HOLOGRAPHIC_LITE_FIELD_NAMES,
-    HOLOGRAPHIC_LITE_PROFILE_PROTOCOL,
-    HOLOGRAPHIC_PROFILE_PROTOCOL,
     REGIME_COUNT,
     REGIME_NAMES,
     REGIME_PROTOCOL,
@@ -25,25 +21,13 @@ from .config import (
     SequenceConfig,
 )
 from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
-from .data.holographic import (
-    HolographicPhaseProfileBuilder,
-    HolographicProfileBuilder,
-)
 from .data.profile import PriceVolumeProfileBuilder
 from .data.source import BrokerBarSource, DuckDBBarSource
-from .repair import RepairVariantCatalog
 from .storage import apply_migrations
 
 
 def _state_timeframes(mode: str) -> tuple[str, ...]:
     return ("1d",) if mode == "daily" else ("60m", "1d")
-
-
-def _holographic_fields(value: str) -> tuple[str, ...]:
-    fields = tuple(item.strip() for item in value.split(",") if item.strip())
-    if not fields:
-        raise argparse.ArgumentTypeError("at least one holographic field is required")
-    return fields
 
 
 def _regime_metadata(labels: LabelConfig) -> dict[str, object]:
@@ -86,85 +70,6 @@ def _migrate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _sector_flow_walk_forward(args: argparse.Namespace) -> int:
-    from .sector_flow.pipeline import SectorFlowConfig, SectorFlowPipeline
-
-    source = DuckDBBarSource(args.duckdb_path)
-    symbols = tuple(
-        item.strip() for item in args.symbols.split(",") if item.strip()
-    )
-    if not symbols:
-        symbols = tuple(source.list_symbols(args.symbol_limit))
-    path_windows = tuple(
-        int(item.strip())
-        for item in args.path_windows.split(",")
-        if item.strip()
-    )
-    config = SectorFlowConfig(
-        symbols=symbols,
-        start=args.start,
-        end=args.end,
-        protocol=args.protocol,
-        dataset_id=args.dataset_id,
-        sector_index_symbol=args.sector_index_symbol,
-        topology_lookback_sessions=args.topology_lookback_sessions,
-        normalization_lookback_sessions=args.normalization_lookback_sessions,
-        normalization_minimum_observations=args.normalization_minimum_observations,
-        minimum_train_sessions=args.minimum_train_sessions,
-        maximum_lag_minutes=args.maximum_lag_minutes,
-        minimum_attribution_rows=args.minimum_attribution_rows,
-        factor_process_variance=args.factor_process_variance,
-        path_windows=path_windows,
-        ranking_window=args.ranking_window,
-        evaluation_horizon_minutes=args.evaluation_horizon_minutes,
-        top_k=args.top_k,
-        transaction_cost_bps=args.transaction_cost_bps,
-        monte_carlo_samples=args.monte_carlo_samples,
-        random_seed=args.seed,
-        max_folds=args.max_folds,
-        regime_context_sessions=args.regime_context_sessions,
-        regime_hidden_channels=args.regime_hidden_channels,
-        regime_latent_states=args.regime_latent_states,
-        regime_neutral_sigma=args.regime_neutral_sigma,
-        regime_volatility_lookback_sessions=(
-            args.regime_volatility_lookback_sessions
-        ),
-        regime_volatility_minimum_observations=(
-            args.regime_volatility_minimum_observations
-        ),
-        regime_confidence_threshold=args.regime_confidence_threshold,
-        regime_maximum_bull_variance=args.regime_maximum_bull_variance,
-        regime_epochs=args.regime_epochs,
-        regime_batch_size=args.regime_batch_size,
-        regime_learning_rate=args.regime_learning_rate,
-        regime_kl_weight=args.regime_kl_weight,
-        regime_state_loss_weight=args.regime_state_loss_weight,
-        regime_mc_samples=args.regime_mc_samples,
-        device=args.device,
-    )
-    result = SectorFlowPipeline(config).run(source, args.output_dir)
-    summary = {
-        "model_version": (
-            "sector-regime-bnhmm-v1"
-            if args.protocol == "river-regime-v3"
-            else "sector-flow-river-v2"
-            if args.protocol == "river-topology-v2"
-            else "sector-flow-bayes-v1"
-        ),
-        "protocol": args.protocol,
-        "dataset_id": args.dataset_id,
-        "symbols": len(symbols),
-        "folds": len(result.folds),
-        "predictions": len(
-            result.regime_predictions
-            or result.graph_predictions
-            or result.predictions
-        ),
-        "metrics": result.metrics,
-        "output_dir": args.output_dir,
-    }
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
 
 
 def _boundary_flow_walk_forward(args: argparse.Namespace) -> int:
@@ -181,11 +86,6 @@ def _boundary_data_build(args: argparse.Namespace) -> int:
     return 0
 
 
-def _percolation_branching_walk_forward(args: argparse.Namespace) -> int:
-    from .percolation_branching.experiment import run_percolation_experiment
-
-    run_percolation_experiment(args)
-    return 0
 
 
 def _train(args: argparse.Namespace) -> int:
@@ -393,15 +293,6 @@ def _walk_forward(args: argparse.Namespace) -> int:
     from .training import ModelConfig, TrainerConfig
     from .walk_forward import WalkForwardConfig, run_walk_forward
 
-    repair_variant = (
-        RepairVariantCatalog.resolve(args.repair_variant)
-        if args.repair_variant
-        else None
-    )
-    if repair_variant is not None and repair_variant.stage > 6:
-        raise ValueError(
-            f"{repair_variant.name} is not implemented in the current repair stage"
-        )
     source = DuckDBBarSource(args.duckdb_path)
     symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
     if not symbols:
@@ -409,7 +300,6 @@ def _walk_forward(args: argparse.Namespace) -> int:
     observations = []
     data_summary: dict[str, dict[str, int]] = {}
     skipped_symbols: dict[str, str] = {}
-    holographic = args.profile_kind == "holographic"
     profile_config = ProfileConfig(
         bin_width_bps=args.bin_width_bps,
         max_profile_bins=args.max_profile_bins,
@@ -420,9 +310,6 @@ def _walk_forward(args: argparse.Namespace) -> int:
         velocity_aggregation_minutes=args.velocity_aggregation_minutes,
         velocity_clip=args.velocity_clip,
         velocity_smoothing=args.velocity_smoothing,
-        holographic_volume_bins=args.holographic_volume_bins,
-        holographic_smoothing=args.holographic_smoothing,
-        holographic_fields=args.holographic_fields,
     )
     label_config = LabelConfig(
         forward_sessions=args.forward_sessions,
@@ -433,13 +320,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
     )
     for symbol in symbols:
         bars = source.fetch(symbol, "1m", args.start, args.end)
-        if holographic and repair_variant is not None and repair_variant.stage >= 4:
-            builder = HolographicPhaseProfileBuilder(profile_config)
-        elif holographic:
-            builder = HolographicProfileBuilder(profile_config)
-        else:
-            builder = PriceVolumeProfileBuilder(profile_config)
-        states = builder.build(bars)
+        states = PriceVolumeProfileBuilder(profile_config).build(bars)
         if not states:
             skipped_symbols[symbol] = "no valid profile states"
             continue
@@ -458,10 +339,6 @@ def _walk_forward(args: argparse.Namespace) -> int:
             "minimum_profile_bins": min(len(state.bin_coordinates) for state in states),
             "maximum_profile_bins": max(len(state.bin_coordinates) for state in states),
         }
-        if holographic:
-            data_summary[symbol]["flow_samples"] = sum(
-                state.flow_samples for state in states
-            )
     if not observations:
         raise ValueError("none of the requested symbols produced observations")
 
@@ -472,23 +349,8 @@ def _walk_forward(args: argparse.Namespace) -> int:
     )
     model_config = ModelConfig(
         max_profile_bins=args.max_profile_bins,
-        profile_channels=(
-            profile_config.holographic_profile_channels
-            if holographic
-            else profile_config.profile_channels
-        ),
+        profile_channels=profile_config.profile_channels,
         latent_states=args.latent_states,
-        tokenizer_kind="holographic-2d" if holographic else "profile-motif",
-        holographic_volume_bins=profile_config.holographic_volume_bins,
-        holographic_field_count=len(profile_config.holographic_fields),
-        holographic_field_names=profile_config.holographic_fields,
-        holographic_conv_layers=args.holographic_conv_layers,
-        daily_encoder=(
-            repair_variant.daily_encoder if repair_variant else "shallow-cnn"
-        ),
-        temporal_encoder=(
-            repair_variant.temporal_encoder if repair_variant else "transformer"
-        ),
         transition_rank=args.transition_rank,
         strong_bear_threshold=label_config.strong_bear_threshold,
         direction_threshold=label_config.direction_threshold,
@@ -503,16 +365,6 @@ def _walk_forward(args: argparse.Namespace) -> int:
         feedforward_dim=args.feedforward_dim,
         dropout=args.dropout,
         max_sequence_length=args.sequence_length,
-        repair_variant=repair_variant.name if repair_variant else None,
-        control_mode=repair_variant.control_mode if repair_variant else "full",
-        include_metadata=(
-            repair_variant is None
-            or repair_variant.control_mode not in {"image-only", "prior-only"}
-        ),
-        direct_autoregression=(
-            repair_variant is None
-            or repair_variant.control_mode not in {"image-only", "prior-only"}
-        ),
     )
     trainer_config = TrainerConfig(
         epochs=args.epochs,
@@ -601,26 +453,12 @@ def _walk_forward(args: argparse.Namespace) -> int:
         "symbols": list(data_summary),
         "model_scope": args.training_scope,
         "dataset_id": args.dataset_id,
-        "repair_variant": repair_variant.name if repair_variant else None,
         "state_timeframe": args.state_timeframe,
         "profile_protocol": {
-            "version": (
-                (
-                    HOLOGRAPHIC_LITE_PROFILE_PROTOCOL
-                    if profile_config.holographic_fields
-                    == HOLOGRAPHIC_LITE_FIELD_NAMES
-                    else HOLOGRAPHIC_PROFILE_PROTOCOL
-                )
-                if holographic
-                else PROFILE_PROTOCOL
-            ),
+            "version": PROFILE_PROTOCOL,
             "bin_width_bps": args.bin_width_bps,
             "max_profile_bins": args.max_profile_bins,
-            "channels": (
-                profile_config.holographic_profile_channels
-                if holographic
-                else profile_config.profile_channels
-            ),
+            "channels": profile_config.profile_channels,
             "normalization_lookback_sessions": args.normalization_lookback_sessions,
             "relative_volume_baseline": "prior-mean-daily-volume/240",
             "velocity_bins": args.velocity_bins,
@@ -641,30 +479,6 @@ def _walk_forward(args: argparse.Namespace) -> int:
                 "current_divergence",
             ],
             "price_coordinate": "log-price-relative-to-previous-close",
-            **(
-                {
-                    "domain": (
-                        ["relative_log_price", "standardized_10m_price_velocity"]
-                        if repair_variant is not None and repair_variant.stage >= 4
-                        else ["relative_log_price", "relative_volume_level"]
-                    ),
-                    "volume_bins": profile_config.holographic_volume_bins,
-                    "field_smoothing": profile_config.holographic_smoothing,
-                    "fields": list(profile_config.holographic_fields),
-                    "flow": (
-                        ["volume_weighted_phase_mass"]
-                        if repair_variant is not None and repair_variant.stage >= 4
-                        else ["price_velocity", "volume_level_velocity"]
-                    ),
-                    "geometry": (
-                        ["price_density_gradient", "velocity_density_gradient"]
-                        if repair_variant is not None and repair_variant.stage >= 4
-                        else ["divergence", "vorticity"]
-                    ),
-                }
-                if holographic
-                else {}
-            ),
         },
         "return_standardization": {
             "lookback_sessions": label_config.standardization_lookback_sessions,
@@ -715,486 +529,14 @@ def _walk_forward(args: argparse.Namespace) -> int:
     Path(args.output_dir, "run-summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    if repair_variant is not None:
-        from .repair import RepairExperimentPipeline
-
-        RepairExperimentPipeline.write_stage_report(args.output_dir)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
 
-def _stock_transformer_walk_forward(args: argparse.Namespace) -> int:
-    import torch
-
-    from .evaluation import (
-        DecisionPolicy,
-        DecisionPolicyConfig,
-        evaluate_predictions,
-        save_evaluation_report,
-    )
-    from .stock_transformer import (
-        ConservationConfig,
-        StockPipelineConfig,
-        StockTrainerConfig,
-        StockTransformerConfig,
-        TokenizationConfig,
-        run_stock_transformer_walk_forward,
-    )
-    from .walk_forward import WalkForwardConfig
-
-    source = DuckDBBarSource(args.duckdb_path)
-    symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
-    if not symbols:
-        symbols = source.list_symbols(args.symbol_limit)
-    profile_config = ProfileConfig(
-        bin_width_bps=args.bin_width_bps,
-        max_profile_bins=args.max_profile_bins,
-        state_timeframes=("1d",),
-        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
-        relative_volume_min_observations=args.normalization_lookback_sessions,
-    )
-    label_config = LabelConfig(
-        forward_sessions=1,
-        standardization_lookback_sessions=args.return_standardization_lookback,
-        standardization_min_observations=args.return_standardization_min_observations,
-        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
-        strong_threshold_sigma=args.strong_threshold_sigma,
-    )
-    observations = []
-    data_summary: dict[str, dict[str, int]] = {}
-    for symbol in symbols:
-        bars = source.fetch(symbol, "1m", args.start, args.end)
-        states = PriceVolumeProfileBuilder(profile_config).build(bars)
-        if not states:
-            continue
-        labeled = ProfileLabelBuilder(label_config).build(states)
-        observations.append(labeled)
-        data_summary[symbol] = {
-            "bars": len(bars),
-            "profile_states": len(states),
-            "observations": len(labeled),
-        }
-    if not observations:
-        raise ValueError("none of the requested symbols produced observations")
-    conservation_config = ConservationConfig(
-        grid_points=args.conservation_grid_points,
-        ridge=args.conservation_ridge,
-    )
-    tokenization_config = TokenizationConfig(
-        minimum_token_bins=args.minimum_token_bins,
-        maximum_tokens=args.maximum_tokens,
-        boundary_threshold=args.boundary_threshold,
-    )
-    model_config = StockTransformerConfig(
-        d_model=args.d_model,
-        heads=args.heads,
-        layers=args.layers,
-        feedforward_dim=args.feedforward_dim,
-        dropout=args.dropout,
-        maximum_days=args.sequence_length,
-        maximum_tokens=args.maximum_tokens,
-    )
-    trainer_config = StockTrainerConfig(
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        conservation_weight=args.conservation_weight,
-        seed=args.seed,
-    )
-    pipeline_config = StockPipelineConfig(
-        sequence_length=args.sequence_length,
-        mc_samples=args.mc_samples,
-    )
-    walk_config = WalkForwardConfig(
-        minimum_train_sessions=args.minimum_train_sessions,
-        tuning_sessions=args.tuning_sessions,
-        test_sessions=args.test_sessions,
-        step_sessions=args.step_sessions,
-        max_folds=args.max_folds,
-    )
-    device = args.device
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    result = run_stock_transformer_walk_forward(
-        observations,
-        conservation_config,
-        tokenization_config,
-        model_config,
-        trainer_config,
-        pipeline_config,
-        walk_config,
-        device=device,
-        output_dir=args.output_dir,
-        dataset_id=args.dataset_id,
-    )
-    policy = DecisionPolicy(
-        DecisionPolicyConfig(
-            uncertainty_aversion=args.uncertainty_aversion,
-            transaction_cost_bps=args.transaction_cost_bps,
-        )
-    )
-    report = evaluate_predictions(
-        result.predictions,
-        result.regime_return_means,
-        result.regime_return_variances,
-        policy=policy,
-    )
-    save_evaluation_report(args.output_dir, report)
-    per_symbol = []
-    for symbol in data_summary:
-        predictions = [item for item in result.predictions if item.symbol == symbol]
-        if not predictions:
-            continue
-        symbol_report = evaluate_predictions(
-            predictions,
-            result.regime_return_means,
-            result.regime_return_variances,
-            policy=policy,
-        )
-        per_symbol.append(
-            {
-                "symbol": symbol,
-                "oos_predictions": len(predictions),
-                "accuracy": symbol_report["accuracy"],
-                "majority_baseline": symbol_report["majority_baseline"],
-                "balanced_accuracy": symbol_report["balanced_accuracy"],
-                "brier_score": symbol_report["brier_score"],
-                "log_loss": symbol_report["log_loss"],
-                "backtest": {
-                    key: symbol_report["backtest"][key]
-                    for key in ("total_return", "max_drawdown")
-                },
-            }
-        )
-    summary = {
-        "strategy": "stock-transformer",
-        "symbols": list(data_summary),
-        "model_scope": "sector-pooled",
-        "dataset_id": args.dataset_id,
-        "three_layer_protocol": {
-            "conservation": "stochastic-continuity-v1",
-            "tokenization": "gradient-current-sentence-v1",
-            "model": "stock-transformer-v1",
-        },
-        "conservation_config": asdict(conservation_config),
-        "tokenization_config": asdict(tokenization_config),
-        "model_config": asdict(model_config),
-        "trainer_config": asdict(trainer_config),
-        "pipeline_config": asdict(pipeline_config),
-        "walk_forward_config": asdict(walk_config),
-        "data": data_summary,
-        "per_symbol": per_symbol,
-        "folds": list(result.folds),
-        "oos_predictions": len(result.predictions),
-        "accuracy": report["accuracy"],
-        "majority_baseline": report["majority_baseline"],
-        "balanced_accuracy": report["balanced_accuracy"],
-        "macro_f1": report["macro_f1"],
-        "class_support": report["class_support"],
-        "predicted_class_counts": report["predicted_class_counts"],
-        "confusion_matrix": report["confusion_matrix"],
-        "brier_score": report["brier_score"],
-        "log_loss": report["log_loss"],
-        "ranked_probability_score": report["ranked_probability_score"],
-        "baselines": report["baselines"],
-        "validation_gate": report["validation_gate"],
-        "return_residual": report["return_residual"],
-        "standardized_residual": report["standardized_residual"],
-        "backtest": {
-            key: report["backtest"][key]
-            for key in (
-                "total_return",
-                "benchmark_return",
-                "max_drawdown",
-                "average_abs_position",
-                "active_position_ratio",
-                "average_turnover",
-            )
-        },
-        "output_dir": args.output_dir,
-    }
-    Path(args.output_dir, "run-summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
 
 
-def _fk_stock_walk_forward(args: argparse.Namespace) -> int:
-    from .evaluation import (
-        DecisionPolicy,
-        DecisionPolicyConfig,
-        evaluate_predictions,
-        save_evaluation_report,
-    )
-    from .fk_stock import (
-        FKGeneratorConfig,
-        FKStockPipelineConfig,
-        FeynmanKacConfig,
-        run_fk_stock_walk_forward,
-    )
-    from .stock_transformer import ConservationConfig
-    from .walk_forward import WalkForwardConfig
-
-    source = DuckDBBarSource(args.duckdb_path)
-    symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
-    if not symbols:
-        symbols = source.list_symbols(args.symbol_limit)
-    profile_config = ProfileConfig(
-        bin_width_bps=args.bin_width_bps,
-        max_profile_bins=args.max_profile_bins,
-        state_timeframes=("1d",),
-        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
-        relative_volume_min_observations=args.normalization_lookback_sessions,
-    )
-    label_config = LabelConfig(
-        forward_sessions=1,
-        standardization_lookback_sessions=args.return_standardization_lookback,
-        standardization_min_observations=args.return_standardization_min_observations,
-        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
-        strong_threshold_sigma=args.strong_threshold_sigma,
-    )
-    observations = []
-    data_summary: dict[str, dict[str, int]] = {}
-    for symbol in symbols:
-        bars = source.fetch(symbol, "1m", args.start, args.end)
-        states = PriceVolumeProfileBuilder(profile_config).build(bars)
-        if not states:
-            continue
-        labeled = ProfileLabelBuilder(label_config).build(states)
-        observations.append(labeled)
-        data_summary[symbol] = {
-            "bars": len(bars),
-            "profile_states": len(states),
-            "observations": len(labeled),
-        }
-    if not observations:
-        raise ValueError("none of the requested symbols produced observations")
-    conservation_config = ConservationConfig()
-    generator_config = FKGeneratorConfig()
-    solver_config = FeynmanKacConfig(
-        strong_threshold_sigma=args.strong_threshold_sigma,
-    )
-    pipeline_config = FKStockPipelineConfig()
-    walk_config = WalkForwardConfig(
-        minimum_train_sessions=args.minimum_train_sessions,
-        tuning_sessions=args.tuning_sessions,
-        test_sessions=args.test_sessions,
-        step_sessions=args.step_sessions,
-        max_folds=args.max_folds,
-    )
-    result = run_fk_stock_walk_forward(
-        observations,
-        conservation_config,
-        generator_config,
-        solver_config,
-        pipeline_config,
-        walk_config,
-        output_dir=args.output_dir,
-        dataset_id=args.dataset_id,
-    )
-    policy = DecisionPolicy(
-        DecisionPolicyConfig(
-            uncertainty_aversion=args.uncertainty_aversion,
-            transaction_cost_bps=args.transaction_cost_bps,
-        )
-    )
-    report = evaluate_predictions(
-        result.predictions,
-        result.regime_return_means,
-        result.regime_return_variances,
-        policy=policy,
-    )
-    save_evaluation_report(args.output_dir, report)
-    per_symbol = []
-    for symbol in data_summary:
-        predictions = [item for item in result.predictions if item.symbol == symbol]
-        if not predictions:
-            continue
-        symbol_report = evaluate_predictions(
-            predictions,
-            result.regime_return_means,
-            result.regime_return_variances,
-            policy=policy,
-        )
-        per_symbol.append(
-            {
-                "symbol": symbol,
-                "oos_predictions": len(predictions),
-                "accuracy": symbol_report["accuracy"],
-                "majority_baseline": symbol_report["majority_baseline"],
-                "balanced_accuracy": symbol_report["balanced_accuracy"],
-                "brier_score": symbol_report["brier_score"],
-                "log_loss": symbol_report["log_loss"],
-                "backtest": {
-                    key: symbol_report["backtest"][key]
-                    for key in ("total_return", "max_drawdown")
-                },
-            }
-        )
-    summary = {
-        "strategy": "fk-stock",
-        "symbols": list(data_summary),
-        "model_scope": "sector-pooled",
-        "dataset_id": args.dataset_id,
-        "three_layer_protocol": {
-            "input": "rolling-standardized-return-diffusion-v2",
-            "generator": "single-feature-bayesian-ridge-v2",
-            "solver": "zero-potential-posterior-v2",
-        },
-        "generator_config": asdict(generator_config),
-        "solver_config": asdict(solver_config),
-        "pipeline_config": asdict(pipeline_config),
-        "walk_forward_config": asdict(walk_config),
-        "data": data_summary,
-        "per_symbol": per_symbol,
-        "folds": list(result.folds),
-        "oos_predictions": len(result.predictions),
-        "accuracy": report["accuracy"],
-        "majority_baseline": report["majority_baseline"],
-        "balanced_accuracy": report["balanced_accuracy"],
-        "macro_f1": report["macro_f1"],
-        "class_support": report["class_support"],
-        "predicted_class_counts": report["predicted_class_counts"],
-        "confusion_matrix": report["confusion_matrix"],
-        "brier_score": report["brier_score"],
-        "log_loss": report["log_loss"],
-        "ranked_probability_score": report["ranked_probability_score"],
-        "baselines": report["baselines"],
-        "validation_gate": report["validation_gate"],
-        "return_residual": report["return_residual"],
-        "standardized_residual": report["standardized_residual"],
-        "backtest": {
-            key: report["backtest"][key]
-            for key in (
-                "total_return",
-                "benchmark_return",
-                "max_drawdown",
-                "average_abs_position",
-                "active_position_ratio",
-                "average_turnover",
-            )
-        },
-        "output_dir": args.output_dir,
-    }
-    Path(args.output_dir, "run-summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
 
 
-def _fk_stock_ablation(args: argparse.Namespace) -> int:
-    from .fk_stock import (
-        FKAblationConfig,
-        FKGeneratorConfig,
-        FeynmanKacConfig,
-        FeynmanKacPotentialConfig,
-        run_fk_stock_ablation,
-    )
-    from .stock_transformer import ConservationConfig
-    from .walk_forward import WalkForwardConfig
-
-    source = DuckDBBarSource(args.duckdb_path)
-    symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
-    if not symbols:
-        symbols = source.list_symbols(args.symbol_limit)
-    profile_config = ProfileConfig(
-        bin_width_bps=args.bin_width_bps,
-        max_profile_bins=args.max_profile_bins,
-        state_timeframes=("1d",),
-        relative_volume_lookback_sessions=args.normalization_lookback_sessions,
-        relative_volume_min_observations=args.normalization_lookback_sessions,
-    )
-    label_config = LabelConfig(
-        standardization_lookback_sessions=args.return_standardization_lookback,
-        standardization_min_observations=args.return_standardization_min_observations,
-        minimum_return_scale=args.minimum_return_scale_percent / 100.0,
-        strong_threshold_sigma=args.strong_threshold_sigma,
-    )
-    observations = []
-    data_summary: dict[str, dict[str, int]] = {}
-    for symbol in symbols:
-        bars = source.fetch(symbol, "1m", args.start, args.end)
-        states = PriceVolumeProfileBuilder(profile_config).build(bars)
-        if not states:
-            continue
-        labeled = ProfileLabelBuilder(label_config).build(states)
-        observations.append(labeled)
-        data_summary[symbol] = {
-            "bars": len(bars),
-            "profile_states": len(states),
-            "observations": len(labeled),
-        }
-    if not observations:
-        raise ValueError("none of the requested symbols produced observations")
-    conservation_config = ConservationConfig(
-        grid_points=args.conservation_grid_points,
-        ridge=args.conservation_ridge,
-    )
-    generator_config = FKGeneratorConfig(
-        drift_lookback_sessions=args.fk_drift_lookback_sessions,
-        ridge=args.fk_ridge,
-        minimum_return_history=args.fk_minimum_return_history,
-        minimum_fit_rows=args.fk_minimum_fit_rows,
-        minimum_noise_variance=args.fk_minimum_noise_variance,
-    )
-    solver_config = FeynmanKacConfig(
-        strong_threshold_sigma=args.strong_threshold_sigma,
-    )
-    potential_config = FeynmanKacPotentialConfig(
-        potential_floor=args.fk_potential_floor,
-        noise_potential_weight=args.fk_noise_potential_weight,
-        uncertainty_potential_weight=args.fk_uncertainty_potential_weight,
-        incoherence_potential_weight=args.fk_incoherence_potential_weight,
-        maximum_potential=args.fk_maximum_potential,
-        mc_samples=args.mc_samples,
-        seed=args.seed,
-    )
-    walk_config = WalkForwardConfig(
-        minimum_train_sessions=args.minimum_train_sessions,
-        tuning_sessions=args.tuning_sessions,
-        test_sessions=args.test_sessions,
-        step_sessions=args.test_sessions,
-        max_folds=1,
-    )
-    result = run_fk_stock_ablation(
-        observations,
-        conservation_config,
-        generator_config,
-        solver_config,
-        potential_config,
-        walk_config,
-        output_dir=args.output_dir,
-        dataset_id=args.dataset_id,
-        ablation_config=FKAblationConfig(
-            log_loss_tolerance=args.ablation_log_loss_tolerance,
-            brier_tolerance=args.ablation_brier_tolerance,
-        ),
-    )
-    selected_outer = next(
-        item
-        for item in result.outer_potential_results
-        if item["name"] == result.selected_potential
-    )
-    summary = {
-        "strategy": "fk-stock-ablation",
-        "dataset_id": args.dataset_id,
-        "symbols_requested": len(symbols),
-        "symbols_loaded": len(observations),
-        "selected_features": list(result.selected_features),
-        "selected_feature_count": len(result.selected_features),
-        "selected_potential": result.selected_potential,
-        "selected_outer_metrics": selected_outer,
-        "fold": result.fold,
-        "data": data_summary,
-        "output_dir": args.output_dir,
-    }
-    Path(args.output_dir, "run-summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
 
 
 def _bnhmm_ablation(args: argparse.Namespace) -> int:
@@ -1350,70 +692,6 @@ def build_parser() -> argparse.ArgumentParser:
     migrate.add_argument("--dsn", required=True)
     migrate.set_defaults(handler=_migrate)
 
-    sector_flow = subparsers.add_parser("sector-flow-walk-forward")
-    sector_flow.add_argument("--duckdb-path", required=True)
-    sector_flow.add_argument("--symbols", default="")
-    sector_flow.add_argument("--symbol-limit", type=int, default=100)
-    sector_flow.add_argument("--dataset-id")
-    sector_flow.add_argument("--start", required=True)
-    sector_flow.add_argument("--end", required=True)
-    sector_flow.add_argument("--output-dir", required=True)
-    sector_flow.add_argument(
-        "--protocol",
-        choices=("legacy-v1", "river-topology-v2", "river-regime-v3"),
-        default="river-topology-v2",
-    )
-    sector_flow.add_argument(
-        "--topology-lookback-sessions", type=int, default=60
-    )
-    sector_flow.add_argument(
-        "--normalization-lookback-sessions", type=int, default=20
-    )
-    sector_flow.add_argument(
-        "--normalization-minimum-observations", type=int, default=10
-    )
-    sector_flow.add_argument("--minimum-train-sessions", type=int, default=60)
-    sector_flow.add_argument("--maximum-lag-minutes", type=int, default=30)
-    sector_flow.add_argument("--minimum-attribution-rows", type=int, default=120)
-    sector_flow.add_argument("--factor-process-variance", type=float)
-    sector_flow.add_argument("--path-windows", default="5,15,30,60")
-    sector_flow.add_argument("--ranking-window", type=int, default=60)
-    sector_flow.add_argument(
-        "--evaluation-horizon-minutes", type=int, default=30
-    )
-    sector_flow.add_argument("--top-k", type=int, default=10)
-    sector_flow.add_argument("--transaction-cost-bps", type=float, default=10.0)
-    sector_flow.add_argument("--monte-carlo-samples", type=int, default=1000)
-    sector_flow.add_argument("--max-folds", type=int)
-    sector_flow.add_argument("--seed", type=int, default=20260820)
-    sector_flow.add_argument("--sector-index-symbol", default="881121")
-    sector_flow.add_argument("--regime-context-sessions", type=int, default=5)
-    sector_flow.add_argument("--regime-hidden-channels", type=int, default=16)
-    sector_flow.add_argument("--regime-latent-states", type=int, default=12)
-    sector_flow.add_argument("--regime-neutral-sigma", type=float, default=0.35)
-    sector_flow.add_argument(
-        "--regime-volatility-lookback-sessions", type=int, default=20
-    )
-    sector_flow.add_argument(
-        "--regime-volatility-minimum-observations", type=int, default=10
-    )
-    sector_flow.add_argument(
-        "--regime-confidence-threshold", type=float, default=0.6
-    )
-    sector_flow.add_argument(
-        "--regime-maximum-bull-variance", type=float, default=0.02
-    )
-    sector_flow.add_argument("--regime-epochs", type=int, default=20)
-    sector_flow.add_argument("--regime-batch-size", type=int, default=8)
-    sector_flow.add_argument("--regime-learning-rate", type=float, default=3e-4)
-    sector_flow.add_argument("--regime-kl-weight", type=float, default=1e-4)
-    sector_flow.add_argument(
-        "--regime-state-loss-weight", type=float, default=0.25
-    )
-    sector_flow.add_argument("--regime-mc-samples", type=int, default=16)
-    sector_flow.add_argument("--device", default="cpu")
-    sector_flow.set_defaults(handler=_sector_flow_walk_forward)
-
     boundary_data = subparsers.add_parser("boundary-data-build")
     boundary_data.add_argument("--duckdb-path", required=True)
     boundary_data.add_argument("--symbols", required=True)
@@ -1454,24 +732,6 @@ def build_parser() -> argparse.ArgumentParser:
     boundary_flow.add_argument("--seed", type=int, default=7)
     boundary_flow.add_argument("--max-folds", type=int)
     boundary_flow.set_defaults(handler=_boundary_flow_walk_forward)
-
-    percolation = subparsers.add_parser("percolation-branching-walk-forward")
-    percolation.add_argument("--duckdb-path", required=True)
-    percolation.add_argument("--symbols", required=True)
-    percolation.add_argument("--dataset-id", required=True)
-    percolation.add_argument("--start", required=True)
-    percolation.add_argument("--end", required=True)
-    percolation.add_argument("--output-dir", required=True)
-    percolation.add_argument("--activation-threshold", type=float, default=1.5)
-    percolation.add_argument("--maximum-lag-minutes", type=int, choices=(3,), default=3)
-    percolation.add_argument("--topology-lookback-sessions", type=int, choices=(60,), default=60)
-    percolation.add_argument("--null-permutations", type=int, default=500)
-    percolation.add_argument("--posterior-paths", type=int, default=10_000)
-    percolation.add_argument("--phase-probability-threshold", type=float, default=0.51)
-    percolation.add_argument("--transaction-cost-bps", type=float, default=5.0)
-    percolation.add_argument("--seed", type=int, default=7)
-    percolation.add_argument("--max-folds", type=int)
-    percolation.set_defaults(handler=_percolation_branching_walk_forward)
 
     train = subparsers.add_parser("train")
     train.add_argument("--duckdb-path", required=True)
@@ -1572,21 +832,6 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--velocity-clip", type=float, default=4.0)
     walk.add_argument("--velocity-smoothing", type=float, default=0.25)
     walk.add_argument(
-        "--profile-kind",
-        choices=("phase-space", "holographic"),
-        default="phase-space",
-    )
-    walk.add_argument("--holographic-volume-bins", type=int, default=5)
-    walk.add_argument("--holographic-smoothing", type=float, default=0.75)
-    walk.add_argument(
-        "--holographic-fields",
-        type=_holographic_fields,
-        default=HOLOGRAPHIC_FIELD_NAMES,
-        metavar="FIELD[,FIELD...]",
-    )
-    walk.add_argument("--holographic-conv-layers", type=int, choices=(1, 2), default=2)
-    walk.add_argument("--repair-variant", choices=RepairVariantCatalog.names())
-    walk.add_argument(
         "--feature-mode",
         choices=("gated-full", "price-only", "price-volume", "price-velocity"),
         default="price-volume",
@@ -1616,108 +861,6 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument("--transaction-cost-bps", type=float, default=10.0)
     walk.add_argument("--seed", type=int, default=7)
     walk.set_defaults(handler=_walk_forward)
-
-    stock = subparsers.add_parser("stock-transformer-walk-forward")
-    stock.add_argument("--duckdb-path", required=True)
-    stock.add_argument("--symbols", default="")
-    stock.add_argument("--symbol-limit", type=int, default=10)
-    stock.add_argument("--dataset-id")
-    stock.add_argument("--start", required=True)
-    stock.add_argument("--end", required=True)
-    stock.add_argument("--output-dir", required=True)
-    stock.add_argument("--device", default="auto")
-    stock.add_argument("--epochs", type=int, default=10)
-    stock.add_argument("--batch-size", type=int, default=16)
-    stock.add_argument("--learning-rate", type=float, default=3e-4)
-    stock.add_argument("--conservation-weight", type=float, default=0.5)
-    stock.add_argument("--strong-threshold-sigma", type=float, default=0.75)
-    stock.add_argument("--return-standardization-lookback", type=int, default=20)
-    stock.add_argument("--return-standardization-min-observations", type=int, default=10)
-    stock.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
-    stock.add_argument("--minimum-train-sessions", type=int, default=252)
-    stock.add_argument("--tuning-sessions", type=int, default=60)
-    stock.add_argument("--test-sessions", type=int, default=60)
-    stock.add_argument("--step-sessions", type=int, default=60)
-    stock.add_argument("--max-folds", type=int)
-    stock.add_argument("--bin-width-bps", type=float, default=10.0)
-    stock.add_argument("--max-profile-bins", type=int, default=512)
-    stock.add_argument("--normalization-lookback-sessions", type=int, default=10)
-    stock.add_argument("--conservation-grid-points", type=int, default=64)
-    stock.add_argument("--conservation-ridge", type=float, default=1e-3)
-    stock.add_argument("--minimum-token-bins", type=int, default=2)
-    stock.add_argument("--maximum-tokens", type=int, default=16)
-    stock.add_argument("--boundary-threshold", type=float, default=1.5)
-    stock.add_argument("--sequence-length", type=int, default=5)
-    stock.add_argument("--d-model", type=int, default=64)
-    stock.add_argument("--heads", type=int, default=4)
-    stock.add_argument("--layers", type=int, default=3)
-    stock.add_argument("--feedforward-dim", type=int, default=128)
-    stock.add_argument("--dropout", type=float, default=0.1)
-    stock.add_argument("--mc-samples", type=int, default=16)
-    stock.add_argument("--uncertainty-aversion", type=float, default=2.0)
-    stock.add_argument("--transaction-cost-bps", type=float, default=10.0)
-    stock.add_argument("--seed", type=int, default=7)
-    stock.set_defaults(handler=_stock_transformer_walk_forward)
-
-    fk = subparsers.add_parser("fk-stock-walk-forward")
-    fk.add_argument("--duckdb-path", required=True)
-    fk.add_argument("--symbols", default="")
-    fk.add_argument("--symbol-limit", type=int, default=10)
-    fk.add_argument("--dataset-id", required=True)
-    fk.add_argument("--start", required=True)
-    fk.add_argument("--end", required=True)
-    fk.add_argument("--output-dir", required=True)
-    fk.add_argument("--strong-threshold-sigma", type=float, default=0.75)
-    fk.add_argument("--return-standardization-lookback", type=int, default=20)
-    fk.add_argument("--return-standardization-min-observations", type=int, default=10)
-    fk.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
-    fk.add_argument("--minimum-train-sessions", type=int, default=252)
-    fk.add_argument("--tuning-sessions", type=int, default=60)
-    fk.add_argument("--test-sessions", type=int, default=60)
-    fk.add_argument("--step-sessions", type=int, default=60)
-    fk.add_argument("--max-folds", type=int)
-    fk.add_argument("--bin-width-bps", type=float, default=10.0)
-    fk.add_argument("--max-profile-bins", type=int, default=512)
-    fk.add_argument("--normalization-lookback-sessions", type=int, default=10)
-    fk.add_argument("--uncertainty-aversion", type=float, default=2.0)
-    fk.add_argument("--transaction-cost-bps", type=float, default=10.0)
-    fk.set_defaults(handler=_fk_stock_walk_forward)
-
-    ablation = subparsers.add_parser("fk-stock-ablation")
-    ablation.add_argument("--duckdb-path", required=True)
-    ablation.add_argument("--symbols", default="")
-    ablation.add_argument("--symbol-limit", type=int, default=10)
-    ablation.add_argument("--dataset-id", required=True)
-    ablation.add_argument("--start", required=True)
-    ablation.add_argument("--end", required=True)
-    ablation.add_argument("--output-dir", required=True)
-    ablation.add_argument("--strong-threshold-sigma", type=float, default=0.75)
-    ablation.add_argument("--return-standardization-lookback", type=int, default=20)
-    ablation.add_argument("--return-standardization-min-observations", type=int, default=10)
-    ablation.add_argument("--minimum-return-scale-percent", type=float, default=0.2)
-    ablation.add_argument("--minimum-train-sessions", type=int, default=252)
-    ablation.add_argument("--tuning-sessions", type=int, default=60)
-    ablation.add_argument("--test-sessions", type=int, default=30)
-    ablation.add_argument("--bin-width-bps", type=float, default=10.0)
-    ablation.add_argument("--max-profile-bins", type=int, default=512)
-    ablation.add_argument("--normalization-lookback-sessions", type=int, default=10)
-    ablation.add_argument("--conservation-grid-points", type=int, default=64)
-    ablation.add_argument("--conservation-ridge", type=float, default=1e-3)
-    ablation.add_argument("--fk-drift-lookback-sessions", type=int, default=20)
-    ablation.add_argument("--fk-ridge", type=float, default=1.0)
-    ablation.add_argument("--fk-minimum-return-history", type=int, default=5)
-    ablation.add_argument("--fk-minimum-fit-rows", type=int, default=20)
-    ablation.add_argument("--fk-minimum-noise-variance", type=float, default=1e-4)
-    ablation.add_argument("--fk-potential-floor", type=float, default=0.0)
-    ablation.add_argument("--fk-noise-potential-weight", type=float, default=0.75)
-    ablation.add_argument("--fk-uncertainty-potential-weight", type=float, default=0.75)
-    ablation.add_argument("--fk-incoherence-potential-weight", type=float, default=0.25)
-    ablation.add_argument("--fk-maximum-potential", type=float, default=4.0)
-    ablation.add_argument("--mc-samples", type=int, default=16)
-    ablation.add_argument("--seed", type=int, default=7)
-    ablation.add_argument("--ablation-log-loss-tolerance", type=float, default=1e-3)
-    ablation.add_argument("--ablation-brier-tolerance", type=float, default=5e-4)
-    ablation.set_defaults(handler=_fk_stock_ablation)
 
     bnhmm_ablation = subparsers.add_parser("bnhmm-ablation")
     bnhmm_ablation.add_argument("--duckdb-path", required=True)

@@ -24,36 +24,33 @@ from bnhmm.web.jobs import (
 
 
 class WebJobTests(unittest.TestCase):
-    def test_percolation_job_requires_sector_dataset_and_builds_cpu_command(self) -> None:
-        request = WalkForwardJobRequest(
-            strategy="percolation-branching",
+    def test_only_bnhmm_and_boundary_fk_strategies_are_accepted(self) -> None:
+        self.assertEqual(WalkForwardJobRequest().strategy, "bnhmm")
+        boundary = WalkForwardJobRequest(
+            strategy="boundary-flow-fk",
             training_scope="sector-pooled",
             dataset_id="semiconductor",
-            symbols=[f"S{index}" for index in range(20)],
-            maximum_lag_minutes=3,
-            topology_lookback_sessions=60,
         )
+        self.assertIn(
+            "boundary-flow-fk-walk-forward",
+            build_command(boundary, Path("/tmp/fk")),
+        )
+        for removed in (
+            "holo-bnhmm",
+            "holo-bnhmm-lite",
+            "holo-repair",
+            "stock-transformer",
+            "fk-stock",
+            "sector-flow-bayes",
+            "percolation-branching",
+        ):
+            with self.assertRaises(ValidationError):
+                WalkForwardJobRequest.model_validate({"strategy": removed})
 
-        command = build_command(request, Path("/tmp/percolation"))
-
-        self.assertIn("percolation-branching-walk-forward", command)
-        self.assertEqual(command[command.index("--maximum-lag-minutes") + 1], "3")
-        self.assertEqual(command[command.index("--topology-lookback-sessions") + 1], "60")
-        self.assertEqual(command[command.index("--null-permutations") + 1], "500")
-        self.assertEqual(command[command.index("--posterior-paths") + 1], "10000")
-        self.assertNotIn("--device", command)
-        self.assertNotIn("--epochs", command)
-
-        with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(strategy="percolation-branching")
-        with self.assertRaises(ValidationError):
-            request.model_copy(update={"maximum_lag_minutes": 2}).model_validate(
-                request.model_copy(update={"maximum_lag_minutes": 2}).model_dump()
-            )
 
     def test_completed_artifact_directory_without_job_metadata_is_discovered(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory, "20260826-PathEfficiencyFK-StrongestThird-20D-5BP")
+            output = Path(directory, "FK-Bayesian-Rolling60-001")
             output.mkdir()
             (output / "run-summary.json").write_text(
                 json.dumps(
@@ -61,7 +58,6 @@ class WebJobTests(unittest.TestCase):
                         "strategy": "boundary-flow-fk",
                         "dataset_id": "semiconductor",
                         "symbols": 96,
-                        "topology_lookback_sessions": 60,
                         "relative_strength_lookback_sessions": 20,
                     }
                 ),
@@ -70,8 +66,7 @@ class WebJobTests(unittest.TestCase):
             (output / "boundary-policy-evaluation.json").write_text(
                 json.dumps(
                     [
-                        {"model_name": "PathEfficiencyFK-60D-Beta0PlusC1-Baseline"},
-                        {"model_name": "PathEfficiencyFK-60D-StrongestThird"},
+                        {"model_name": "FK-Bayesian-Rolling60"},
                     ]
                 ),
                 encoding="utf-8",
@@ -86,7 +81,6 @@ class WebJobTests(unittest.TestCase):
             self.assertEqual(jobs[0].status, "completed")
             self.assertEqual(jobs[0].request.strategy, "boundary-flow-fk")
             self.assertEqual(jobs[0].request.dataset_id, "semiconductor")
-            self.assertEqual(jobs[0].request.topology_lookback_sessions, 60)
             self.assertEqual(
                 jobs[0].request.boundary_relative_strength_lookback_sessions, 20
             )
@@ -251,221 +245,13 @@ class WebJobTests(unittest.TestCase):
         )
         self.assertIn("--deterministic-training", deterministic)
 
-    def test_stock_transformer_command_uses_isolated_pipeline(self) -> None:
-        request = WalkForwardJobRequest(
-            strategy="stock-transformer",
-            training_scope="sector-pooled",
-            dataset_id="semiconductor",
-        )
-        command = build_command(request, Path("/tmp/stock-result"))
-        self.assertIn("stock-transformer-walk-forward", command)
-        self.assertIn("--conservation-grid-points", command)
-        self.assertIn("--boundary-threshold", command)
-        self.assertIn("--conservation-weight", command)
-        self.assertNotIn("--latent-states", command)
 
-    def test_holographic_bnhmm_command_selects_two_dimensional_profile(self) -> None:
-        request = WalkForwardJobRequest(
-            strategy="holo-bnhmm",
-            training_scope="sector-pooled",
-            dataset_id="semiconductor",
-            profile_protocol="price-volume-holographic-flow-v1",
-            latent_states=50,
-        )
-        command = build_command(request, Path("/tmp/holo-result"))
 
-        self.assertIn("walk-forward", command)
-        self.assertIn("--profile-kind", command)
-        self.assertIn("holographic", command)
-        self.assertIn("--holographic-volume-bins", command)
-        self.assertIn("--holographic-smoothing", command)
-        self.assertIn("50", command)
 
-        with self.assertRaises(ValidationError):
-            request.model_copy(update={"latent_states": 39}).model_validate(
-            request.model_copy(update={"latent_states": 39}).model_dump()
-            )
 
-    def test_holo_repair_requires_an_implemented_named_variant(self) -> None:
-        request = WalkForwardJobRequest(
-            strategy="holo-repair",
-            repair_variant="HoloProbe-Image",
-            training_scope="sector-pooled",
-            dataset_id="semiconductor",
-            profile_protocol="price-volume-holographic-flow-v1",
-            latent_states=50,
-        )
 
-        command = build_command(request, Path("/tmp/holo-repair-result"))
 
-        index = command.index("--repair-variant")
-        self.assertEqual(command[index + 1], "HoloProbe-Image")
-        with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(
-                strategy="holo-repair",
-                training_scope="sector-pooled",
-                dataset_id="semiconductor",
-                profile_protocol="price-volume-holographic-flow-v1",
-                latent_states=50,
-            )
-        phase = WalkForwardJobRequest(
-            strategy="holo-repair",
-            repair_variant="HoloPhase",
-            training_scope="sector-pooled",
-            dataset_id="semiconductor",
-            profile_protocol="price-volume-holographic-flow-v1",
-            latent_states=50,
-        )
-        self.assertIn("HoloPhase", build_command(phase, Path("/tmp/holo-phase")))
-        resnet = phase.model_copy(
-            update={"name": "HoloResNet-001", "repair_variant": "HoloResNet"}
-        ).model_validate(
-            phase.model_copy(
-                update={"name": "HoloResNet-001", "repair_variant": "HoloResNet"}
-            ).model_dump()
-        )
-        self.assertIn("HoloResNet", build_command(resnet, Path("/tmp/holo-resnet")))
-        restcn = phase.model_copy(
-            update={"name": "HoloResTCN-001", "repair_variant": "HoloResTCN"}
-        ).model_validate(
-            phase.model_copy(
-                update={"name": "HoloResTCN-001", "repair_variant": "HoloResTCN"}
-            ).model_dump()
-        )
-        self.assertIn("HoloResTCN", build_command(restcn, Path("/tmp/holo-restcn")))
-        with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(
-                strategy="holo-repair",
-                repair_variant="HoloSticky",
-                training_scope="sector-pooled",
-                dataset_id="semiconductor",
-                profile_protocol="price-volume-holographic-flow-v1",
-                latent_states=50,
-            )
 
-    def test_holographic_lite_command_uses_fixed_fifteen_channel_contract(self) -> None:
-        fields = (
-            "density",
-            "price_current",
-            "volume_current",
-            "divergence",
-            "vorticity",
-        )
-        request = WalkForwardJobRequest(
-            strategy="holo-bnhmm-lite",
-            training_scope="sector-pooled",
-            dataset_id="semiconductor",
-            profile_protocol="price-volume-holographic-lite-v1",
-            holographic_volume_bins=3,
-            holographic_fields=fields,
-            holographic_conv_layers=1,
-            d_model=16,
-            latent_states=16,
-            layers=1,
-            feedforward_dim=32,
-        )
-
-        command = build_command(request, Path("/tmp/holo-lite-result"))
-
-        self.assertIn("--holographic-fields", command)
-        self.assertIn(",".join(fields), command)
-        self.assertIn("--holographic-conv-layers", command)
-        self.assertEqual(request.holographic_volume_bins * len(fields), 15)
-        with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(
-                strategy="holo-bnhmm-lite",
-                training_scope="sector-pooled",
-                dataset_id="semiconductor",
-                profile_protocol="price-volume-holographic-lite-v1",
-                holographic_volume_bins=3,
-                holographic_fields=fields,
-                latent_states=14,
-            )
-
-    def test_stock_transformer_rejects_non_sector_scope(self) -> None:
-        with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(strategy="stock-transformer")
-
-    def test_fk_stock_command_contains_only_closed_form_parameters(self) -> None:
-        request = WalkForwardJobRequest(
-            strategy="fk-stock",
-            training_scope="sector-pooled",
-            dataset_id="semiconductor",
-        )
-        command = build_command(request, Path("/tmp/fk-result"))
-        self.assertIn("fk-stock-walk-forward", command)
-        self.assertNotIn("--fk-drift-lookback-sessions", command)
-        self.assertNotIn("--fk-noise-potential-weight", command)
-        self.assertNotIn("--conservation-grid-points", command)
-        self.assertNotIn("--epochs", command)
-        self.assertNotIn("--device", command)
-        self.assertNotIn("--d-model", command)
-        self.assertNotIn("--latent-states", command)
-        self.assertNotIn("--maximum-tokens", command)
-
-    def test_fk_stock_rejects_non_sector_scope(self) -> None:
-        with self.assertRaises(ValidationError):
-            WalkForwardJobRequest(strategy="fk-stock")
-
-    def test_sector_flow_command_uses_only_causal_flow_parameters(self) -> None:
-        request = WalkForwardJobRequest(
-            strategy="sector-flow-bayes",
-            training_scope="sector-pooled",
-            dataset_id="semiconductor",
-            minimum_train_sessions=120,
-            normalization_lookback_sessions=20,
-            normalization_minimum_observations=10,
-            maximum_lag_minutes=30,
-            factor_process_variance=0.2,
-            sector_flow_path_windows=(5, 15, 30, 60),
-            sector_flow_ranking_window=60,
-            sector_flow_top_k=10,
-            sector_index_symbol="881121",
-            regime_context_sessions=5,
-            regime_hidden_channels=16,
-            regime_latent_states=12,
-            regime_neutral_sigma=0.35,
-            regime_confidence_threshold=0.6,
-            regime_epochs=20,
-            regime_mc_samples=16,
-        )
-
-        command = build_command(request, Path("/tmp/sector-flow"))
-
-        self.assertIn("sector-flow-walk-forward", command)
-        self.assertEqual(
-            command[command.index("--protocol") + 1], "river-regime-v3"
-        )
-        self.assertEqual(
-            command[command.index("--topology-lookback-sessions") + 1], "60"
-        )
-        self.assertIn("--maximum-lag-minutes", command)
-        self.assertIn("--factor-process-variance", command)
-        self.assertIn("--top-k", command)
-        self.assertEqual(
-            command[command.index("--sector-index-symbol") + 1], "881121"
-        )
-        self.assertEqual(
-            command[command.index("--regime-context-sessions") + 1], "5"
-        )
-        self.assertEqual(
-            command[command.index("--regime-latent-states") + 1], "12"
-        )
-        self.assertEqual(command[command.index("--regime-epochs") + 1], "20")
-        self.assertEqual(
-            command[command.index("--regime-mc-samples") + 1], "16"
-        )
-        self.assertIn("--device", command)
-        self.assertNotIn("--d-model", command)
-        self.assertNotIn("--latent-states", command)
-        with self.assertRaises(ValidationError):
-            request.model_copy(
-                update={"sector_flow_ranking_window": 45}
-            ).model_validate(
-                request.model_copy(
-                    update={"sector_flow_ranking_window": 45}
-                ).model_dump()
-            )
 
     def test_boundary_flow_command_uses_independent_cpu_pipeline(self) -> None:
         request = WalkForwardJobRequest(
@@ -599,42 +385,6 @@ class WebJobTests(unittest.TestCase):
             )
             manager.close()
 
-    def test_jobs_without_state_mode_are_loaded_as_legacy_mixed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            job_dir = root / "legacy-job"
-            job_dir.mkdir()
-            request = WalkForwardJobRequest().model_dump(mode="json")
-            request.pop("state_timeframe")
-            request.pop("profile_protocol")
-            request.pop("sequence_protocol")
-            request.pop("training_scope")
-            request.pop("latent_states")
-            request.pop("feature_mode")
-            request.pop("bin_width_bps")
-            request.pop("max_profile_bins")
-            payload = {
-                "id": "legacy-job",
-                "status": "completed",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "output_dir": str(job_dir),
-                "request": request,
-            }
-            (job_dir / "job.json").write_text(json.dumps(payload), encoding="utf-8")
-
-            manager = JobManager(root, Path.cwd())
-            loaded = manager.get("legacy-job")
-            manager.close()
-
-            self.assertIsNotNone(loaded)
-            self.assertEqual(loaded.request.state_timeframe, "mixed")
-            self.assertEqual(loaded.request.profile_protocol, "legacy-fixed-bins")
-            self.assertEqual(
-                loaded.request.sequence_protocol, "legacy-overlapping-window-v1"
-            )
-            self.assertEqual(loaded.request.training_scope, "shared-legacy")
-            self.assertEqual(loaded.request.latent_states, 10)
-            self.assertEqual(loaded.request.feature_mode, "legacy-entangled")
 
 
 if __name__ == "__main__":

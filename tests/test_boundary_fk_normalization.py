@@ -140,3 +140,12 @@ def test_returns_do_not_bridge_sessions_or_lunch_breaks() -> None:
 
     assert not normalized.raw_velocity_valid.any()
     assert np.isnan(normalized.raw_velocity).all()
+
+
+def test_normalized_panel_preserves_raw_prices_for_rolling_coordinates() -> None:
+    panel = _history_panel()
+
+    normalized = _normalizer().transform(panel)
+
+    np.testing.assert_array_equal(normalized.close, panel.close)
+    np.testing.assert_array_equal(normalized.price_valid, panel.valid)

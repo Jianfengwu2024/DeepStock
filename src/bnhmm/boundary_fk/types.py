@@ -15,6 +15,8 @@ CONVECTION_LOOKBACKS = (1, 2, 3, 5)
 class NormalizedBoundaryPanel:
     symbols: tuple[str, ...]
     timestamps: NDArray[np.datetime64]
+    close: NDArray[np.float64]
+    price_valid: NDArray[np.bool_]
     raw_velocity: NDArray[np.float64]
     standardized_velocity: NDArray[np.float64]
     relative_volume: NDArray[np.float64]
@@ -27,6 +29,8 @@ class NormalizedBoundaryPanel:
     def __post_init__(self) -> None:
         shape = (len(self.timestamps), len(self.symbols))
         arrays = (
+            self.close,
+            self.price_valid,
             self.raw_velocity,
             self.standardized_velocity,
             self.relative_volume,
@@ -38,6 +42,8 @@ class NormalizedBoundaryPanel:
         )
         if any(item.shape != shape for item in arrays):
             raise ValueError("boundary normalization arrays must share panel shape")
+        if np.any(self.price_valid & (~np.isfinite(self.close) | (self.close <= 0.0))):
+            raise ValueError("valid boundary prices must be finite and positive")
         if np.any(self.raw_velocity_valid & ~np.isfinite(self.raw_velocity)):
             raise ValueError("valid raw velocities must be finite")
         if np.any(self.velocity_valid & ~np.isfinite(self.standardized_velocity)):
@@ -46,91 +52,6 @@ class NormalizedBoundaryPanel:
             raise ValueError("valid relative volume must be finite")
         if np.any(self.density_valid & (self.relative_volume < 0.0)):
             raise ValueError("relative volume cannot be negative")
-
-
-@dataclass(frozen=True, slots=True)
-class BoundaryMinuteMoments:
-    timestamps: NDArray[np.datetime64]
-    water: NDArray[np.float64]
-    momentum: NDArray[np.float64]
-    velocity: NDArray[np.float64]
-    mean_standardized_velocity: NDArray[np.float64]
-    coherence: NDArray[np.float64]
-    turbulence: NDArray[np.float64]
-    breadth: NDArray[np.float64]
-    concentration: NDArray[np.float64]
-    effective_constituents: NDArray[np.float64]
-    decoupling: NDArray[np.float64]
-    thickness: NDArray[np.float64]
-    thickness_slope: NDArray[np.float64]
-    viscosity: NDArray[np.float64]
-    active_weight: NDArray[np.float64]
-    active_fraction: NDArray[np.float64]
-    valid: NDArray[np.bool_]
-
-    def __post_init__(self) -> None:
-        shape = (len(self.timestamps),)
-        arrays = (
-            self.water,
-            self.momentum,
-            self.velocity,
-            self.mean_standardized_velocity,
-            self.coherence,
-            self.turbulence,
-            self.breadth,
-            self.concentration,
-            self.effective_constituents,
-            self.decoupling,
-            self.thickness,
-            self.thickness_slope,
-            self.viscosity,
-            self.active_weight,
-            self.active_fraction,
-            self.valid,
-        )
-        if any(item.shape != shape for item in arrays):
-            raise ValueError("boundary moment vectors must align with timestamps")
-        economic = arrays[:-3]
-        if any(np.any(self.valid & ~np.isfinite(item)) for item in economic):
-            raise ValueError("valid boundary moments must be finite")
-        if np.any(self.valid & ((self.coherence < 0.0) | (self.coherence > 1.0))):
-            raise ValueError("coherence must lie in [0, 1]")
-        if np.any(self.valid & ((self.concentration <= 0.0) | (self.concentration > 1.0))):
-            raise ValueError("concentration must lie in (0, 1]")
-        if np.any(self.valid & ((self.viscosity < 0.0) | (self.viscosity > 2.0))):
-            raise ValueError("viscosity must lie in [0, 2]")
-
-
-@dataclass(frozen=True, slots=True)
-class BoundaryDailyStates:
-    sessions: NDArray[np.datetime64]
-    topology_months: NDArray[np.datetime64]
-    feature_names: tuple[str, ...]
-    units: tuple[str, ...]
-    values: NDArray[np.float64]
-    valid: NDArray[np.bool_]
-    branch_degraded: NDArray[np.bool_]
-
-    def __post_init__(self) -> None:
-        rows = len(self.sessions)
-        columns = len(self.feature_names)
-        if not self.feature_names or len(set(self.feature_names)) != columns:
-            raise ValueError("daily boundary feature names must be unique and non-empty")
-        if columns > 36 or len(self.units) != columns or any(not unit for unit in self.units):
-            raise ValueError("daily boundary schema must contain at most 36 named units")
-        if self.values.shape != (rows, columns):
-            raise ValueError("daily boundary values do not match their schema")
-        if any(item.shape != (rows,) for item in (self.topology_months, self.valid, self.branch_degraded)):
-            raise ValueError("daily boundary metadata must align with sessions")
-        if np.any(self.valid & ~np.all(np.isfinite(self.values), axis=1)):
-            raise ValueError("valid daily boundary states must be finite")
-
-    def feature(self, name: str) -> NDArray[np.float64]:
-        try:
-            column = self.feature_names.index(name)
-        except ValueError as exc:
-            raise KeyError(name) from exc
-        return self.values[:, column]
 
 
 @dataclass(frozen=True, slots=True)

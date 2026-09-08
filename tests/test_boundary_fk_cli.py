@@ -3,6 +3,24 @@ from __future__ import annotations
 from bnhmm.cli import build_parser
 
 
+def test_cli_exposes_no_removed_strategy_commands() -> None:
+    parser = build_parser()
+    subcommands = next(
+        action.choices
+        for action in parser._actions
+        if hasattr(action, "choices") and isinstance(action.choices, dict)
+    )
+
+    for removed in (
+        "sector-flow-walk-forward",
+        "percolation-branching-walk-forward",
+        "stock-transformer-walk-forward",
+        "fk-stock-walk-forward",
+        "fk-stock-ablation",
+    ):
+        assert removed not in subcommands
+
+
 def test_boundary_flow_cli_exposes_only_current_model_parameters() -> None:
     parser = build_parser()
     args = parser.parse_args(

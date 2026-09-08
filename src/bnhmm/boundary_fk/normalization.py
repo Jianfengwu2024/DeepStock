@@ -98,6 +98,8 @@ class CausalBoundaryNormalizer:
         return NormalizedBoundaryPanel(
             symbols=panel.symbols,
             timestamps=panel.timestamps.copy(),
+            close=panel.close.copy(),
+            price_valid=panel.valid.copy(),
             raw_velocity=raw_velocity,
             standardized_velocity=standardized,
             relative_volume=relative_volume,

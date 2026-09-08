@@ -1,4 +1,4 @@
-"""Long-only state machine for a dynamically clustered FK river system."""
+"""Long-only state machine for the whole-sector Bayesian FK strategy."""
 
 from __future__ import annotations
 

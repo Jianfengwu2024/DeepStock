@@ -1,4 +1,4 @@
-"""Persistent single-worker queue for isolated walk-forward processes."""
+"""Persistent single-worker queue for BNHMM and Bayesian FK jobs."""
 
 from __future__ import annotations
 
@@ -16,10 +16,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
-
-from ..config import HOLOGRAPHIC_FIELD_NAMES, HOLOGRAPHIC_LITE_FIELD_NAMES
-from ..repair import RepairVariantCatalog
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled", "interrupted"]
@@ -35,25 +32,12 @@ class DuplicateJobNameError(RuntimeError):
 
 
 class WalkForwardJobRequest(BaseModel):
-    strategy: Literal[
-        "bnhmm",
-        "holo-bnhmm",
-        "holo-bnhmm-lite",
-        "holo-repair",
-        "stock-transformer",
-        "fk-stock",
-        "sector-flow-bayes",
-        "boundary-flow-fk",
-        "percolation-branching",
-    ] = "bnhmm"
-    repair_variant: str | None = None
+    strategy: Literal["bnhmm", "boundary-flow-fk"] = "bnhmm"
     name: str = "experiment"
     database_path: str = "/home/share/data/market.duckdb"
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
     dataset_id: str | None = None
-    training_scope: Literal[
-        "per-symbol", "sector-pooled", "shared-legacy"
-    ] = "per-symbol"
+    training_scope: Literal["per-symbol", "sector-pooled"] = "per-symbol"
     start: date = date(2024, 1, 1)
     end: date = date(2026, 8, 5)
     device: str = "cuda:0"
@@ -63,11 +47,10 @@ class WalkForwardJobRequest(BaseModel):
     kl_weight: float = Field(1e-3, ge=0.0, le=1.0)
     ordinal_weight: float = Field(0.25, ge=0.0, le=10.0)
     symmetry_weight: float = Field(0.2, ge=0.0, le=10.0)
-    conservation_weight: float = Field(0.5, ge=0.0, le=10.0)
     pretrain_epochs: int = Field(10, ge=0, le=1000)
     pretrain_mask_probability: float = Field(0.15, gt=0.0, lt=1.0)
     deterministic_training: bool = False
-    forward_sessions: int = Field(1, ge=1, le=60)
+    forward_sessions: Literal[1] = 1
     strong_threshold_sigma: float = Field(0.75, gt=0.0, le=5.0)
     return_standardization_lookback: int = Field(20, ge=2, le=252)
     return_standardization_min_observations: int = Field(10, ge=2, le=252)
@@ -81,88 +64,20 @@ class WalkForwardJobRequest(BaseModel):
     max_profile_bins: int = Field(512, ge=8, le=2048)
     normalization_lookback_sessions: int = Field(10, ge=2, le=120)
     normalization_minimum_observations: int = Field(10, ge=2, le=120)
-    maximum_lag_minutes: int = Field(30, ge=0, le=120)
-    minimum_attribution_rows: int = Field(120, ge=20, le=100_000)
-    factor_process_variance: float | None = Field(None, gt=0.0, le=100.0)
-    sector_flow_protocol: Literal[
-        "legacy-v1", "river-topology-v2", "river-regime-v3"
-    ] = (
-        "river-regime-v3"
-    )
-    topology_lookback_sessions: Literal[10, 20, 30, 40, 60, 90, 120] = 60
-    sector_flow_path_windows: tuple[int, ...] = (5, 15, 30, 60)
-    sector_flow_ranking_window: int = Field(60, ge=1, le=240)
-    sector_flow_evaluation_horizon_minutes: int = Field(30, ge=1, le=120)
-    sector_flow_top_k: int = Field(10, ge=1, le=100)
-    sector_flow_monte_carlo_samples: int = Field(1000, ge=100, le=100_000)
-    sector_index_symbol: str = Field("881121", pattern=r"^[A-Za-z0-9._-]{1,24}$")
-    boundary_fk_paths: int = Field(10_000, ge=1_000, le=100_000)
-    boundary_drift_half_life_sessions: float = Field(60.0, gt=0.0, le=504.0)
-    boundary_minimum_direction_probability: float = Field(0.51, ge=0.5, le=1.0)
-    boundary_minimum_signal_to_noise: float = Field(0.10, ge=0.0, le=10.0)
-    boundary_minimum_survival_probability: float = Field(0.35, ge=0.0, le=1.0)
-    boundary_relative_strength_lookback_sessions: int = Field(20, ge=2, le=252)
-    boundary_maximum_drawdown: float = Field(0.05, gt=0.0, lt=1.0)
-    percolation_activation_threshold: float = Field(1.5, gt=0.0, le=20.0)
-    percolation_null_permutations: int = Field(500, ge=20, le=100_000)
-    percolation_posterior_paths: int = Field(10_000, ge=100, le=1_000_000)
-    percolation_phase_probability_threshold: float = Field(0.51, ge=0.5, le=1.0)
-    regime_context_sessions: int = Field(5, ge=2, le=20)
-    regime_hidden_channels: int = Field(16, ge=4, le=256)
-    regime_latent_states: int = Field(12, ge=3, le=256)
-    regime_neutral_sigma: float = Field(0.35, gt=0.0, le=5.0)
-    regime_volatility_lookback_sessions: int = Field(20, ge=2, le=252)
-    regime_volatility_minimum_observations: int = Field(10, ge=2, le=252)
-    regime_confidence_threshold: float = Field(0.6, gt=1.0 / 3.0, le=1.0)
-    regime_maximum_bull_variance: float = Field(0.02, ge=0.0, le=1.0)
-    regime_epochs: int = Field(20, ge=1, le=1000)
-    regime_batch_size: int = Field(8, ge=1, le=512)
-    regime_learning_rate: float = Field(3e-4, gt=0.0, le=1.0)
-    regime_kl_weight: float = Field(1e-4, ge=0.0, le=1.0)
-    regime_state_loss_weight: float = Field(0.25, ge=0.0, le=10.0)
-    regime_mc_samples: int = Field(16, ge=2, le=256)
     velocity_bins: int = Field(3, ge=3, le=31)
     velocity_aggregation_minutes: int = Field(10, ge=2, le=60)
     velocity_clip: float = Field(4.0, gt=0.0, le=20.0)
     velocity_smoothing: float = Field(0.25, ge=0.0, le=10.0)
-    holographic_volume_bins: int = Field(5, ge=3, le=15)
-    holographic_smoothing: float = Field(0.75, ge=0.0, le=4.0)
-    holographic_fields: tuple[str, ...] = HOLOGRAPHIC_FIELD_NAMES
-    holographic_conv_layers: int = Field(2, ge=1, le=2)
-    conservation_grid_points: int = Field(64, ge=16, le=512)
-    conservation_ridge: float = Field(1e-3, ge=0.0, le=10.0)
-    minimum_token_bins: int = Field(2, ge=1, le=64)
-    maximum_tokens: int = Field(16, ge=2, le=128)
-    boundary_threshold: float = Field(1.5, gt=0.0, le=20.0)
-    profile_protocol: Literal[
-        "price-volume-holographic-flow-v1",
-        "price-volume-holographic-lite-v1",
-        "phase-space-10m-local-flow-v8",
-        "phase-space-10m-joint-return-v7",
-        "phase-space-joint-return-v6",
-        "phase-space-joint-v5",
-        "phase-space-gated-v4",
-        "phase-space-log-v3",
-        "variable-log-bins-v2",
-        "legacy-fixed-bins",
-    ] = "phase-space-10m-local-flow-v8"
-    sequence_protocol: Literal[
-        "fixed-recent-endpoint-v1", "legacy-overlapping-window-v1"
-    ] = "fixed-recent-endpoint-v1"
-    state_timeframe: Literal["daily", "mixed"] = "daily"
-    sequence_length: int = Field(5, ge=2, le=2048)
-    sequence_stride: int = Field(1, ge=1, le=2048)
-    minimum_sequence_length: int = Field(2, ge=2, le=2048)
+    profile_protocol: Literal["phase-space-10m-local-flow-v8"] = "phase-space-10m-local-flow-v8"
+    sequence_protocol: Literal["fixed-recent-endpoint-v1"] = "fixed-recent-endpoint-v1"
+    state_timeframe: Literal["daily"] = "daily"
+    sequence_length: int = Field(5, ge=2, le=20)
+    sequence_stride: Literal[1] = 1
+    minimum_sequence_length: int = Field(2, ge=2, le=20)
     d_model: int = Field(48, ge=8, le=2048)
-    latent_states: int = Field(20, ge=1, le=512)
+    latent_states: int = Field(20, ge=13, le=512)
     transition_rank: int = Field(4, ge=1, le=512)
-    feature_mode: Literal[
-        "gated-full",
-        "price-only",
-        "price-volume",
-        "price-velocity",
-        "legacy-entangled",
-    ] = "price-velocity"
+    feature_mode: Literal["gated-full", "price-only", "price-volume", "price-velocity"] = "price-velocity"
     auxiliary_gate_floor: float = Field(0.25, ge=0.0, lt=1.0)
     auxiliary_gate_initial: float = Field(0.75, ge=0.0, lt=1.0)
     auxiliary_warmup_epochs: int = Field(3, ge=0, le=1000)
@@ -175,6 +90,14 @@ class WalkForwardJobRequest(BaseModel):
     uncertainty_aversion: float = Field(2.0, ge=0.0, le=100.0)
     transaction_cost_bps: float = Field(5.0, ge=0.0, le=1000.0)
     seed: int = Field(7, ge=0, le=2**31 - 1)
+    regime_neutral_sigma: float = Field(0.35, gt=0.0, le=5.0)
+    boundary_fk_paths: int = Field(10_000, ge=1_000, le=100_000)
+    boundary_drift_half_life_sessions: float = Field(60.0, gt=0.0, le=504.0)
+    boundary_minimum_direction_probability: float = Field(0.51, ge=0.5, le=1.0)
+    boundary_minimum_signal_to_noise: float = Field(0.10, ge=0.0, le=10.0)
+    boundary_minimum_survival_probability: float = Field(0.35, ge=0.0, le=1.0)
+    boundary_relative_strength_lookback_sessions: int = Field(20, ge=2, le=252)
+    boundary_maximum_drawdown: float = Field(0.05, gt=0.0, lt=1.0)
 
     @field_validator("name")
     @classmethod
@@ -196,168 +119,29 @@ class WalkForwardJobRequest(BaseModel):
             raise ValueError("a symbol contains unsupported characters")
         return normalized
 
-    @field_validator("holographic_fields")
-    @classmethod
-    def validate_holographic_fields(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if (
-            not value
-            or value[0] != "density"
-            or len(set(value)) != len(value)
-            or set(value) - set(HOLOGRAPHIC_FIELD_NAMES)
-        ):
-            raise ValueError(
-                "holographic fields must be unique known fields with density first"
-            )
-        return value
-
-    @field_validator("repair_variant")
-    @classmethod
-    def validate_repair_variant(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        variant = RepairVariantCatalog.resolve(value)
-        if variant.stage > 6:
-            raise ValueError(f"{variant.name} is waiting for predecessor validation")
-        return variant.name
-
     @model_validator(mode="after")
-    def validate_relationships(self, info: ValidationInfo) -> "WalkForwardJobRequest":
-        legacy = bool((info.context or {}).get("legacy_job"))
+    def validate_relationships(self) -> "WalkForwardJobRequest":
         if self.end <= self.start:
             raise ValueError("end must be later than start")
-        if (
-            self.strategy
-            not in {
-                "sector-flow-bayes",
-                "boundary-flow-fk",
-                "percolation-branching",
-            }
-            and self.minimum_train_sessions <= self.tuning_sessions
-        ):
+        if self.training_scope == "sector-pooled" and not self.dataset_id:
+            raise ValueError("sector-pooled jobs require a sector dataset")
+        if self.strategy == "boundary-flow-fk" and self.training_scope != "sector-pooled":
+            raise ValueError("boundary-flow-fk requires a sector dataset")
+        if self.strategy == "bnhmm" and self.minimum_train_sessions <= self.tuning_sessions:
             raise ValueError("minimum_train_sessions must exceed tuning_sessions")
-        if (
-            self.normalization_minimum_observations
-            > self.normalization_lookback_sessions
-        ):
+        if self.normalization_minimum_observations > self.normalization_lookback_sessions:
             raise ValueError("normalization observations cannot exceed lookback")
-        if (
-            not self.sector_flow_path_windows
-            or any(
-                not 1 <= item <= 240
-                for item in self.sector_flow_path_windows
-            )
-            or len(set(self.sector_flow_path_windows))
-            != len(self.sector_flow_path_windows)
-        ):
-            raise ValueError("sector flow path windows must be unique minute counts")
-        if self.sector_flow_ranking_window not in self.sector_flow_path_windows:
-            raise ValueError("sector flow ranking window must be a path window")
-        if (
-            self.regime_volatility_minimum_observations
-            > self.regime_volatility_lookback_sessions
-        ):
-            raise ValueError(
-                "sector regime volatility observations cannot exceed lookback"
-            )
-        if self.minimum_sequence_length > self.sequence_length:
-            raise ValueError("minimum_sequence_length cannot exceed sequence_length")
         if self.return_standardization_min_observations > self.return_standardization_lookback:
             raise ValueError("return standardization observations cannot exceed lookback")
-        if self.sequence_stride > self.sequence_length:
-            raise ValueError("sequence_stride cannot exceed sequence_length")
-        if not legacy:
-            if self.training_scope not in {"per-symbol", "sector-pooled"}:
-                raise ValueError("unsupported current training scope")
-            if self.training_scope == "sector-pooled" and not self.dataset_id:
-                raise ValueError("sector-pooled jobs require a sector dataset")
-            holographic = self.strategy in {
-                "holo-bnhmm",
-                "holo-bnhmm-lite",
-                "holo-repair",
-            }
-            sector_only = {
-                "holo-bnhmm",
-                "holo-bnhmm-lite",
-                "holo-repair",
-                "stock-transformer",
-                "fk-stock",
-                "sector-flow-bayes",
-                "boundary-flow-fk",
-                "percolation-branching",
-            }
-            if self.strategy in sector_only and self.training_scope != "sector-pooled":
-                raise ValueError(f"{self.strategy} currently requires a sector dataset")
-            if self.strategy == "percolation-branching":
-                if len(self.symbols) < 20:
-                    raise ValueError("percolation-branching requires at least twenty symbols")
-                if self.maximum_lag_minutes != 3:
-                    raise ValueError("percolation propagation lag is fixed at three minutes")
-                if self.topology_lookback_sessions != 60:
-                    raise ValueError("percolation topology is fixed at sixty sessions")
-            if self.strategy == "holo-repair" and self.repair_variant is None:
-                raise ValueError("holo-repair requires a named repair variant")
-            if self.strategy != "holo-repair" and self.repair_variant is not None:
-                raise ValueError("repair_variant is reserved for holo-repair")
-            expected_profile = (
-                (
-                    "price-volume-holographic-lite-v1"
-                    if self.strategy == "holo-bnhmm-lite"
-                    else "price-volume-holographic-flow-v1"
-                )
-                if holographic
-                else "phase-space-10m-local-flow-v8"
-            )
-            if self.profile_protocol != expected_profile:
-                raise ValueError(
-                    f"{self.strategy} requires the {expected_profile} profile"
-                )
-            expected_fields = (
-                HOLOGRAPHIC_LITE_FIELD_NAMES
-                if self.strategy == "holo-bnhmm-lite"
-                else HOLOGRAPHIC_FIELD_NAMES
-            )
-            if holographic and self.holographic_fields != expected_fields:
-                raise ValueError(
-                    f"{self.strategy} requires its fixed holographic field set"
-                )
-            if self.sequence_protocol != "fixed-recent-endpoint-v1":
-                raise ValueError("current jobs require fixed recent endpoint windows")
-            if self.state_timeframe != "daily":
-                raise ValueError("current jobs require daily states built from one-minute bars")
-            if self.forward_sessions != 1:
-                raise ValueError("current jobs predict exactly the next trading session")
-            if self.sequence_stride != 1:
-                raise ValueError("current jobs require a rolling stride of one")
-            if self.sequence_length > 20:
-                raise ValueError("recent context cannot exceed twenty trading states")
+        if self.minimum_sequence_length > self.sequence_length:
+            raise ValueError("minimum_sequence_length cannot exceed sequence_length")
         if self.d_model % self.heads:
             raise ValueError("d_model must be divisible by heads")
         if self.velocity_bins % 2 == 0:
             raise ValueError("velocity_bins must be odd")
-        if self.holographic_volume_bins % 2 == 0:
-            raise ValueError("holographic_volume_bins must be odd")
         if 60 % self.velocity_aggregation_minutes:
             raise ValueError("velocity_aggregation_minutes must divide 60")
-        profile_channels = (
-            self.holographic_volume_bins * len(self.holographic_fields)
-            if self.strategy in {"holo-bnhmm", "holo-bnhmm-lite", "holo-repair"}
-            else 4 + self.velocity_bins**2
-        )
-        if self.feature_mode == "legacy-entangled" and not legacy:
-            raise ValueError("legacy-entangled is reserved for historical jobs")
-        if (
-            not legacy
-            and self.strategy
-            in {"bnhmm", "holo-bnhmm", "holo-bnhmm-lite", "holo-repair"}
-            and self.latent_states < profile_channels
-        ):
-            raise ValueError("latent_states cannot be fewer than profile channels")
-        if (
-            not legacy
-            and self.strategy
-            in {"bnhmm", "holo-bnhmm", "holo-bnhmm-lite", "holo-repair"}
-            and self.transition_rank > self.latent_states
-        ):
+        if self.transition_rank > self.latent_states:
             raise ValueError("transition_rank cannot exceed latent_states")
         if self.auxiliary_gate_initial < self.auxiliary_gate_floor:
             raise ValueError("auxiliary gate initial cannot be below its floor")
@@ -413,16 +197,8 @@ def gpu_memory_for_pid(process_id: int) -> int:
 
 
 def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]:
-    if request.strategy == "percolation-branching":
-        return _build_percolation_command(request, output_dir)
     if request.strategy == "boundary-flow-fk":
         return _build_boundary_flow_command(request, output_dir)
-    if request.strategy == "sector-flow-bayes":
-        return _build_sector_flow_command(request, output_dir)
-    if request.strategy == "stock-transformer":
-        return _build_stock_transformer_command(request, output_dir)
-    if request.strategy == "fk-stock":
-        return _build_fk_stock_command(request, output_dir)
     command = [
         sys.executable,
         "-m",
@@ -531,71 +307,12 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         "--seed",
         str(request.seed),
     ]
-    if request.strategy in {"holo-bnhmm", "holo-bnhmm-lite", "holo-repair"}:
-        command.extend(
-            (
-                "--profile-kind",
-                "holographic",
-                "--holographic-volume-bins",
-                str(request.holographic_volume_bins),
-                "--holographic-smoothing",
-                str(request.holographic_smoothing),
-                "--holographic-fields",
-                ",".join(request.holographic_fields),
-                "--holographic-conv-layers",
-                str(request.holographic_conv_layers),
-            )
-        )
-    if request.repair_variant:
-        command.extend(("--repair-variant", request.repair_variant))
     if request.dataset_id:
         command.extend(("--dataset-id", request.dataset_id))
     if request.max_folds is not None:
         command.extend(("--max-folds", str(request.max_folds)))
     if request.deterministic_training:
         command.append("--deterministic-training")
-    return command
-
-
-def _build_percolation_command(
-    request: WalkForwardJobRequest, output_dir: Path
-) -> list[str]:
-    command = [
-        sys.executable,
-        "-m",
-        "bnhmm.cli",
-        "percolation-branching-walk-forward",
-        "--duckdb-path",
-        request.database_path,
-        "--symbols",
-        ",".join(request.symbols),
-        "--dataset-id",
-        request.dataset_id or "",
-        "--start",
-        request.start.isoformat(),
-        "--end",
-        request.end.isoformat(),
-        "--output-dir",
-        str(output_dir),
-        "--activation-threshold",
-        str(request.percolation_activation_threshold),
-        "--maximum-lag-minutes",
-        str(request.maximum_lag_minutes),
-        "--topology-lookback-sessions",
-        str(request.topology_lookback_sessions),
-        "--null-permutations",
-        str(request.percolation_null_permutations),
-        "--posterior-paths",
-        str(request.percolation_posterior_paths),
-        "--phase-probability-threshold",
-        str(request.percolation_phase_probability_threshold),
-        "--transaction-cost-bps",
-        str(request.transaction_cost_bps),
-        "--seed",
-        str(request.seed),
-    ]
-    if request.max_folds is not None:
-        command.extend(("--max-folds", str(request.max_folds)))
     return command
 
 
@@ -646,236 +363,6 @@ def _build_boundary_flow_command(
         str(request.boundary_maximum_drawdown),
         "--seed",
         str(request.seed),
-    ]
-    if request.max_folds is not None:
-        command.extend(("--max-folds", str(request.max_folds)))
-    return command
-
-
-def _build_sector_flow_command(
-    request: WalkForwardJobRequest, output_dir: Path
-) -> list[str]:
-    command = [
-        sys.executable,
-        "-m",
-        "bnhmm.cli",
-        "sector-flow-walk-forward",
-        "--duckdb-path",
-        request.database_path,
-        "--symbols",
-        ",".join(request.symbols),
-        "--start",
-        request.start.isoformat(),
-        "--end",
-        request.end.isoformat(),
-        "--output-dir",
-        str(output_dir),
-        "--protocol",
-        request.sector_flow_protocol,
-        "--topology-lookback-sessions",
-        str(request.topology_lookback_sessions),
-        "--normalization-lookback-sessions",
-        str(request.normalization_lookback_sessions),
-        "--normalization-minimum-observations",
-        str(request.normalization_minimum_observations),
-        "--minimum-train-sessions",
-        str(request.minimum_train_sessions),
-        "--maximum-lag-minutes",
-        str(request.maximum_lag_minutes),
-        "--minimum-attribution-rows",
-        str(request.minimum_attribution_rows),
-        "--path-windows",
-        ",".join(str(item) for item in request.sector_flow_path_windows),
-        "--ranking-window",
-        str(request.sector_flow_ranking_window),
-        "--evaluation-horizon-minutes",
-        str(request.sector_flow_evaluation_horizon_minutes),
-        "--top-k",
-        str(request.sector_flow_top_k),
-        "--transaction-cost-bps",
-        str(request.transaction_cost_bps),
-        "--monte-carlo-samples",
-        str(request.sector_flow_monte_carlo_samples),
-        "--seed",
-        str(request.seed),
-        "--sector-index-symbol",
-        request.sector_index_symbol,
-        "--regime-context-sessions",
-        str(request.regime_context_sessions),
-        "--regime-hidden-channels",
-        str(request.regime_hidden_channels),
-        "--regime-latent-states",
-        str(request.regime_latent_states),
-        "--regime-neutral-sigma",
-        str(request.regime_neutral_sigma),
-        "--regime-volatility-lookback-sessions",
-        str(request.regime_volatility_lookback_sessions),
-        "--regime-volatility-minimum-observations",
-        str(request.regime_volatility_minimum_observations),
-        "--regime-confidence-threshold",
-        str(request.regime_confidence_threshold),
-        "--regime-maximum-bull-variance",
-        str(request.regime_maximum_bull_variance),
-        "--regime-epochs",
-        str(request.regime_epochs),
-        "--regime-batch-size",
-        str(request.regime_batch_size),
-        "--regime-learning-rate",
-        str(request.regime_learning_rate),
-        "--regime-kl-weight",
-        str(request.regime_kl_weight),
-        "--regime-state-loss-weight",
-        str(request.regime_state_loss_weight),
-        "--regime-mc-samples",
-        str(request.regime_mc_samples),
-        "--device",
-        request.device,
-    ]
-    if request.dataset_id:
-        command.extend(("--dataset-id", request.dataset_id))
-    if request.factor_process_variance is not None:
-        command.extend(
-            ("--factor-process-variance", str(request.factor_process_variance))
-        )
-    if request.max_folds is not None:
-        command.extend(("--max-folds", str(request.max_folds)))
-    return command
-
-
-def _build_stock_transformer_command(
-    request: WalkForwardJobRequest, output_dir: Path
-) -> list[str]:
-    command = [
-        sys.executable,
-        "-m",
-        "bnhmm.cli",
-        "stock-transformer-walk-forward",
-        "--duckdb-path",
-        request.database_path,
-        "--symbols",
-        ",".join(request.symbols),
-        "--start",
-        request.start.isoformat(),
-        "--end",
-        request.end.isoformat(),
-        "--output-dir",
-        str(output_dir),
-        "--device",
-        request.device,
-        "--epochs",
-        str(request.epochs),
-        "--batch-size",
-        str(request.batch_size),
-        "--learning-rate",
-        str(request.learning_rate),
-        "--conservation-weight",
-        str(request.conservation_weight),
-        "--strong-threshold-sigma",
-        str(request.strong_threshold_sigma),
-        "--return-standardization-lookback",
-        str(request.return_standardization_lookback),
-        "--return-standardization-min-observations",
-        str(request.return_standardization_min_observations),
-        "--minimum-return-scale-percent",
-        str(request.minimum_return_scale_percent),
-        "--minimum-train-sessions",
-        str(request.minimum_train_sessions),
-        "--tuning-sessions",
-        str(request.tuning_sessions),
-        "--test-sessions",
-        str(request.test_sessions),
-        "--step-sessions",
-        str(request.step_sessions),
-        "--bin-width-bps",
-        str(request.bin_width_bps),
-        "--max-profile-bins",
-        str(request.max_profile_bins),
-        "--normalization-lookback-sessions",
-        str(request.normalization_lookback_sessions),
-        "--conservation-grid-points",
-        str(request.conservation_grid_points),
-        "--conservation-ridge",
-        str(request.conservation_ridge),
-        "--minimum-token-bins",
-        str(request.minimum_token_bins),
-        "--maximum-tokens",
-        str(request.maximum_tokens),
-        "--boundary-threshold",
-        str(request.boundary_threshold),
-        "--sequence-length",
-        str(request.sequence_length),
-        "--d-model",
-        str(request.d_model),
-        "--heads",
-        str(request.heads),
-        "--layers",
-        str(request.layers),
-        "--feedforward-dim",
-        str(request.feedforward_dim),
-        "--dropout",
-        str(request.dropout),
-        "--mc-samples",
-        str(request.mc_samples),
-        "--uncertainty-aversion",
-        str(request.uncertainty_aversion),
-        "--transaction-cost-bps",
-        str(request.transaction_cost_bps),
-        "--seed",
-        str(request.seed),
-    ]
-    if request.dataset_id:
-        command.extend(("--dataset-id", request.dataset_id))
-    if request.max_folds is not None:
-        command.extend(("--max-folds", str(request.max_folds)))
-    return command
-
-
-def _build_fk_stock_command(
-    request: WalkForwardJobRequest, output_dir: Path
-) -> list[str]:
-    command = [
-        sys.executable,
-        "-m",
-        "bnhmm.cli",
-        "fk-stock-walk-forward",
-        "--duckdb-path",
-        request.database_path,
-        "--symbols",
-        ",".join(request.symbols),
-        "--dataset-id",
-        str(request.dataset_id),
-        "--start",
-        request.start.isoformat(),
-        "--end",
-        request.end.isoformat(),
-        "--output-dir",
-        str(output_dir),
-        "--strong-threshold-sigma",
-        str(request.strong_threshold_sigma),
-        "--return-standardization-lookback",
-        str(request.return_standardization_lookback),
-        "--return-standardization-min-observations",
-        str(request.return_standardization_min_observations),
-        "--minimum-return-scale-percent",
-        str(request.minimum_return_scale_percent),
-        "--minimum-train-sessions",
-        str(request.minimum_train_sessions),
-        "--tuning-sessions",
-        str(request.tuning_sessions),
-        "--test-sessions",
-        str(request.test_sessions),
-        "--step-sessions",
-        str(request.step_sessions),
-        "--bin-width-bps",
-        str(request.bin_width_bps),
-        "--max-profile-bins",
-        str(request.max_profile_bins),
-        "--normalization-lookback-sessions",
-        str(request.normalization_lookback_sessions),
-        "--uncertainty-aversion",
-        str(request.uncertainty_aversion),
-        "--transaction-cost-bps",
-        str(request.transaction_cost_bps),
     ]
     if request.max_folds is not None:
         command.extend(("--max-folds", str(request.max_folds)))
@@ -1004,56 +491,7 @@ class JobManager:
             return None
         return candidate
 
-    def river_manifest(self, identifier: str) -> dict[str, Any] | None:
-        record = self.get(identifier)
-        if record is None:
-            return None
-        output_root = Path(record.output_dir).resolve()
-        river_root = (output_root / "river").resolve()
-        if river_root.parent != output_root:
-            return None
-        path = river_root / "manifest.json"
-        if not path.is_file():
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-        return payload if isinstance(payload, dict) else None
 
-    def river_artifact_path(
-        self, identifier: str, kind: Literal["topology", "slice"], key: str
-    ) -> Path | None:
-        if kind == "topology":
-            collection, identity, pattern = "topologies", "month", r"^\d{4}-\d{2}$"
-        elif kind == "slice":
-            collection, identity, pattern = "slices", "session", r"^\d{4}-\d{2}-\d{2}$"
-        else:
-            return None
-        if not re.fullmatch(pattern, key):
-            return None
-        manifest = self.river_manifest(identifier)
-        record = self.get(identifier)
-        if manifest is None or record is None:
-            return None
-        entries = manifest.get(collection)
-        if not isinstance(entries, list):
-            return None
-        filename: str | None = None
-        for entry in entries:
-            if isinstance(entry, dict) and entry.get(identity) == key:
-                value = entry.get("file")
-                filename = value if isinstance(value, str) else None
-                break
-        if filename is None:
-            return None
-        river_root = (Path(record.output_dir).resolve() / "river").resolve()
-        candidate = (river_root / filename).resolve()
-        try:
-            candidate.relative_to(river_root)
-        except ValueError:
-            return None
-        return candidate if candidate.is_file() and candidate.suffix == ".npz" else None
 
     def symbol_artifact_path(
         self, identifier: str, symbol: str, name: str
@@ -1258,9 +696,6 @@ class JobManager:
                     symbols=["ARTIFACT"],
                     dataset_id=dataset_id,
                     training_scope="sector-pooled" if dataset_id else "per-symbol",
-                    topology_lookback_sessions=int(
-                        summary.get("topology_lookback_sessions", 60)
-                    ),
                     boundary_relative_strength_lookback_sessions=int(
                         summary.get("relative_strength_lookback_sessions", 20)
                     ),

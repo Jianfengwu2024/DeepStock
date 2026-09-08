@@ -51,45 +51,20 @@ default; zero separates bearish from bullish.
 `predict_posterior()` uses Monte Carlo weight sampling to report expected return,
 predictive variance, and separate aleatoric and epistemic uncertainty.
 
-## StockTransformer
+## Bayesian FK
 
-StockTransformer is an independent conservation-first strategy alongside BNHMM.
-It discovers a stochastic volume-density continuity law on each walk-forward
-training slice, derives variable-width words and sentence boundaries from density
-gradients, current reversals, and stochastic-current residuals, and only then
-trains a token-only Transformer. The conservation, tokenization, and model layers
-have separate configuration and data contracts; none can fit or reach backward
-through another layer. See `docs/stock-transformer-v1-report.md` for the equations,
-implementation boundaries, tests, and the first semiconductor-sector experiment.
+The second supported strategy predicts the next trading session for one whole
+sector. Every sample uses one continuous 60-session price path. Each symbol is
+anchored to the close immediately before that 60-session window, so overnight
+movement and diffusion across daily boundaries are preserved. The coordinate is
+never reset at each close.
 
-## FKStock
-
-FKStock is a compact Bayesian stochastic-process baseline without tokenization
-or neural-network training. A nested ablation over the semiconductor dataset
-retained only the rolling diffusion of fully matured standardized returns. The
-production Bayesian ridge posterior therefore contains an intercept and one
-feature coefficient, then maps its predictive return distribution to
-strong-bear, weak-bear, weak-bull, and strong-bull probabilities.
-
-FKStock always uses sector-pooled training, but transitions and rolling return
-history never cross symbol boundaries. Every walk-forward fold fits only labels
-mature before its cutoff; the frozen outer model records its cutoff and complete
-coefficient posterior. FKStock runs on CPU and has no epochs, network depth,
-hidden states, attention heads, conservation field, effective potential, or
-token parameters. See `docs/fk-stock-v2-ablation-report.md` for the nested
-selection protocol and complete ablation table. The rejected v1 design remains
-documented in `docs/fk-stock-v1-report.md`.
-
-## SectorFlowBayes v2
-
-SectorFlowBayes v2 builds a causal monthly synchronization topology from the
-prior 60 completed sessions, freezes the stock ordering for the full month, and
-projects each completed trading day into a stock-by-minute river slice. A small
-Bayesian graph-Laplacian model predicts next-session cross-sectional relative
-return. DeepStock Lab provides daily river, topology, migration, structure, and
-stock-inspector views through job-scoped compressed artifacts. See
-`docs/sector-flow-bayes-v2-report.md` for the implementation, leakage controls,
-browser verification, and the 96-stock semiconductor walk-forward experiment.
+The Bayesian drift uses only rolling log position and rolling path efficiency.
+One-day reverse-flow concentration enters only as the C1 external potential; it
+cannot directly reverse the drift. The current model is always
+`FK-Bayesian-Rolling60`. Monthly walk-forward fitting admits only labels mature
+before the cutoff, and cached inputs are versioned with the
+`rolling-60-session-previous-close` anchor protocol.
 
 Self-supervised pretraining uses only states available before each walk-forward
 cutoff. It reconstructs randomly masked daily metadata and fixed-width
@@ -193,7 +168,7 @@ execute at the first continuous-trading bar of the next session.
 
 ## DeepStock Lab
 
-The no-auth console can switch between BNHMM and StockTransformer without
+The no-auth console can switch between BNHMM and Bayesian FK without
 requiring terminal commands. It keeps one GPU worker active at a time and
 persists each job, log, checkpoint, and report under the external storage tree.
 

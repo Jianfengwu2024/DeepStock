@@ -6,12 +6,42 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from bnhmm.web.app import _job_payload, config
+from bnhmm.web.app import _job_payload, app, config
 from bnhmm.web.jobs import JobManager, JobRecord, WalkForwardJobRequest
 
 
 class WebSectorFlowConfigTests(unittest.TestCase):
-    def test_config_exposes_percolation_defaults_and_artifacts(self) -> None:
+    def test_removed_strategy_routes_and_artifacts_are_not_exposed(self) -> None:
+        routes = {route.path for route in app.routes}
+        self.assertFalse(any("/river" in path for path in routes))
+
+        with tempfile.TemporaryDirectory() as directory:
+            manager = JobManager(directory, Path.cwd())
+            output = Path(directory, "bnhmm")
+            output.mkdir()
+            (output / "evaluation.json").write_text("{}", encoding="utf-8")
+            (output / "percolation-evaluation.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (output / "sector-flow-report.md").write_text("old", encoding="utf-8")
+            record = JobRecord(
+                id="bnhmm",
+                status="completed",
+                created_at=datetime.now(timezone.utc),
+                output_dir=str(output),
+                request=WalkForwardJobRequest(),
+            )
+            with manager._lock:
+                manager._jobs[record.id] = record
+
+            payload = _job_payload(manager, record, detail=False)
+            manager.close()
+
+        self.assertIn("evaluation.json", payload["artifacts"])
+        self.assertNotIn("percolation-evaluation.json", payload["artifacts"])
+        self.assertNotIn("sector-flow-report.md", payload["artifacts"])
+
+    def test_config_exposes_only_current_strategy_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manager = JobManager(directory, Path.cwd())
             request = SimpleNamespace(
@@ -23,49 +53,13 @@ class WebSectorFlowConfigTests(unittest.TestCase):
                 )
             )
             payload = config(request)
-            defaults = payload["strategy_defaults"]["percolation-branching"]
-            self.assertEqual(defaults["percolation_activation_threshold"], 1.5)
-            self.assertEqual(defaults["percolation_null_permutations"], 500)
-            self.assertEqual(defaults["percolation_posterior_paths"], 10_000)
-            self.assertEqual(defaults["percolation_phase_probability_threshold"], 0.51)
-            self.assertEqual(defaults["device"], "cpu")
-            self.assertEqual(
-                WalkForwardJobRequest().percolation_phase_probability_threshold,
-                0.51,
-            )
-
-            output = Path(directory, "percolation")
-            output.mkdir()
-            names = (
-                "percolation-evaluation.json",
-                "percolation-baselines.json",
-                "percolation-predictions.json",
-                "percolation-posteriors.json",
-                "percolation-equity.json",
-                "percolation-network-summary.json",
-                "percolation-report-zh.md",
-            )
-            for name in names:
-                (output / name).write_text("{}", encoding="utf-8")
-            record = JobRecord(
-                id="percolation",
-                status="completed",
-                created_at=datetime.now(timezone.utc),
-                output_dir=str(output),
-                request=WalkForwardJobRequest(
-                    strategy="percolation-branching",
-                    training_scope="sector-pooled",
-                    dataset_id="semiconductor",
-                    symbols=[f"S{index}" for index in range(20)],
-                    maximum_lag_minutes=3,
-                ),
-            )
-            with manager._lock:
-                manager._jobs[record.id] = record
-            job_payload = _job_payload(manager, record, detail=False)
             manager.close()
 
-        self.assertTrue(all(name in job_payload["artifacts"] for name in names))
+        self.assertEqual(
+            set(payload["strategy_defaults"]),
+            {"bnhmm", "boundary-flow-fk"},
+        )
+        self.assertNotIn("repair_variants", payload)
 
     def test_config_has_no_direct_path_bypass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -129,80 +123,7 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         ):
             self.assertNotIn(obsolete, defaults)
 
-    def test_config_exposes_sector_flow_specific_defaults(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            manager = JobManager(directory, Path.cwd())
-            request = SimpleNamespace(
-                app=SimpleNamespace(
-                    state=SimpleNamespace(
-                        jobs=manager,
-                        sector_datasets=SimpleNamespace(list=lambda: []),
-                    )
-                )
-            )
 
-            payload = config(request)
-            manager.close()
-
-        defaults = payload["strategy_defaults"]["sector-flow-bayes"]
-        self.assertEqual(defaults["strategy"], "sector-flow-bayes")
-        self.assertEqual(defaults["normalization_lookback_sessions"], 20)
-        self.assertEqual(defaults["maximum_lag_minutes"], 30)
-        self.assertEqual(defaults["sector_flow_path_windows"], [5, 15, 30, 60])
-        self.assertEqual(defaults["sector_flow_protocol"], "river-regime-v3")
-        self.assertEqual(defaults["sector_index_symbol"], "881121")
-        self.assertEqual(defaults["regime_context_sessions"], 5)
-        self.assertEqual(defaults["regime_hidden_channels"], 16)
-        self.assertEqual(defaults["regime_latent_states"], 12)
-        self.assertEqual(defaults["regime_neutral_sigma"], 0.35)
-        self.assertEqual(defaults["regime_confidence_threshold"], 0.6)
-
-    def test_job_payload_discovers_sector_flow_artifacts(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            manager = JobManager(directory, Path.cwd())
-            output = Path(directory, "flow")
-            output.mkdir()
-            for name in (
-                "sector-flow.png",
-                "sector-flow-report.md",
-                "sector-flow-v2-report.md",
-                "structure-evaluation.json",
-                "ranking.csv",
-                "evaluation.json",
-                "predictions.json",
-                "sector-regime-report.md",
-                "sector-regime-predictions.json",
-                "sector-regime-evaluation.json",
-                "sector-policy-evaluation.json",
-                "sector-state-forecasts.npz",
-            ):
-                (output / name).write_text("test", encoding="utf-8")
-            request = WalkForwardJobRequest(
-                strategy="sector-flow-bayes",
-                training_scope="sector-pooled",
-                dataset_id="semiconductor",
-            )
-            record = JobRecord(
-                id="flow",
-                status="completed",
-                created_at=datetime.now(timezone.utc),
-                output_dir=str(output),
-                request=request,
-            )
-            with manager._lock:
-                manager._jobs[record.id] = record
-
-            payload = _job_payload(manager, record, detail=False)
-            manager.close()
-
-        self.assertIn("sector-flow.png", payload["artifacts"])
-        self.assertIn("sector-flow-report.md", payload["artifacts"])
-        self.assertIn("sector-flow-v2-report.md", payload["artifacts"])
-        self.assertIn("structure-evaluation.json", payload["artifacts"])
-        self.assertIn("ranking.csv", payload["artifacts"])
-        self.assertIn("sector-regime-report.md", payload["artifacts"])
-        self.assertIn("sector-regime-evaluation.json", payload["artifacts"])
-        self.assertIn("sector-policy-evaluation.json", payload["artifacts"])
 
     def test_job_payload_discovers_one_day_potential_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

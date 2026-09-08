@@ -4,597 +4,106 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.28.3">
-  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.28.3" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=0.29.0">
 </head>
 <body>
   <div class="app-shell">
     <aside class="config-panel" id="config-panel">
-      <div class="brand-row">
-        <div>
-          <div class="brand">DeepStock Lab</div>
-          <div class="brand-sub" id="brand-subtitle">BNHMM · Bayesian hidden-state model</div>
-        </div>
-        <button class="icon-button mobile-only" type="button" id="close-config" title="关闭配置">
-          <i data-lucide="x"></i>
-        </button>
-      </div>
-
+      <header class="brand-row"><div><div class="brand">DeepStock Lab</div><div class="brand-sub">严格样本外模型实验</div></div></header>
       <form id="experiment-form">
-        <input type="hidden" name="profile_protocol" value="phase-space-10m-local-flow-v8">
         <section class="form-section">
           <h2>实验</h2>
-          <label>名称<input name="name" required maxlength="64"></label>
-          <div class="strategy-switch" role="radiogroup" aria-label="策略模型">
+          <div class="strategy-switch">
             <label><input type="radio" name="strategy" value="bnhmm" checked><span>BNHMM</span></label>
-            <label><input type="radio" name="strategy" value="holo-bnhmm"><span>HoloBNHMM</span></label>
-            <label><input type="radio" name="strategy" value="holo-bnhmm-lite"><span>HoloLite</span></label>
-            <label><input type="radio" name="strategy" value="holo-repair"><span>HoloRepair</span></label>
-            <label><input type="radio" name="strategy" value="stock-transformer"><span>StockTransformer</span></label>
-            <label><input type="radio" name="strategy" value="fk-stock"><span>FKStock</span></label>
-            <label><input type="radio" name="strategy" value="sector-flow-bayes"><span>SectorFlow</span></label>
-            <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>路径效率 FK</span></label>
-            <label><input type="radio" name="strategy" value="percolation-branching"><span>渗流分枝</span></label>
+            <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>FK-贝叶斯</span></label>
           </div>
-          <label class="percolation-technical">训练范围
-            <select name="training_scope" id="training-scope">
-              <option value="sector-pooled">概念板块联合训练</option>
-              <option value="per-symbol">单股独立训练</option>
-            </select>
-          </label>
-          <div id="sector-dataset-fields">
-            <label>板块数据集<select name="dataset_id" id="dataset-select"></select></label>
-            <div class="dataset-summary" id="dataset-summary"></div>
-          </div>
-          <label class="percolation-technical">数据文件<input name="database_path" required></label>
-          <div class="field-head percolation-technical"><span>股票</span><button class="mini-button" type="button" id="choose-symbols"><i data-lucide="list-filter"></i>选择</button></div>
-          <textarea class="percolation-technical" name="symbols" rows="3" required spellcheck="false"></textarea>
+          <label>测试名称<input name="name" required maxlength="64"></label>
+          <label id="dataset-field">板块数据集<select name="dataset_id" id="dataset-select"></select></label>
+          <div class="dataset-summary" id="dataset-summary"></div>
+          <label>数据文件<input name="database_path" required></label>
+          <label>股票代码<textarea name="symbols" rows="3" required spellcheck="false"></textarea></label>
           <div class="two-columns">
             <label>开始日期<input name="start" type="date" required></label>
             <label>结束日期<input name="end" type="date" required></label>
           </div>
-          <label class="compute-only">计算设备<select name="device" id="device-select"></select></label>
-          <div id="device-note" class="device-note compute-only"></div>
+          <label>最大折数<input name="max_folds" type="number" min="1" placeholder="不限"></label>
         </section>
-
-        <details class="form-section neural-only" open>
-          <summary>训练</summary>
+        <section class="form-section" id="bnhmm-fields">
+          <h2>BNHMM 配置</h2>
           <div class="two-columns">
-            <label>轮数<input name="epochs" type="number" min="1"></label>
-            <label>批量上限（每批最多 256 个日态）<input name="batch_size" type="number" min="1"></label>
-            <label>随机种子<input name="seed" type="number" min="0"></label>
+            <label>计算设备<select name="device" id="device-select"></select></label>
+            <label>训练轮数<input name="epochs" type="number" min="1"></label>
+            <label>批量<input name="batch_size" type="number" min="1"></label>
             <label>学习率<input name="learning_rate" type="number" min="0" step="0.00001"></label>
+            <label>最少训练日<input name="minimum_train_sessions" type="number" min="10"></label>
+            <label>调参日<input name="tuning_sessions" type="number" min="2"></label>
+            <label>测试日<input name="test_sessions" type="number" min="1"></label>
+            <label>步长<input name="step_sessions" type="number" min="1"></label>
+            <label>多日记忆<input name="sequence_length" type="number" min="2" max="20"></label>
+            <label>隐藏态<input name="latent_states" type="number" min="13"></label>
+            <label>状态宽度<input name="d_model" type="number" min="8"></label>
+            <label>注意力头<input name="heads" type="number" min="1"></label>
+            <label>层数<input name="layers" type="number" min="1"></label>
+            <label>交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
           </div>
-          <div class="two-columns bayesian-hmm-only">
-            <label>预训练轮数<input name="pretrain_epochs" type="number" min="0"></label>
-            <label>KL 权重<input name="kl_weight" type="number" min="0" max="1" step="0.0001"></label>
-            <label>有序损失权重<input name="ordinal_weight" type="number" min="0" max="10" step="0.01"></label>
-            <label>Z2 镜像约束权重<input name="symmetry_weight" type="number" min="0" max="10" step="0.05"></label>
-            <label>遮罩比例<input name="pretrain_mask_probability" type="number" min="0.01" max="0.99" step="0.01"></label>
+          <label class="toggle-row"><span>确定性训练</span><input name="deterministic_training" type="checkbox"></label>
+        </section>
+        <section class="form-section hidden" id="boundary-fields">
+          <h2>FK-贝叶斯配置</h2>
+          <div class="data-status">
+            <div><strong>60日连续扩散数据</strong><span id="boundary-data-status">尚未检查</span></div>
+            <button class="secondary-button" type="button" id="boundary-data-build">重建数据</button>
           </div>
-          <label class="toggle-row bayesian-hmm-only"><span>确定性训练（消融）</span><input name="deterministic_training" type="checkbox" role="switch"></label>
-          <label class="stock-only hidden">守恒辅助损失权重<input name="conservation_weight" type="number" min="0" max="10" step="0.05"></label>
-        </details>
-
-        <details class="form-section non-percolation-only" open>
-          <summary>滚动样本外验证</summary>
+          <div class="fixed-spec"><span>价格锚点</span><strong>窗口前一交易日收盘，60日内不重置</strong></div>
+          <div class="fixed-spec"><span>交易规则</span><strong>看多：全仓买入最强前 1/2；看平：每次减总资产的 1/4；看空：立即全部清仓</strong></div>
           <div class="two-columns">
-            <label>最少训练日<input name="minimum_train_sessions" type="number"></label>
-            <label class="legacy-walk-only">调参日<input name="tuning_sessions" type="number"></label>
-            <label class="legacy-walk-only">测试日<input name="test_sessions" type="number"></label>
-            <label class="legacy-walk-only">步长<input name="step_sessions" type="number"></label>
-            <label class="non-boundary-flow-only">归一化回看日<input name="normalization_lookback_sessions" type="number" min="2" max="120"></label>
-            <label>最大折数<input name="max_folds" type="number" placeholder="不限"></label>
-          </div>
-        </details>
-
-        <details class="form-section neural-only" open>
-          <summary id="state-section-title">每日相空间态</summary>
-          <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>状态构造</span><strong>1 分钟线 → 每日态</strong></div>
-            <div class="fixed-spec"><span>价格坐标</span><strong>前收盘为零点的对数价格</strong></div>
-            <div class="fixed-spec bnhmm-only"><span>日状态元数据</span><strong>9 个归一化特征</strong></div>
-            <div class="fixed-spec bnhmm-only"><span>直方图输入</span><strong id="profile-channel-count">4 + 3² = 13 通道</strong></div>
-            <div class="fixed-spec bnhmm-only"><span>速度表示</span><strong>Z2 流体矩 + 按价格区间的局部层流场</strong></div>
-            <div class="fixed-spec holo-only hidden"><span>二维状态域</span><strong>相对对数价格 × 相对成交量水平</strong></div>
-            <div class="fixed-spec holo-only hidden"><span>全息场</span><strong id="holographic-field-spec">密度、双流、温度、协方差、散度、旋度</strong></div>
-            <div class="fixed-spec stock-only hidden"><span>守恒密度</span><strong>价格坐标上的归一化成交量</strong></div>
-            <div class="fixed-spec stock-only hidden"><span>使用范围</span><strong>作为价格生成元的条件场</strong></div>
-          </div>
-          <label class="bnhmm-only">输入特征组合（消融测试）
-            <select name="feature_mode">
-              <option value="gated-full">价格主干 + 门控成交量/联合速度</option>
-              <option value="price-only">仅价格主干</option>
-              <option value="price-volume">价格 + 成交量（未通过晋级门槛）</option>
-              <option value="price-velocity" selected>价格 + 10 分钟联合速度（当前基线）</option>
-            </select>
-          </label>
-          <div class="three-columns bnhmm-only">
-            <label>辅助权重下限<input name="auxiliary_gate_floor" type="number" min="0" max="0.95" step="0.05"></label>
-            <label>辅助初始权重<input name="auxiliary_gate_initial" type="number" min="0" max="0.99" step="0.05"></label>
-            <label>全权重预热轮数<input name="auxiliary_warmup_epochs" type="number" min="0" max="1000"></label>
-          </div>
-          <div class="two-columns">
-            <label>每柱基点<input name="bin_width_bps" type="number" min="1" max="100" step="1"></label>
-            <label>单日最大柱数<input name="max_profile_bins" type="number" min="8" max="2048"></label>
-          </div>
-          <div class="two-columns flow-only">
-            <label>速度聚合（分钟）<input name="velocity_aggregation_minutes" type="number" min="2" max="60" step="1"></label>
-          </div>
-          <div class="two-columns bnhmm-only">
-            <label>联合速度每轴档数<input name="velocity_bins" type="number" min="3" max="31" step="2"></label>
-            <label>速度标准差截断<input name="velocity_clip" type="number" min="0.5" max="20" step="0.5"></label>
-            <label>速度分布平滑<input name="velocity_smoothing" type="number" min="0" max="10" step="0.05"></label>
-          </div>
-        </details>
-
-        <details class="form-section boundary-flow-only hidden" open>
-          <summary>板块方向 FK</summary>
-          <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>板块状态</span><strong>所有成分股压缩为一个每日板块状态</strong></div>
-            <div class="fixed-spec"><span>预测目标</span><strong>预测下一交易日板块涨跌方向</strong></div>
-            <div class="fixed-spec"><span>后验</span><strong>贝叶斯基础漂移截距</strong></div>
-            <div class="fixed-spec"><span>漂移输入</span><strong>带方向路径效率 + 板块成分股同步率</strong></div>
-            <div class="fixed-spec"><span>训练标签</span><strong>忽略小于 0.1 倍历史波动率的模糊涨跌</strong></div>
-            <div class="fixed-spec"><span>一日外势</span><strong>背景势 β0 + 一日反向流量集中度 C1</strong></div>
-            <div class="fixed-spec"><span>板块选股</span><strong>全板块最强前 1/2</strong></div>
-            <div class="fixed-spec"><span>看多</span><strong>看多：全仓买入最强前 1/2</strong></div>
-            <div class="fixed-spec"><span>看平</span><strong>看平：每次减仓总资产的 1/4，连续四次看平清仓</strong></div>
-            <div class="fixed-spec"><span>看空</span><strong>看空：全部清仓</strong></div>
-            <div class="fixed-spec"><span>回撤止损</span><strong>持仓权益从峰值回撤超过设定值时全局清仓；跌停时等待可卖</strong></div>
-          </div>
-          <div class="boundary-data-control">
-            <div><strong>预计算策略数据</strong><span id="boundary-data-status">尚未检查</span></div>
-            <button class="secondary-button" type="button" id="boundary-data-build"><i data-lucide="database-zap"></i>构造 / 刷新策略数据</button>
-          </div>
-          <div class="two-columns">
-            <label>评估平区间（波动率倍数）<input name="regime_neutral_sigma" type="number" min="0.01" max="5" step="0.01"></label>
-            <label>漂移半衰期（日）<input name="boundary_drift_half_life_sessions" type="number" min="5" max="504" step="1"></label>
-            <label>方向最低后验概率<input name="boundary_minimum_direction_probability" type="number" min="0.5" max="1" step="0.01"></label>
-            <label>最低信噪比<input name="boundary_minimum_signal_to_noise" type="number" min="0" max="10" step="0.01"></label>
-            <label>有效势最低可信度<input name="boundary_minimum_survival_probability" type="number" min="0" max="1" step="0.01"></label>
-            <label>相对强弱回看（日）<input name="boundary_relative_strength_lookback_sessions" type="number" min="2" max="252" step="1"></label>
-            <label>板块峰值回撤止损<input name="boundary_maximum_drawdown" type="number" min="0.01" max="0.5" step="0.01"><small>0.05 表示持仓权益从峰值回撤超过 5% 时全局清仓</small></label>
-            <label>Feynman-Kac 路径<input name="boundary_fk_paths" type="number" min="1000" max="100000" step="1000"></label>
-            <label>交易成本（BP）<input name="transaction_cost_bps" type="number" min="0" step="0.1"><small>默认 5 BP：佣金 2 BP + 滑点 3 BP</small></label>
+            <label>最少训练日<input name="minimum_train_sessions" type="number" min="30"></label>
+            <label>平区间（波动率倍数）<input name="regime_neutral_sigma" type="number" min="0.01" step="0.01"></label>
+            <label>漂移半衰期（日）<input name="boundary_drift_half_life_sessions" type="number" min="5"></label>
+            <label>FK 路径数<input name="boundary_fk_paths" type="number" min="1000" step="1000"></label>
+            <label>方向最低概率<input name="boundary_minimum_direction_probability" type="number" min="0.5" max="1" step="0.01"></label>
+            <label>最低信噪比<input name="boundary_minimum_signal_to_noise" type="number" min="0" step="0.01"></label>
+            <label>外势最低可信度<input name="boundary_minimum_survival_probability" type="number" min="0" max="1" step="0.01"></label>
+            <label>强股回看（日）<input name="boundary_relative_strength_lookback_sessions" type="number" min="2"></label>
+            <label>峰值回撤止损<input name="boundary_maximum_drawdown" type="number" min="0.01" max="0.5" step="0.01"></label>
+            <label>交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
           </div>
-        </details>
-
-        <details class="form-section percolation-only hidden" open>
-          <summary>渗流分枝</summary>
-          <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>输入</span><strong>仅使用板块成分股 1 分钟价量</strong></div>
-            <div class="fixed-spec"><span>传播网络</span><strong>多头、空头两张独立网络</strong></div>
-            <div class="fixed-spec"><span>传播延迟</span><strong>固定 1 至 3 分钟传播</strong></div>
-            <div class="fixed-spec"><span>慢骨架</span><strong>固定 60 日月度骨架</strong></div>
-            <div class="fixed-spec"><span>下一日四相</span><strong>看空 / 无贯通 / 多空冲突 / 看多</strong></div>
-            <div class="fixed-spec"><span>交易规则</span><strong>看多相达标时买净贯通前三分之一</strong></div>
-          </div>
-          <input type="hidden" name="maximum_lag_minutes" value="3">
-          <input type="hidden" name="topology_lookback_sessions" value="60">
-          <div class="two-columns">
-            <label>激活阈值<input name="percolation_activation_threshold" type="number" min="0.1" max="20" step="0.1"></label>
-            <label>随机置换次数<input name="percolation_null_permutations" type="number" min="20" max="100000" step="20"></label>
-            <label>后验路径数<input name="percolation_posterior_paths" type="number" min="100" max="1000000" step="100"></label>
-            <label>多头开仓概率<input name="percolation_phase_probability_threshold" type="number" min="0.5" max="1" step="0.01"></label>
-            <label>交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"><small>默认 5 BP：佣金 2 BP + 滑点 3 BP</small></label>
-            <label>随机种子<input name="seed" type="number" min="0"></label>
-          </div>
-          <div class="isolation-note"><i data-lucide="shield-check"></i><span>同分钟共振只算外部激活，不算股票间传播；所有预测只使用当时已成熟的数据。</span></div>
-        </details>
-
-        <details class="form-section holo-only hidden" open>
-          <summary>二维全息流场</summary>
-          <div class="pipeline-steps" aria-label="二维全息贝叶斯网络">
-            <div><span>1</span><strong>二维占据密度</strong><small>价格 × 成交活跃度</small></div>
-            <i data-lucide="arrow-down"></i>
-            <div><span>2</span><strong>局部速度场</strong><small>10 分钟价格流与活跃度流</small></div>
-            <i data-lucide="arrow-down"></i>
-            <div><span>3</span><strong>贝叶斯隐状态</strong><small>散度、旋度与短期记忆</small></div>
-          </div>
-          <div class="two-columns">
-            <label class="repair-only hidden">修复模型<select name="repair_variant" id="repair-variant"></select></label>
-            <label>成交量坐标档数<input name="holographic_volume_bins" type="number" min="3" max="15" step="2"></label>
-            <label>二维场平滑<input name="holographic_smoothing" type="number" min="0" max="4" step="0.05"></label>
-          </div>
-          <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>截面通道</span><strong id="holographic-channel-count">5 × 8 = 40 通道</strong></div>
-            <div class="fixed-spec"><span>相位定义</span><strong>二维局部流向与旋转方向</strong></div>
-          </div>
-        </details>
-
-        <details class="form-section stock-only hidden" open>
-          <summary>守恒密度与生成链</summary>
-          <div class="pipeline-steps" aria-label="StockTransformer 三层流水线">
-            <div><span>1</span><strong>守恒量发现</strong><small>拟合随机连续性方程</small></div>
-            <i data-lucide="arrow-down"></i>
-            <div><span>2</span><strong>分词与断句</strong><small>只读取守恒流和残差</small></div>
-            <i data-lucide="arrow-down"></i>
-            <div><span>3</span><strong>Transformer</strong><small>只读取守恒 token</small></div>
-          </div>
-          <div class="parameter-group-title">守恒量发现</div>
-          <div class="two-columns">
-            <label>固定价格网格<input name="conservation_grid_points" type="number" min="16" max="512"></label>
-            <label>守恒拟合正则<input name="conservation_ridge" type="number" min="0" max="10" step="0.0001"></label>
-          </div>
-          <div class="parameter-group-title">守恒分词与断句</div>
-          <div class="two-columns">
-            <label>最小词宽<input name="minimum_token_bins" type="number" min="1" max="64"></label>
-            <label>每日最大 Token<input name="maximum_tokens" type="number" min="2" max="128"></label>
-            <label>断句阈值<input name="boundary_threshold" type="number" min="0.01" max="20" step="0.01"></label>
-          </div>
-          <div class="isolation-note"><i data-lucide="shield-check"></i><span>每个滚动窗口只用训练期发现守恒方程；守恒层、分词层和模型层没有交叉拟合。</span></div>
-        </details>
-
-        <details class="form-section fk-only hidden" open>
-          <summary>消融后最小模型</summary>
-          <div class="pipeline-steps" aria-label="FKStock 最小求解链">
-            <div><span>1</span><strong>滚动扩散</strong><small>只读取已成熟收益的波动尺度</small></div>
-            <i data-lucide="arrow-down"></i>
-            <div><span>2</span><strong>贝叶斯后验</strong><small>单特征 Ridge 生成元</small></div>
-          </div>
-          <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>有效输入</span><strong>近期标准化收益扩散度</strong></div>
-            <div class="fixed-spec"><span>输入维数</span><strong>1</strong></div>
-            <div class="fixed-spec"><span>有效势</span><strong>已由消融实验移除</strong></div>
-            <div class="fixed-spec"><span>守恒密度</span><strong>已由消融实验移除</strong></div>
-          </div>
-          <div class="isolation-note"><i data-lucide="shield-check"></i><span>正式模型不再计算守恒流、密度几何、漂移或上一日收益；固定实现参数不作为调参旋钮。</span></div>
-        </details>
-
-        <details class="form-section sector-flow-only hidden" open>
-          <summary>板块状态预测</summary>
-          <input type="hidden" name="sector_flow_path_windows" value="5,15,30,60">
-          <div class="two-columns">
-            <label>板块指数代码<input name="sector_index_symbol" maxlength="24"></label>
-            <label>近期记忆（日）<input name="regime_context_sessions" type="number" min="2" max="20"></label>
-            <label>卷积通道<input name="regime_hidden_channels" type="number" min="4" max="256"></label>
-            <label>黑盒隐藏态<input name="regime_latent_states" type="number" min="3" max="256"></label>
-            <label>平稳区间（波动率倍数）<input name="regime_neutral_sigma" type="number" min="0.01" max="5" step="0.01"></label>
-            <label>波动率回看（日）<input name="regime_volatility_lookback_sessions" type="number" min="2" max="252"></label>
-            <label>波动率最少样本<input name="regime_volatility_minimum_observations" type="number" min="2" max="252"></label>
-            <label>看涨最低概率<input name="regime_confidence_threshold" type="number" min="0.34" max="1" step="0.01"></label>
-            <label>看涨方差上限<input name="regime_maximum_bull_variance" type="number" min="0" max="1" step="0.001"></label>
-            <label>训练轮数<input name="regime_epochs" type="number" min="1" max="1000"></label>
-            <label>批量<input name="regime_batch_size" type="number" min="1" max="512"></label>
-            <label>学习率<input name="regime_learning_rate" type="number" min="0.000001" max="1" step="0.00001"></label>
-            <label>KL 权重<input name="regime_kl_weight" type="number" min="0" max="1" step="0.0001"></label>
-            <label>状态图辅助损失<input name="regime_state_loss_weight" type="number" min="0" max="10" step="0.01"></label>
-            <label>后验抽样<input name="regime_mc_samples" type="number" min="2" max="256"></label>
-            <label>看涨时精选数量<input name="sector_flow_top_k" type="number" min="1" max="100"></label>
-          </div>
-          <div class="isolation-note"><i data-lucide="shield-check"></i><span>板块指数只生成下一日标签，不进入模型输入；只有板块可信看涨时才开仓。</span></div>
-          <div class="sector-flow-v2-only hidden">
-          <div class="two-columns">
-            <label>归一化最少样本<input name="normalization_minimum_observations" type="number" min="2" max="120"></label>
-            <label>最大传播滞后（分钟）<input name="maximum_lag_minutes" type="number" min="0" max="120"></label>
-            <label>归因最少分钟数<input name="minimum_attribution_rows" type="number" min="20" max="100000"></label>
-            <label>过程噪声（自动可留空）<input name="factor_process_variance" type="number" min="0.000001" max="100" step="0.0001"></label>
-            <label>路径窗口
-              <select name="sector_flow_ranking_window">
-                <option value="5">5 分钟</option>
-                <option value="15">15 分钟</option>
-                <option value="30">30 分钟</option>
-                <option value="60">60 分钟</option>
-              </select>
-            </label>
-            <label>收益检验窗口
-              <select name="sector_flow_evaluation_horizon_minutes">
-                <option value="5">5 分钟</option>
-                <option value="15">15 分钟</option>
-                <option value="30">30 分钟</option>
-                <option value="60">60 分钟</option>
-              </select>
-            </label>
-            <label>后验抽样<input name="sector_flow_monte_carlo_samples" type="number" min="100" max="100000"></label>
-          </div>
-          </div>
-        </details>
-
-        <details class="form-section non-sector-flow-only non-percolation-only" open>
-          <summary>输出定义</summary>
-          <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>预测目标</span><strong>下一交易日</strong></div>
-            <div class="fixed-spec"><span>输出状态</span><strong>强空 / 弱空 / 弱多 / 强多</strong></div>
-            <div class="fixed-spec"><span>强弱分界</span><strong id="strong-threshold-spec">-0.75σ / 0 / +0.75σ</strong></div>
-            <div class="fixed-spec"><span>信号生效</span><strong>下一可交易时点</strong></div>
-          </div>
-          <div class="two-columns">
-            <label>强弱状态分界（±σ）<input name="strong_threshold_sigma" type="number" min="0.05" max="5" step="0.05"></label>
-            <label>收益标准化回看日<input name="return_standardization_lookback" type="number" min="2" max="252"></label>
-            <label>最少标准化样本<input name="return_standardization_min_observations" type="number" min="2" max="252"></label>
-            <label>波动率下限（%）<input name="minimum_return_scale_percent" type="number" min="0.01" max="5" step="0.01"></label>
-            <label class="neural-only">后验 MC 采样<input name="mc_samples" type="number" min="2" max="256"></label>
-          </div>
-        </details>
-
-        <details class="form-section neural-only" open>
-          <summary id="model-section-title">短期记忆与贝叶斯模型</summary>
-          <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>多日记忆</span><strong id="memory-length-spec">最近 5 个交易日</strong></div>
-            <div class="fixed-spec"><span>窗口更新</span><strong>每个交易日滚动 1 日</strong></div>
-            <div class="fixed-spec"><span>收益后验</span><strong>滚动标准化 Student-t（df=4）</strong></div>
-            <div class="fixed-spec"><span>特征骨干</span><strong id="model-backbone-spec">确定性 Transformer</strong></div>
-            <div class="fixed-spec bayesian-hmm-only"><span>贝叶斯部分</span><strong>发射、转移、收益与先验证据头</strong></div>
-            <div class="fixed-spec stock-only hidden"><span>后验估计</span><strong>MC Dropout 概率均值与方差</strong></div>
-          </div>
-          <div class="parameter-group-title">近期记忆</div>
-          <label>多日记忆长度（2–20 个交易日）<input name="sequence_length" type="number" min="2" max="20"></label>
-          <div class="parameter-group-title">网络结构</div>
-          <div class="two-columns">
-            <label>状态编码宽度<input name="d_model" type="number" min="8"></label>
-            <label class="bnhmm-only">日内形态维度<input name="motif_dim" type="number" min="2"></label>
-            <label>Transformer 层数<input name="layers" type="number" min="1"></label>
-            <label>注意力头数<input name="heads" type="number" min="1"></label>
-            <label>前馈层宽度<input name="feedforward_dim" type="number" min="8"></label>
-            <label>Dropout<input name="dropout" type="number" min="0" max="0.99" step="0.01"></label>
-            <label class="bayesian-hmm-only">黑盒隐藏态<input name="latent_states" type="number" min="13" max="512"></label>
-            <label class="bayesian-hmm-only">转移低秩维度<input name="transition_rank" type="number" min="1" max="512"></label>
-          </div>
-        </details>
-
-        <details class="form-section non-percolation-only">
-          <summary id="policy-section-title">仓位策略</summary>
-          <div class="two-columns">
-            <label class="non-sector-flow-only non-boundary-flow-only">认知不确定性惩罚<input name="uncertainty_aversion" type="number" min="0" step="0.1"></label>
-            <label class="non-boundary-flow-only">交易成本 BP<input name="transaction_cost_bps" type="number" min="0" step="0.1"></label>
-          </div>
-          <div class="device-note non-sector-flow-only non-boundary-flow-only">弱多半仓、强多满仓；弱空或强空平仓，策略不做空。</div>
-        </details>
-
-        <div class="form-actions">
-          <button class="primary-button" type="submit" id="run-button"><i data-lucide="play"></i>开始测试</button>
-          <div id="form-error" class="form-error" role="alert"></div>
-        </div>
+        </section>
+        <div class="form-actions"><button class="primary-button" type="submit" id="run-button">开始测试</button><div id="form-error" class="form-error" role="alert"></div></div>
       </form>
     </aside>
-
     <main class="workspace">
       <header class="workspace-header">
-        <div class="header-title">
-          <button class="icon-button mobile-only" type="button" id="open-config" title="打开配置"><i data-lucide="sliders-horizontal"></i></button>
-          <div><h1>样本外测试</h1><p id="job-subtitle">选择历史任务或开始新实验</p></div>
-        </div>
-        <div class="header-actions">
-          <a class="mini-button header-link" href="/visual-dataset"><i data-lucide="gallery-horizontal-end"></i><span>二维图库</span></a>
-          <div class="gpu-monitor" id="gpu-monitor" aria-label="GPU 显存占用"></div>
-          <span class="status-badge neutral" id="global-status">空闲</span>
-          <button class="icon-button" type="button" id="refresh-button" title="刷新"><i data-lucide="refresh-cw"></i></button>
-        </div>
+        <div><h1>样本外测试</h1><p id="job-subtitle">选择历史任务或开始新实验</p></div>
+        <div class="header-actions"><span class="gpu-monitor" id="gpu-monitor"></span><span class="status-badge" id="global-status">空闲</span><button class="icon-button" type="button" id="refresh-button" title="刷新">↻</button></div>
       </header>
-
-      <div class="workspace-grid">
-        <nav class="run-history" aria-label="历史测试">
-          <div class="section-title">
-            <div class="section-title-main"><h2>历史测试</h2><span id="run-count">0</span></div>
-            <div class="history-panel-actions">
-              <button class="icon-button history-edit-button" type="button" id="edit-history-button" title="编辑历史测试" aria-label="编辑历史测试"><i data-lucide="pencil"></i></button>
-              <button class="icon-button danger-icon-button" type="button" id="batch-delete-button" title="删除选中的测试" aria-label="删除选中的测试" disabled><i data-lucide="trash-2"></i></button>
-            </div>
-          </div>
-          <div class="history-batch-actions hidden" id="history-batch-actions">
-            <label class="history-select-all"><input type="checkbox" id="history-select-all"><span>全选</span></label>
-            <span id="history-selected-count">已选 0</span>
-          </div>
+      <div class="work-grid">
+        <section class="run-history">
+          <div class="section-head"><div><h2>历史测试</h2><span id="run-count">0</span></div><div><button class="icon-button" type="button" id="edit-history-button">编辑</button><button class="danger-button hidden" type="button" id="batch-delete-button">删除</button></div></div>
+          <div class="history-batch-actions hidden" id="history-batch-actions"><label><input type="checkbox" id="history-select-all">全选</label><span id="history-selected-count">已选 0</span></div>
           <div id="job-list" class="job-list"></div>
-        </nav>
-
-        <section class="result-area" id="result-area">
-          <div class="empty-state" id="empty-state">
-            <i data-lucide="scan-line"></i>
-            <strong>尚未选择测试</strong>
-          </div>
-
+        </section>
+        <section class="result-area">
+          <div class="empty-state" id="empty-state">选择一个历史测试查看结果</div>
           <div id="job-view" class="job-view hidden">
-            <div class="run-toolbar">
-              <div class="run-identity">
-                <div class="run-title-row"><h2 id="run-title"></h2><span id="run-status" class="status-badge neutral"></span></div>
-                <div id="run-meta" class="run-meta"></div>
-                <div id="run-gpu-memory" class="run-gpu-memory hidden"></div>
-              </div>
-              <div class="run-actions">
-                <button class="danger-button hidden" id="cancel-button" type="button"><i data-lucide="square"></i>停止</button>
-              </div>
-            </div>
-
-            <div class="progress-band hidden" id="progress-band">
-              <div class="progress-track"><span></span></div>
-              <div><strong id="progress-label">任务运行中</strong><span id="elapsed-time"></span></div>
-            </div>
-
-            <div class="result-scope hidden" id="result-scope">
-              <div class="result-scope-head">
-                <div><strong>查看结果</strong><span id="result-scope-note"></span></div>
-                <span class="scope-badge" id="result-scope-badge"></span>
-              </div>
-              <div class="scope-tabs" id="scope-tabs" role="tablist" aria-label="结果范围"></div>
-            </div>
-
-            <div class="result-insight hidden" id="result-insight">
-              <div class="insight-mark"><i data-lucide="badge-alert"></i></div>
-              <div><span id="insight-label">本次结论</span><strong id="insight-title"></strong><p id="insight-detail"></p></div>
-            </div>
-
-            <div class="metrics-grid" id="metrics-grid"></div>
-
-            <section class="sector-flow-results hidden" id="sector-flow-results">
-              <div class="sector-flow-head">
-                <div><h3>板块水势</h3><span id="sector-flow-result-status" role="status" aria-live="polite"></span></div>
-                <div class="sector-flow-head-actions"><span class="scope-badge">分钟同步</span><a class="secondary-button hidden" id="open-river-view" href="#"><i data-lucide="waves"></i>河道视图</a></div>
-              </div>
-              <div class="sector-regime-results hidden" id="sector-regime-results">
-                <div class="sector-regime-probabilities" id="sector-regime-probabilities"></div>
-                <div class="sector-regime-summary-grid">
-                  <div><h3>板块预测与基线</h3><div id="sector-regime-baselines"></div></div>
-                  <div><h3>门控选股</h3><div id="sector-regime-policy"></div></div>
-                </div>
-              </div>
-              <div class="water-state-grid" id="sector-flow-water-state"></div>
-              <div class="report-image-wrap"><img id="sector-flow-image" alt="板块水势后验曲线"></div>
-              <div class="sector-flow-table-head"><h3>源头接近排名</h3><span>领先/响应、耦合、路径、残差与活跃确认的联合后验</span></div>
-              <div class="table-scroll"><table><thead><tr><th>股票</th><th>联合后验</th><th>领先或快响应</th><th>正耦合</th><th>路径效率</th><th>低残差</th><th>活跃确认</th><th>领先</th><th>响应</th></tr></thead><tbody id="sector-flow-ranking-table"></tbody></table></div>
-              <div class="sector-flow-table-head"><h3>样本外基线</h3><span>同一时间区间、Top-K 与交易成本</span></div>
-              <div class="table-scroll"><table><thead><tr><th>方法</th><th>Rank IC</th><th>Top-Bottom</th><th>成本后收益</th><th>换手</th></tr></thead><tbody id="sector-flow-baseline-table"></tbody></table></div>
-              <div class="download-row" id="sector-flow-downloads"></div>
-            </section>
-
-            <section class="boundary-flow-results hidden" id="boundary-flow-results">
-              <div class="sector-flow-head">
-                <div><h3 id="boundary-result-title">板块方向 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
-                <span class="scope-badge">月度样本外</span>
-              </div>
-              <div class="boundary-result-tabs" id="boundary-result-tabs" role="tablist" aria-label="路径效率 FK 结果">
-                <button class="active" type="button" data-boundary-tab="evaluation">策略评估</button>
-                <button type="button" data-boundary-tab="predictions">样本外预测</button>
-                <button type="button" data-boundary-tab="posterior">模型后验</button>
-                <button type="button" data-boundary-tab="returns">收益分析</button>
-                <button type="button" data-boundary-tab="residuals">残差分析</button>
-                <button type="button" data-boundary-tab="summary">运行摘要</button>
-              </div>
-
-              <div class="boundary-result-panel" data-boundary-panel="evaluation">
-                <div class="boundary-evaluation-summary" id="boundary-evaluation-summary"></div>
-                <div class="boundary-key-metrics" id="boundary-evaluation-metrics"></div>
-                <div class="table-scroll"><table><thead><tr><th>模型或参考</th><th>多空命中率</th><th>同样本多数基线</th><th>多空平衡正确率</th><th>覆盖率</th><th>信号数</th><th>预测多</th><th>预测空</th><th>结论</th></tr></thead><tbody id="boundary-direction-comparison"></tbody></table></div>
-                <div class="boundary-gate" id="boundary-gate-reason"></div>
-              </div>
-
-              <div class="boundary-result-panel hidden" data-boundary-panel="predictions">
-                <div class="boundary-panel-intro"><strong>逐日样本外决策</strong><span>每一行都只使用当时已经成熟的数据，显示预测方向、目标仓位和下一日实际收益。</span></div>
-            <div class="table-scroll"><table><thead><tr><th>信号日</th><th>板块判断</th><th>一日反向流量 C1</th><th>实际仓位</th><th>持股数</th><th>成交受限</th><th>下一日策略收益</th></tr></thead><tbody id="boundary-prediction-table"></tbody></table></div>
-              </div>
-
-              <div class="boundary-result-panel hidden" data-boundary-panel="posterior">
-                <div class="boundary-panel-intro"><strong>最新一次模型判断</strong><span>概率回答方向有多确定；漂移表示趋势方向，有效势表示趋势能否延续。</span></div>
-                <div class="boundary-result-grid">
-                  <section><h3 id="boundary-direction-title">多 / 平 / 空概率</h3><div class="boundary-probabilities" id="boundary-probabilities"></div></section>
-                  <section><h3 id="boundary-dynamics-title">趋势与延续性</h3><div class="boundary-dynamics" id="boundary-dynamics"></div></section>
-                </div>
-                <div class="boundary-model-quality" id="boundary-model-quality"></div>
-              </div>
-
-              <div class="boundary-result-panel hidden" data-boundary-panel="returns">
-                <div class="boundary-panel-intro"><strong>策略净值与回撤</strong><span>净值已按每日仓位和交易成本累计；回撤表示从历史高点跌落的幅度。</span></div>
-                <div class="boundary-key-metrics" id="boundary-return-metrics"></div>
-                <div class="boundary-return-legend" id="boundary-return-legend"><span><i class="persistence"></i>一日反向流量外势 FK 净值</span><span><i class="baseline"></i>纯路径效率基线</span></div>
-                <div class="boundary-canvas-wrap"><canvas id="boundary-return-canvas" width="1200" height="320" aria-label="策略净值与回撤"></canvas></div>
-              </div>
-
-              <div class="boundary-result-panel hidden" data-boundary-panel="residuals">
-                <div class="boundary-panel-intro"><strong>预测误差</strong><span>残差是实际收益减去模型预期；越接近零、越没有连续偏向越好。</span></div>
-                <div class="boundary-key-metrics" id="boundary-residual-metrics"></div>
-                <div class="boundary-canvas-wrap"><canvas id="boundary-residual-canvas" width="1200" height="280" aria-label="逐日预测残差"></canvas></div>
-              </div>
-
-              <div class="boundary-result-panel hidden" data-boundary-panel="summary">
-                <div class="boundary-panel-intro"><strong>本次运行</strong><span>数据范围、模型版本、关键配置和结果文件集中在这里。</span></div>
-                <div class="boundary-run-summary" id="boundary-run-summary"></div>
-                <div class="download-row" id="boundary-flow-downloads"></div>
-              </div>
-            </section>
-
-            <section class="percolation-results hidden" id="percolation-results">
-              <div class="sector-flow-head">
-                <div><h3>渗流分枝</h3><span id="percolation-result-status" role="status" aria-live="polite"></span></div>
-                <span class="scope-badge">下一交易日四相</span>
-              </div>
-              <div class="percolation-result-tabs" id="percolation-result-tabs" role="tablist" aria-label="渗流分枝结果">
-                <button class="active" type="button" data-percolation-tab="evaluation">策略评估</button>
-                <button type="button" data-percolation-tab="prediction">相变预测</button>
-                <button type="button" data-percolation-tab="critical">临界后验</button>
-                <button type="button" data-percolation-tab="network">传播网络</button>
-                <button type="button" data-percolation-tab="returns">收益分析</button>
-                <button type="button" data-percolation-tab="calibration">校准诊断</button>
-                <button type="button" data-percolation-tab="summary">运行摘要</button>
-              </div>
-
-              <div class="percolation-result-panel" data-percolation-panel="evaluation">
-                <div class="boundary-evaluation-summary" id="percolation-evaluation-summary"></div>
-                <div class="boundary-key-metrics" id="percolation-evaluation-metrics"></div>
-                <div class="table-scroll"><table><thead><tr><th>基线</th><th>正确</th><th>样本</th><th>准确率</th></tr></thead><tbody id="percolation-baseline-table"></tbody></table></div>
-              </div>
-
-              <div class="percolation-result-panel hidden" data-percolation-panel="prediction">
-                <div class="boundary-panel-intro"><strong>下一日相变概率</strong><span>只有看多贯通概率最高且达到门槛时才开仓，其余状态保持空仓。</span></div>
-                <div class="percolation-phase-grid" id="percolation-phase-probabilities"></div>
-                <div class="percolation-canvas-wrap"><canvas id="percolation-phase-canvas" width="1200" height="280" aria-label="预测与实际四相时间线"></canvas></div>
-                <div class="table-scroll"><table><thead><tr><th>信号时间</th><th>目标日</th><th>预测</th><th>实际</th><th>看多概率</th><th>看空概率</th><th>持仓</th><th>交易限制</th></tr></thead><tbody id="percolation-prediction-table"></tbody></table></div>
-              </div>
-
-              <div class="percolation-result-panel hidden" data-percolation-panel="critical">
-                <div class="boundary-panel-intro"><strong>双网络临界状态</strong><span>R 大于 1 表示一次激活平均能继续传播；巨型簇比例表示贯通范围。</span></div>
-                <div class="percolation-critical-grid" id="percolation-critical-summary"></div>
-              </div>
-
-              <div class="percolation-result-panel hidden" data-percolation-panel="network">
-                <div class="boundary-panel-intro"><strong>月度传播源</strong><span>骨架每月固定一次，分别展示多头和空头网络中最强的传播源。</span></div>
-                <div class="percolation-network-grid" id="percolation-network-sources"></div>
-              </div>
-
-              <div class="percolation-result-panel hidden" data-percolation-panel="returns">
-                <div class="boundary-panel-intro"><strong>净值、回撤与仓位</strong><span>收益已扣除交易成本，并按涨跌停约束执行。</span></div>
-                <div class="boundary-key-metrics" id="percolation-return-metrics"></div>
-                <div class="boundary-return-legend"><span><i class="percolation-net"></i>成本后净值</span><span><i class="percolation-gross"></i>成本前净值</span><span><i class="percolation-drawdown"></i>回撤</span></div>
-                <div class="percolation-canvas-wrap"><canvas id="percolation-equity-canvas" width="1200" height="340" aria-label="渗流策略净值与回撤"></canvas></div>
-              </div>
-
-              <div class="percolation-result-panel hidden" data-percolation-panel="calibration">
-                <div class="boundary-panel-intro"><strong>概率是否可信</strong><span>混淆矩阵看四相误判方向；校准分组比较模型置信度和实际命中率。</span></div>
-                <div class="boundary-key-metrics" id="percolation-calibration-metrics"></div>
-                <div class="percolation-diagnostic-grid">
-                  <section><h3>混淆矩阵</h3><div class="table-scroll" id="percolation-confusion-matrix"></div></section>
-                  <section><h3>置信度校准</h3><div id="percolation-calibration"></div></section>
-                </div>
-              </div>
-
-              <div class="percolation-result-panel hidden" data-percolation-panel="summary">
-                <div class="boundary-panel-intro"><strong>本次运行</strong><span>数据范围、固定物理约束、样本外月份和结果文件。</span></div>
-                <div class="boundary-run-summary" id="percolation-run-summary"></div>
-                <div class="download-row" id="percolation-downloads"></div>
-              </div>
-            </section>
-
-            <div class="tabs standard-result-only" role="tablist">
-              <button class="tab active" data-tab="overview" type="button"><i data-lucide="chart-no-axes-combined"></i>收益</button>
-              <button class="tab" data-tab="diagnostics" type="button"><i data-lucide="activity"></i>模型诊断</button>
-              <button class="tab" data-tab="folds" type="button"><i data-lucide="rows-3"></i>滚动验证</button>
-              <button class="tab" data-tab="logs" type="button"><i data-lucide="terminal"></i>日志</button>
-            </div>
-
-            <div class="tab-panel standard-result-only" data-panel="overview">
-              <div class="chart-explanation"><span><b class="line-key strategy"></b>蓝线：模型仓位策略</span><span><b class="line-key benchmark"></b>橙线：等权持有基准</span><span><b class="area-key"></b>下图：从历史高点的回撤</span></div>
-              <div class="report-image-wrap"><img id="equity-image" alt="净值和回撤报告"></div>
-              <div class="download-row" id="download-row"></div>
-            </div>
-            <div class="tab-panel standard-result-only hidden" data-panel="diagnostics">
-              <div class="diagnostic-note">残差越集中在 0 附近越好；校准线越接近对角线，模型给出的概率越可信。</div>
-              <div class="report-image-wrap"><img id="residual-image" alt="残差报告"></div>
-              <div class="report-image-wrap"><img id="calibration-image" alt="校准和残差自相关报告"></div>
-            </div>
-            <div class="tab-panel standard-result-only hidden" data-panel="folds">
-              <section id="symbol-results" class="hidden">
-                <h3>逐标的样本外结果</h3>
-                <div class="table-scroll"><table><thead><tr><th>标的</th><th>OOS</th><th>命中率</th><th>均衡命中率</th><th>训练先验</th><th>Brier</th><th>Log Loss</th><th>策略收益</th><th>最大回撤</th></tr></thead><tbody id="symbol-metrics-table"></tbody></table></div>
-              </section>
-              <h3>逐标的滚动窗口</h3>
-              <div class="table-scroll"><table><thead><tr><th>标的</th><th>窗口</th><th>调参开始</th><th>测试区间</th><th>Epoch</th><th>训练序列</th><th>OOS 预测</th><th>验证损失</th></tr></thead><tbody id="fold-table"></tbody></table></div>
-            </div>
-            <div class="tab-panel standard-result-only hidden" data-panel="logs"><pre id="job-log"></pre></div>
+            <header class="run-header"><div><h2 id="run-title"></h2><div id="run-meta" class="run-meta"></div></div><button class="danger-button hidden" id="cancel-button" type="button">终止</button></header>
+            <div class="progress-band hidden" id="progress-band"><div><strong id="progress-label">任务运行中</strong><span id="elapsed-time"></span></div><progress id="progress-value" max="100" value="0"></progress></div>
+            <nav class="result-tabs" id="result-tabs">
+              <button data-tab="evaluation" class="active">策略评估</button><button data-tab="predictions">样本外预测</button><button data-tab="posterior">模型后验</button><button data-tab="returns">收益分析</button><button data-tab="residuals">残差分析</button><button data-tab="summary">运行摘要</button><button data-tab="logs">日志</button>
+            </nav>
+            <section class="result-panel" data-panel="evaluation"><div id="evaluation-content"></div></section>
+            <section class="result-panel hidden" data-panel="predictions"><div id="predictions-content"></div></section>
+            <section class="result-panel hidden" data-panel="posterior"><div id="posterior-content"></div></section>
+            <section class="result-panel hidden" data-panel="returns"><div id="returns-content"></div></section>
+            <section class="result-panel hidden" data-panel="residuals"><div id="residuals-content"></div></section>
+            <section class="result-panel hidden" data-panel="summary"><div id="summary-content"></div></section>
+            <section class="result-panel hidden" data-panel="logs"><pre id="job-log"></pre></section>
           </div>
         </section>
       </div>
     </main>
   </div>
-
-  <dialog id="symbol-dialog">
-    <form method="dialog" class="dialog-shell">
-      <div class="dialog-header"><div><h2>选择股票</h2><span id="selected-count"></span></div><button class="icon-button" value="cancel" title="关闭"><i data-lucide="x"></i></button></div>
-      <div class="symbol-tools"><div class="search-box"><i data-lucide="search"></i><input id="symbol-search" placeholder="搜索代码"></div><button class="mini-button" type="button" id="select-all">全选</button><button class="mini-button" type="button" id="clear-symbols">清空</button></div>
-      <div id="symbol-list" class="symbol-list"></div>
-      <div class="dialog-actions"><button class="secondary-button" value="cancel">取消</button><button class="primary-button" type="button" id="apply-symbols"><i data-lucide="check"></i>应用</button></div>
-    </form>
-  </dialog>
+  <script src="/static/app.js?v=0.29.0"></script>
 </body>
 </html>

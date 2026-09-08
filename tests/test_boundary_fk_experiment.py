@@ -7,13 +7,13 @@ from types import SimpleNamespace
 import numpy as np
 
 from bnhmm.boundary_fk.pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
-from test_boundary_fk_pipeline import _walk_forward_data
+from boundary_fk_fixtures import walk_forward_sector_data
 
 
 def test_direct_experiment_data_builder_never_constructs_topology(monkeypatch) -> None:
     import bnhmm.boundary_fk.experiment as module
 
-    base = replace(_walk_forward_data(180), memberships=())
+    base = walk_forward_sector_data(180)
 
     class FakeSource:
         def fetch(self, symbol, timeframe, start, end):
@@ -66,7 +66,7 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
 
     database = tmp_path / "market.duckdb"
     database.write_bytes(b"source")
-    loaded = _walk_forward_data(180)
+    loaded = walk_forward_sector_data(180)
 
     class FakeCache:
         def __init__(self, root):
@@ -83,8 +83,8 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
         def run(self, data, output):
             assert data is loaded
             return SimpleNamespace(
-                model_names=("PathEfficiencyFK",),
-                stages=(SimpleNamespace(model_name="PathEfficiencyFK", status="completed", failure_reason=""),),
+                model_names=("FK-Bayesian-Rolling60",),
+                stages=(SimpleNamespace(model_name="FK-Bayesian-Rolling60", status="completed", failure_reason=""),),
             )
 
     monkeypatch.setattr(module, "BoundaryDataCache", FakeCache)
@@ -127,7 +127,7 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
 
 
 def test_requested_evaluation_range_limits_sample_out_months(tmp_path) -> None:
-    data = _walk_forward_data(220)
+    data = walk_forward_sector_data(220)
     start = np.datetime64("2024-07-01")
     end = np.datetime64("2024-09-30")
     ranged = type(data)(

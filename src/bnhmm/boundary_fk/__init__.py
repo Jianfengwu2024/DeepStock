@@ -1,8 +1,4 @@
-"""Causal two-branch Feynman-Kac model components.
-
-Exports are lazy so the synthetic-index and normalization layers remain usable
-without importing the optional clustering stack.
-"""
+"""Causal whole-sector Bayesian Feynman-Kac model components."""
 
 from __future__ import annotations
 
@@ -11,27 +7,17 @@ from typing import Any
 
 
 _EXPORT_MODULES = {
-    "BayesianBoundaryPosterior": "bayesian_state",
-    "BayesianBoundaryStateConfig": "bayesian_state",
-    "BayesianBoundaryStateModel": "bayesian_state",
-    "BoundaryStateLabels": "bayesian_state",
     "BoundaryFeynmanKacConfig": "feynman_kac",
     "BoundaryFeynmanKacForecast": "feynman_kac",
-    "BoundaryFeynmanKacForecaster": "feynman_kac",
     "BranchFeynmanKacForecaster": "feynman_kac",
     "BayesianBranchModel": "branch_model",
     "BayesianBranchModelConfig": "branch_model",
     "BayesianBranchPosterior": "branch_model",
-    "TwoBranchDailyStateBuilder": "branch_state",
-    "TwoBranchDailyStateConfig": "branch_state",
     "BoundaryPolicy": "policy",
     "BoundaryPolicyConfig": "policy",
     "BoundaryPolicyDecision": "policy",
     "BoundaryEvaluationConfig": "evaluation",
     "BoundaryEvaluationMetrics": "evaluation",
-    "BoundaryForecastObservation": "evaluation",
-    "evaluate_boundary_forecasts": "evaluation",
-    "BOUNDARY_MODEL_NAMES": "pipeline",
     "BoundaryFlowPipeline": "pipeline",
     "BoundaryFlowPipelineConfig": "pipeline",
     "BoundaryFlowRunResult": "pipeline",
@@ -39,16 +25,9 @@ _EXPORT_MODULES = {
     "BoundaryWalkForwardData": "pipeline",
     "build_boundary_experiment_data": "experiment",
     "run_boundary_flow_experiment": "experiment",
-    "BoundaryDailyStateBuilder": "daily_state",
-    "BoundaryDailyStateConfig": "daily_state",
-    "BoundaryTopologyBuilder": "daily_state",
-    "BoundaryFieldConfig": "moments",
-    "BoundaryFieldExtractor": "moments",
     "BoundaryNormalizationConfig": "normalization",
     "CausalBoundaryNormalizer": "normalization",
     "SyntheticSectorIndexBuilder": "synthetic_index",
-    "BoundaryDailyStates": "types",
-    "BoundaryMinuteMoments": "types",
     "MonthlyIndexWeights": "types",
     "NormalizedBoundaryPanel": "types",
     "SyntheticSectorIndex": "types",

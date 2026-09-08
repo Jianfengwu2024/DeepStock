@@ -8,23 +8,20 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
 from .types import (
-    MonthlyBranchMembership,
     TwoBranchDailyStates,
     TwoBranchDataset,
     TwoBranchLabels,
 )
 
-if TYPE_CHECKING:
-    from ..sector_flow.types import MonthlyRiverTopology
 
-
-CACHE_FORMAT_VERSION = 2
-CACHE_CONSTRUCTION_VERSION = "sector-direct-direction-v1"
+CACHE_FORMAT_VERSION = 3
+CACHE_CONSTRUCTION_VERSION = "sector-rolling-anchor-60d-v2"
+ANCHOR_PROTOCOL = "rolling-60-session-previous-close"
 SECTOR_CACHE_SLOT = 60
 
 
@@ -86,26 +83,15 @@ class BoundaryDataCache:
         self,
         key: BoundaryDataCacheKey,
         data: TwoBranchDataset,
-        *,
-        topologies: tuple["MonthlyRiverTopology", ...] = (),
     ) -> Path:
+        if data.memberships:
+            raise ValueError("whole-sector FK data must not contain branch memberships")
+        if data.states.values.shape[1] != 1:
+            raise ValueError("whole-sector FK data must contain exactly one state stream")
         dataset_root = self.root / key.dataset_id
         dataset_root.mkdir(parents=True, exist_ok=True)
         destination = dataset_root / f"lookback-{key.lookback_sessions}.npz"
         temporary = destination.with_suffix(".npz.tmp")
-        membership_payload = json.dumps(
-            [
-                {
-                    "effective_session": str(item.effective_session),
-                    "training_cutoff": str(item.training_cutoff),
-                    "branches": [list(branch) for branch in item.branches],
-                    "branch_ids": list(item.branch_ids),
-                }
-                for item in data.memberships
-            ],
-            ensure_ascii=True,
-            separators=(",", ":"),
-        )
         with temporary.open("wb") as stream:
             np.savez_compressed(
                 stream,
@@ -134,30 +120,6 @@ class BoundaryDataCache:
                 convection_valid=data.convection_valid,
                 convection_total_flow=data.convection_total_flow,
                 convection_observations=data.convection_observations,
-                memberships_json=np.asarray(membership_payload, dtype=np.str_),
-                topology_months=np.asarray(
-                    [item.month for item in topologies], dtype="datetime64[M]"
-                ),
-                topology_training_cutoffs=np.asarray(
-                    [item.training_cutoff for item in topologies], dtype="datetime64[ns]"
-                ),
-                topology_assigned=self._stack_topology(topologies, "assigned", np.bool_),
-                topology_band_ids=self._stack_topology(topologies, "band_ids", np.int64),
-                topology_row_order=self._stack_topology(topologies, "row_order", np.int64),
-                topology_common_similarity=self._stack_topology(
-                    topologies, "common_similarity", np.float64, matrix=True
-                ),
-                topology_residual_similarity=self._stack_topology(
-                    topologies, "residual_similarity", np.float64, matrix=True
-                ),
-                topology_fused_similarity=self._stack_topology(
-                    topologies, "fused_similarity", np.float64, matrix=True
-                ),
-                topology_graph=self._stack_topology(
-                    topologies, "graph", np.float64, matrix=True
-                ),
-                topology_cohesion=self._stack_topology(topologies, "cohesion", np.float64),
-                topology_centrality=self._stack_topology(topologies, "centrality", np.float64),
             )
         os.replace(temporary, destination)
         self._update_manifest(key, destination, data)
@@ -183,22 +145,6 @@ class BoundaryDataCache:
         if not path.is_file():
             raise BoundaryDataCacheMiss(f"cached data file is missing: {path}")
         with np.load(path, allow_pickle=False) as payload:
-            memberships = tuple(
-                MonthlyBranchMembership(
-                    effective_session=np.datetime64(
-                        item.get("effective_session", item.get("month")), "D"
-                    ),
-                    training_cutoff=np.datetime64(item["training_cutoff"], "ns"),
-                    branches=tuple(tuple(branch) for branch in item["branches"]),
-                    branch_ids=tuple(
-                        int(value)
-                        for value in item.get(
-                            "branch_ids", range(len(item["branches"]))
-                        )
-                    ),
-                )
-                for item in json.loads(str(payload["memberships_json"]))
-            )
             states = TwoBranchDailyStates(
                 sessions=payload["states_sessions"].copy(),
                 topology_months=payload["states_topology_months"].copy(),
@@ -216,7 +162,7 @@ class BoundaryDataCache:
             return TwoBranchDataset(
                 states=states,
                 labels=labels,
-                memberships=memberships,
+                memberships=(),
                 symbols=tuple(str(item) for item in payload["symbols"]),
                 member_next_returns=payload["member_next_returns"].copy(),
                 member_next_valid=payload["member_next_valid"].copy(),
@@ -248,6 +194,10 @@ class BoundaryDataCache:
 
     def _entry(self, key: BoundaryDataCacheKey) -> dict[str, Any]:
         manifest = self.status(key.dataset_id)
+        if manifest.get("format_version") != CACHE_FORMAT_VERSION:
+            raise BoundaryDataCacheMiss("cached format version is stale")
+        if manifest.get("anchor_protocol") != ANCHOR_PROTOCOL:
+            raise BoundaryDataCacheMiss("cached anchor protocol is stale")
         for entry in manifest.get("variants", []):
             if entry.get("lookback_sessions") == key.lookback_sessions:
                 return entry
@@ -288,6 +238,7 @@ class BoundaryDataCache:
         )
         payload = {
             "format_version": CACHE_FORMAT_VERSION,
+            "anchor_protocol": ANCHOR_PROTOCOL,
             "dataset_id": key.dataset_id,
             "variants": sorted(variants, key=lambda item: item["lookback_sessions"]),
         }
@@ -296,18 +247,3 @@ class BoundaryDataCache:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         os.replace(temporary, path)
-
-    @staticmethod
-    def _stack_topology(
-        topologies: tuple["MonthlyRiverTopology", ...],
-        field: str,
-        dtype: type[np.generic],
-        *,
-        matrix: bool = False,
-    ) -> np.ndarray:
-        if topologies:
-            return np.stack([getattr(item, field) for item in topologies]).astype(
-                dtype, copy=False
-            )
-        rank = 3 if matrix else 2
-        return np.empty((0,) * rank, dtype=dtype)

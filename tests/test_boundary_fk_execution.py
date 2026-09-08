@@ -8,7 +8,7 @@ import pytest
 from bnhmm.boundary_fk.execution import build_member_execution_constraints
 from bnhmm.boundary_fk.pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
 from bnhmm.sector_flow.types import SectorMinutePanel
-from test_boundary_fk_pipeline import _walk_forward_data
+from boundary_fk_fixtures import walk_forward_sector_data
 
 
 def _panel(next_prices: tuple[tuple[float, float], ...]) -> SectorMinutePanel:
@@ -61,7 +61,7 @@ def test_limit_up_that_opens_intraday_can_be_bought_at_first_open() -> None:
 
 
 def test_all_day_limit_down_rejects_sale_and_keeps_position() -> None:
-    data = _walk_forward_data(180)
+    data = walk_forward_sector_data(180)
     row = 120
     sellable = data.member_next_valid.copy()
     sellable[row, 0] = False
@@ -98,7 +98,7 @@ def test_limit_down_that_opens_intraday_can_be_sold_at_first_open() -> None:
 
 
 def test_turnover_and_cost_use_only_executed_orders() -> None:
-    data = _walk_forward_data(180)
+    data = walk_forward_sector_data(180)
     row = 120
     buyable = data.member_next_valid.copy()
     buyable[row, 0] = False
@@ -126,7 +126,7 @@ def test_turnover_and_cost_use_only_executed_orders() -> None:
 
 
 def test_existing_position_uses_previous_close_to_current_close_return() -> None:
-    data = _walk_forward_data(180)
+    data = walk_forward_sector_data(180)
     row = 120
     data = replace(
         data,
@@ -143,29 +143,8 @@ def test_existing_position_uses_previous_close_to_current_close_return() -> None
     np.testing.assert_allclose(execution.gross_return, 0.02)
 
 
-def test_execution_attributes_actual_returns_to_each_branch_sleeve() -> None:
-    data = _walk_forward_data(180)
-    row = 120
-    hold_returns = np.zeros_like(data.member_next_returns)
-    hold_returns[row, 0] = 0.04
-    hold_returns[row, 2] = -0.06
-    data = replace(data, member_next_hold_returns=hold_returns)
-
-    execution = BoundaryFlowPipeline._execute_portfolio(
-        data,
-        row,
-        previous={"A": 0.5, "C": 0.5},
-        target={"A": 0.5, "C": 0.5},
-        previous_symbol_branches={"A": 0, "C": 1},
-        target_symbol_branches={"A": 0, "C": 1},
-    )
-
-    assert execution.branch_returns == pytest.approx((0.04, -0.06))
-    assert execution.symbol_branches == {"A": 0, "C": 1}
-
-
 def test_failed_limit_down_sale_keeps_branch_ownership_for_stop_lock() -> None:
-    data = _walk_forward_data(180)
+    data = walk_forward_sector_data(180)
     row = 120
     sellable = data.member_next_valid.copy()
     sellable[row, 0] = False
@@ -186,4 +165,4 @@ def test_failed_limit_down_sale_keeps_branch_ownership_for_stop_lock() -> None:
 
     assert execution.weights == {"A": 0.5}
     assert execution.symbol_branches == {"A": 0}
-    assert execution.branch_returns == pytest.approx((-0.06, 0.0))
+    assert execution.branch_returns == pytest.approx((-0.06,))

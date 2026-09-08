@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from bnhmm.boundary_fk.cache import (
+    CACHE_FORMAT_VERSION,
     CACHE_CONSTRUCTION_VERSION,
     SECTOR_CACHE_SLOT,
     BoundaryDataCache,
@@ -17,7 +18,8 @@ from bnhmm.boundary_fk.cache import (
 from bnhmm.boundary_fk.precompute import (
     build_sector_boundary_cache,
 )
-from test_boundary_fk_pipeline import _walk_forward_data, _with_stable_branch_ids
+from bnhmm.boundary_fk.types import MonthlyBranchMembership
+from boundary_fk_fixtures import walk_forward_sector_data
 
 
 def _key(tmp_path: Path, lookback: int = 60) -> BoundaryDataCacheKey:
@@ -36,18 +38,13 @@ def _key(tmp_path: Path, lookback: int = 60) -> BoundaryDataCacheKey:
 def test_boundary_cache_round_trips_dataset_without_pickle(tmp_path: Path) -> None:
     cache = BoundaryDataCache(tmp_path / "cache")
     key = _key(tmp_path)
-    original = _with_stable_branch_ids(
-        _walk_forward_data(180),
-        branch_ids=(0, 2, 5),
-        branches=(("A",), ("B",), ("C", "D")),
-    )
+    original = walk_forward_sector_data(180)
 
     cache.save(key, original)
     restored = cache.load(key, evaluation_start="2025-01-01", evaluation_end="2025-06-30")
 
     assert restored.symbols == original.symbols
-    assert restored.memberships == original.memberships
-    assert restored.memberships[0].branch_ids == (0, 2, 5)
+    assert restored.memberships == ()
     np.testing.assert_array_equal(restored.states.sessions, original.states.sessions)
     np.testing.assert_allclose(restored.states.values, original.states.values, equal_nan=True)
     np.testing.assert_allclose(restored.labels.next_return, original.labels.next_return, equal_nan=True)
@@ -80,11 +77,38 @@ def test_boundary_cache_round_trips_dataset_without_pickle(tmp_path: Path) -> No
     assert not any(path.suffix in {".pkl", ".pickle"} for path in cache.root.rglob("*"))
 
 
+def test_boundary_cache_rejects_removed_branch_memberships(tmp_path: Path) -> None:
+    cache = BoundaryDataCache(tmp_path / "cache")
+    key = _key(tmp_path)
+    data = walk_forward_sector_data(180)
+    first_session = data.states.sessions[0].astype("datetime64[D]")
+    membership = MonthlyBranchMembership(
+        effective_session=first_session,
+        training_cutoff=first_session.astype("datetime64[ns]")
+        - np.timedelta64(1, "ns"),
+        branches=(("A", "B"), ("C", "D")),
+    )
+
+    with pytest.raises(ValueError, match="must not contain branch memberships"):
+        cache.save(key, replace(data, memberships=(membership,)))
+
+
+def test_boundary_cache_omits_removed_branch_and_topology_payloads(
+    tmp_path: Path,
+) -> None:
+    cache = BoundaryDataCache(tmp_path / "cache")
+    destination = cache.save(_key(tmp_path), walk_forward_sector_data(180))
+
+    with np.load(destination, allow_pickle=False) as payload:
+        assert "memberships_json" not in payload.files
+        assert not any(name.startswith("topology_") for name in payload.files)
+
+
 def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> None:
     cache = BoundaryDataCache(tmp_path / "cache")
     key = _key(tmp_path)
-    base = _walk_forward_data(180)
-    shape = (len(base.states.sessions), 2, 4)
+    base = walk_forward_sector_data(180)
+    shape = (len(base.states.sessions), 1, 4)
     original = replace(
         base,
         convection_strength=np.full(shape, 0.25),
@@ -105,13 +129,28 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
 
 
 def test_boundary_cache_uses_direction_feature_version() -> None:
-    assert CACHE_CONSTRUCTION_VERSION == "sector-direct-direction-v1"
+    assert CACHE_FORMAT_VERSION == 3
+    assert CACHE_CONSTRUCTION_VERSION == "sector-rolling-anchor-60d-v2"
+
+
+def test_boundary_cache_rejects_daily_reset_v2_manifest(tmp_path: Path) -> None:
+    cache = BoundaryDataCache(tmp_path / "cache")
+    key = _key(tmp_path)
+    cache.save(key, walk_forward_sector_data(180))
+    manifest_path = cache.root / key.dataset_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["format_version"] = 2
+    manifest["variants"][0]["construction_version"] = "sector-direct-direction-v1"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(BoundaryDataCacheMiss, match="format version"):
+        cache.load(key)
 
 
 def test_boundary_cache_rejects_changed_source_and_wrong_window(tmp_path: Path) -> None:
     cache = BoundaryDataCache(tmp_path / "cache")
     key = _key(tmp_path)
-    cache.save(key, _walk_forward_data(180))
+    cache.save(key, walk_forward_sector_data(180))
 
     key.source_path.write_bytes(b"source-changed")
     changed = BoundaryDataCacheKey.from_source(
@@ -130,7 +169,7 @@ def test_boundary_cache_rejects_changed_source_and_wrong_window(tmp_path: Path) 
 
 def test_boundary_cache_manifest_contains_one_sector_state_variant(tmp_path: Path) -> None:
     cache = BoundaryDataCache(tmp_path / "cache")
-    cache.save(_key(tmp_path, SECTOR_CACHE_SLOT), _walk_forward_data(180))
+    cache.save(_key(tmp_path, SECTOR_CACHE_SLOT), walk_forward_sector_data(180))
 
     manifest = json.loads(
         (cache.root / "semiconductor" / "manifest.json").read_text(encoding="utf-8")
@@ -139,6 +178,7 @@ def test_boundary_cache_manifest_contains_one_sector_state_variant(tmp_path: Pat
         SECTOR_CACHE_SLOT,
     )
     assert all(item["status"] == "ready" for item in manifest["variants"])
+    assert manifest["anchor_protocol"] == "rolling-60-session-previous-close"
 
 
 def test_sector_cache_manifest_discards_legacy_window_variants(tmp_path: Path) -> None:
@@ -163,7 +203,7 @@ def test_sector_cache_manifest_discards_legacy_window_variants(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    cache.save(_key(tmp_path, SECTOR_CACHE_SLOT), _walk_forward_data(180))
+    cache.save(_key(tmp_path, SECTOR_CACHE_SLOT), walk_forward_sector_data(180))
 
     manifest = cache.status("semiconductor")
     assert [item["lookback_sessions"] for item in manifest["variants"]] == [
@@ -212,7 +252,7 @@ def test_precompute_builds_one_whole_sector_state_without_topology(
         def build(self, panel):
             assert hasattr(panel, "timestamps")
             calls["state"].append(panel)
-            return replace(_walk_forward_data(180), memberships=())
+            return walk_forward_sector_data(180)
 
     class FakeCache:
         def save(self, key, data):
@@ -230,12 +270,14 @@ def test_precompute_builds_one_whole_sector_state_without_topology(
             "Execution",
             (),
             {
-                "sessions": _walk_forward_data(180).states.sessions,
-                "hold_returns": _walk_forward_data(180).member_next_returns,
-                "buy_returns": _walk_forward_data(180).member_next_returns,
-                "buy_executable": _walk_forward_data(180).member_next_valid,
-                "sell_returns": np.zeros_like(_walk_forward_data(180).member_next_returns),
-                "sell_executable": _walk_forward_data(180).member_next_valid,
+                "sessions": walk_forward_sector_data(180).states.sessions,
+                "hold_returns": walk_forward_sector_data(180).member_next_returns,
+                "buy_returns": walk_forward_sector_data(180).member_next_returns,
+                "buy_executable": walk_forward_sector_data(180).member_next_valid,
+                "sell_returns": np.zeros_like(
+                    walk_forward_sector_data(180).member_next_returns
+                ),
+                "sell_executable": walk_forward_sector_data(180).member_next_valid,
             },
         )(),
     )

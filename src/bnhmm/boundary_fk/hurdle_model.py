@@ -8,6 +8,7 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.special import expit, ndtr
 
+from .branch_model import DRIFT_FEATURE_NAMES
 from .types import TwoBranchDailyStates, TwoBranchLabels
 
 
@@ -21,7 +22,8 @@ class BayesianHurdleModelConfig:
     convergence_tolerance: float = 1e-8
     neutral_sigma: float = 0.35
     half_life_sessions: float | None = 60.0
-    feature_names: tuple[str, ...] = ("signed_path_efficiency",)
+    feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
+    move_extra_feature_names: tuple[str, ...] = ("rolling_diffusion_60d",)
     calibration_fraction: float = 0.20
 
     def __post_init__(self) -> None:
@@ -39,8 +41,18 @@ class BayesianHurdleModelConfig:
             self.feature_names
         ):
             raise ValueError("hurdle feature names must be unique and non-empty")
+        if len(set(self.move_feature_names)) != len(self.move_feature_names):
+            raise ValueError("hurdle move features must be unique")
         if not 0.1 <= self.calibration_fraction <= 0.4:
             raise ValueError("hurdle calibration fraction must lie in [0.1, 0.4]")
+
+    @property
+    def direction_feature_names(self) -> tuple[str, ...]:
+        return self.feature_names
+
+    @property
+    def move_feature_names(self) -> tuple[str, ...]:
+        return self.feature_names + self.move_extra_feature_names
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +80,13 @@ class BayesianHurdlePosterior:
     direction_label_sigma: float
     minimum_feature_evidence_probability: float
     calibration_rows: int
+    move_feature_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        width = len(self.feature_names) + 1
+        if not self.move_feature_names:
+            object.__setattr__(self, "move_feature_names", self.feature_names)
+        direction_width = len(self.feature_names) + 1
+        move_width = len(self.move_feature_names) + 1
         if self.branch < 0 or self.fit_rows < self.direction_fit_rows:
             raise ValueError("hurdle posterior row counts are invalid")
         if self.direction_fit_rows < 1 or self.direction_label_sigma <= 0.0:
@@ -79,22 +95,24 @@ class BayesianHurdlePosterior:
             raise ValueError("hurdle feature evidence probability is invalid")
         if self.calibration_rows < 1:
             raise ValueError("hurdle posterior requires causal calibration rows")
-        if self.move_mean.shape != (width,) or self.direction_mean.shape != (width,):
+        if self.move_mean.shape != (move_width,) or self.direction_mean.shape != (
+            direction_width,
+        ):
             raise ValueError("hurdle posterior coefficients do not match features")
-        if self.move_covariance.shape != (width, width) or self.direction_covariance.shape != (
-            width,
-            width,
+        if self.move_covariance.shape != (move_width, move_width) or self.direction_covariance.shape != (
+            direction_width,
+            direction_width,
         ):
             raise ValueError("hurdle posterior covariance does not match features")
         if not np.isfinite(self.return_scale) or self.return_scale <= 0.0:
             raise ValueError("hurdle return scale must be finite and positive")
 
     def move_design(self, states: TwoBranchDailyStates, row: int) -> np.ndarray:
-        raw = self._raw_features(states, row)
+        raw = self._raw_features(states, row, self.move_feature_names)
         return np.concatenate((np.ones(1), np.abs(raw) / self.move_scale))
 
     def direction_design(self, states: TwoBranchDailyStates, row: int) -> np.ndarray:
-        raw = self._raw_features(states, row)
+        raw = self._raw_features(states, row, self.feature_names)
         return np.concatenate((np.ones(1), raw / self.direction_scale))
 
     def estimate(self, states: TwoBranchDailyStates, row: int) -> HurdleDirectionEstimate:
@@ -111,13 +129,18 @@ class BayesianHurdlePosterior:
             ),
         )
 
-    def _raw_features(self, states: TwoBranchDailyStates, row: int) -> np.ndarray:
+    def _raw_features(
+        self,
+        states: TwoBranchDailyStates,
+        row: int,
+        feature_names: tuple[str, ...],
+    ) -> np.ndarray:
         if row < 0 or row >= len(states.sessions):
             raise IndexError("hurdle forecast row is out of range")
         if not states.valid[row, self.branch]:
             raise ValueError("cannot estimate an invalid hurdle state")
         raw = np.asarray(
-            [states.feature(name)[row, self.branch] for name in self.feature_names],
+            [states.feature(name)[row, self.branch] for name in feature_names],
             dtype=np.float64,
         )
         if np.any(~np.isfinite(raw)):
@@ -150,9 +173,13 @@ class BayesianHurdleModel:
         if int(selected.sum()) < self.config.minimum_rows:
             raise ValueError("insufficient matured rows for hurdle fit")
 
-        raw = np.column_stack(
+        direction_raw_all = np.column_stack(
             [states.feature(name)[:, branch] for name in self.config.feature_names]
+        )
+        move_raw = np.column_stack(
+            [states.feature(name)[:, branch] for name in self.config.move_feature_names]
         )[selected]
+        direction_raw = direction_raw_all[selected]
         target_return = labels.next_return[selected, branch]
         volatility = labels.historical_volatility[selected, branch]
         significant = np.abs(target_return) > self.config.neutral_sigma * volatility
@@ -160,24 +187,29 @@ class BayesianHurdleModel:
             raise ValueError("insufficient significant returns for hurdle direction fit")
 
         weights = self._recent_weights(len(target_return))
-        move_scale = _root_mean_square_scale(raw)
-        move_design = np.column_stack((np.ones(len(raw)), np.abs(raw) / move_scale))
+        move_scale = _root_mean_square_scale(move_raw)
+        move_design = np.column_stack(
+            (np.ones(len(move_raw)), np.abs(move_raw) / move_scale)
+        )
         move_mean, move_covariance = self._fit_logistic(
             move_design,
             significant.astype(np.float64),
             weights,
         )
 
-        direction_raw = raw[significant]
-        direction_scale = _root_mean_square_scale(direction_raw)
+        significant_direction_raw = direction_raw[significant]
+        direction_scale = _root_mean_square_scale(significant_direction_raw)
         direction_design = np.column_stack(
-            (np.ones(len(direction_raw)), direction_raw / direction_scale)
+            (
+                np.ones(len(significant_direction_raw)),
+                significant_direction_raw / direction_scale,
+            )
         )
         direction_weights = weights[significant]
         direction_weights /= float(np.mean(direction_weights))
         direction_target = (target_return[significant] > 0.0).astype(np.float64)
         evidence_probability, calibration_rows = self._calibrate_feature_evidence(
-            raw,
+            direction_raw,
             target_return,
             volatility,
             weights,
@@ -194,6 +226,7 @@ class BayesianHurdleModel:
         return BayesianHurdlePosterior(
             branch=branch,
             feature_names=self.config.feature_names,
+            move_feature_names=self.config.move_feature_names,
             move_scale=move_scale,
             move_mean=move_mean,
             move_covariance=move_covariance,

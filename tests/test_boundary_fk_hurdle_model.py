@@ -17,6 +17,22 @@ from bnhmm.boundary_fk.hurdle_model import (
 from test_two_branch_fk_model import _dataset, _fit_branch, _potential_inputs
 
 
+def test_fk_defaults_use_only_causal_rolling_path_features() -> None:
+    branch = BayesianBranchModelConfig()
+    hurdle = BayesianHurdleModelConfig()
+
+    assert branch.drift_feature_names == (
+        "rolling_log_position_60d",
+        "rolling_path_efficiency_60d",
+    )
+    assert hurdle.direction_feature_names == branch.drift_feature_names
+    assert hurdle.move_feature_names == (
+        "rolling_log_position_60d",
+        "rolling_path_efficiency_60d",
+        "rolling_diffusion_60d",
+    )
+
+
 def test_hurdle_uses_neutral_sigma_for_significant_move_labels() -> None:
     states, labels = _dataset(100)
     returns = labels.next_return.copy()
@@ -83,7 +99,7 @@ def test_hurdle_direction_is_conditional_on_significant_moves() -> None:
             half_life_sessions=None,
         )
     ).fit(states, labels, branch=0, training_cutoff=cutoff)
-    path = states.feature("signed_path_efficiency")[:, 0]
+    path = states.feature("rolling_path_efficiency_60d")[:, 0]
     positive_row = int(np.argmax(path[:110]))
     negative_row = int(np.argmin(path[:110]))
 

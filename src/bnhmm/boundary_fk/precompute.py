@@ -13,7 +13,13 @@ import numpy as np
 
 from ..data.source import DuckDBBarSource
 from ..sector_flow.panel import SectorMinutePanelBuilder
-from .cache import SECTOR_CACHE_SLOT, BoundaryDataCache, BoundaryDataCacheKey
+from .cache import (
+    ANCHOR_PROTOCOL,
+    CACHE_CONSTRUCTION_VERSION,
+    SECTOR_CACHE_SLOT,
+    BoundaryDataCache,
+    BoundaryDataCacheKey,
+)
 from .execution import build_member_execution_constraints
 from .normalization import CausalBoundaryNormalizer
 from .sector_state import SectorDailyStateBuilder
@@ -75,6 +81,8 @@ def build_sector_boundary_cache(
         "start": start_date.isoformat(),
         "end": end_date.isoformat(),
         "rows": len(data.states.sessions),
+        "construction_version": CACHE_CONSTRUCTION_VERSION,
+        "anchor_protocol": ANCHOR_PROTOCOL,
         "elapsed_seconds": time.perf_counter() - started,
     }
 

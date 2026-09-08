@@ -12,17 +12,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
-from ..config import HOLOGRAPHIC_LITE_FIELD_NAMES
 from ..data.sector_dataset import SectorDatasetCatalog
 from ..data.source import DuckDBBarSource
-from ..repair import RepairVariantCatalog
 from ..visual_dataset import VisualDatasetIndex
 from .jobs import (
     ActiveJobDeletionError,
@@ -170,98 +166,15 @@ def config(request: Request) -> dict[str, Any]:
                 "database_path": selected.database_path,
                 "symbols": list(selected.symbols),
                 "dataset_id": selected.dataset_id,
-                "training_scope": "sector-pooled",
             }
         )
-    stock_defaults = {
+    bnhmm_defaults = {
         **defaults,
-        "strategy": "stock-transformer",
-        "training_scope": "sector-pooled",
-        "d_model": 64,
-        "layers": 3,
-        "feedforward_dim": 128,
-        "pretrain_epochs": 0,
+        "strategy": "bnhmm",
+        "training_scope": "per-symbol",
     }
-    holographic_defaults = {
+    boundary_defaults = {
         **defaults,
-        "strategy": "holo-bnhmm",
-        "training_scope": "sector-pooled",
-        "profile_protocol": "price-volume-holographic-flow-v1",
-        "holographic_volume_bins": 5,
-        "holographic_smoothing": 0.75,
-        "latent_states": 50,
-        "pretrain_epochs": 2,
-    }
-    holographic_lite_defaults = {
-        **holographic_defaults,
-        "strategy": "holo-bnhmm-lite",
-        "profile_protocol": "price-volume-holographic-lite-v1",
-        "holographic_volume_bins": 3,
-        "holographic_fields": list(HOLOGRAPHIC_LITE_FIELD_NAMES),
-        "holographic_conv_layers": 1,
-        "d_model": 16,
-        "layers": 1,
-        "feedforward_dim": 32,
-        "latent_states": 16,
-    }
-    repair_defaults = {
-        **holographic_defaults,
-        "strategy": "holo-repair",
-        "repair_variant": RepairVariantCatalog.names()[0],
-        "pretrain_epochs": 0,
-    }
-    fk_defaults = {
-        **defaults,
-        "strategy": "fk-stock",
-        "training_scope": "sector-pooled",
-        "device": "cpu",
-    }
-    sector_flow_defaults = {
-        **defaults,
-        "strategy": "sector-flow-bayes",
-        "training_scope": "sector-pooled",
-        "normalization_lookback_sessions": 20,
-        "normalization_minimum_observations": 10,
-        "minimum_train_sessions": 252,
-        "maximum_lag_minutes": 30,
-        "minimum_attribution_rows": 120,
-        "factor_process_variance": None,
-        "sector_flow_path_windows": [5, 15, 30, 60],
-        "sector_flow_ranking_window": 60,
-        "sector_flow_evaluation_horizon_minutes": 30,
-        "sector_flow_top_k": 10,
-        "sector_flow_monte_carlo_samples": 1000,
-        "sector_flow_protocol": "river-regime-v3",
-        "sector_index_symbol": "881121",
-        "regime_context_sessions": 5,
-        "regime_hidden_channels": 16,
-        "regime_latent_states": 12,
-        "regime_neutral_sigma": 0.35,
-        "regime_volatility_lookback_sessions": 20,
-        "regime_volatility_minimum_observations": 10,
-        "regime_confidence_threshold": 0.6,
-        "regime_maximum_bull_variance": 0.02,
-        "regime_epochs": 20,
-        "regime_batch_size": 8,
-        "regime_learning_rate": 3e-4,
-        "regime_kl_weight": 1e-4,
-        "regime_state_loss_weight": 0.25,
-        "regime_mc_samples": 16,
-        "device": "cpu",
-    }
-    boundary_flow_defaults = {
-        key: value
-        for key, value in defaults.items()
-        if key
-        not in {
-            "sector_flow_top_k",
-            "sector_flow_ranking_window",
-            "sector_flow_evaluation_horizon_minutes",
-            "sector_flow_monte_carlo_samples",
-            "topology_lookback_sessions",
-        }
-    }
-    boundary_flow_defaults.update({
         "strategy": "boundary-flow-fk",
         "training_scope": "sector-pooled",
         "device": "cpu",
@@ -274,46 +187,17 @@ def config(request: Request) -> dict[str, Any]:
         "boundary_minimum_survival_probability": 0.35,
         "boundary_relative_strength_lookback_sessions": 20,
         "boundary_maximum_drawdown": 0.05,
-    })
-    percolation_defaults = {
-        **defaults,
-        "strategy": "percolation-branching",
-        "training_scope": "sector-pooled",
-        "device": "cpu",
-        "maximum_lag_minutes": 3,
-        "topology_lookback_sessions": 60,
-        "transaction_cost_bps": 5.0,
-        "percolation_activation_threshold": 1.5,
-        "percolation_null_permutations": 500,
-        "percolation_posterior_paths": 10_000,
-        "percolation_phase_probability_threshold": 0.51,
     }
     return {
         "devices": _devices(),
         "job_root": str(manager(request).root),
         "active_jobs": sum(item.status in {"queued", "running"} for item in jobs),
-        "defaults": defaults,
+        "defaults": bnhmm_defaults,
         "strategy_defaults": {
-            "bnhmm": defaults,
-            "holo-bnhmm": holographic_defaults,
-            "holo-bnhmm-lite": holographic_lite_defaults,
-            "holo-repair": repair_defaults,
-            "stock-transformer": stock_defaults,
-            "fk-stock": fk_defaults,
-            "sector-flow-bayes": sector_flow_defaults,
-            "boundary-flow-fk": boundary_flow_defaults,
-            "percolation-branching": percolation_defaults,
+            "bnhmm": bnhmm_defaults,
+            "boundary-flow-fk": boundary_defaults,
         },
         "datasets": [item.as_json() for item in datasets],
-        "repair_variants": [
-            {
-                "name": item.name,
-                "stage": item.stage,
-                "description": item.description,
-                "implemented": item.stage <= 6,
-            }
-            for item in RepairVariantCatalog.all()
-        ],
     }
 
 
@@ -547,173 +431,24 @@ def symbol_artifact(
     return FileResponse(path)
 
 
-@app.get("/jobs/{identifier}/river", include_in_schema=False)
-def river_page(identifier: str, request: Request) -> FileResponse:
-    if manager(request).river_manifest(identifier) is None:
-        raise HTTPException(status_code=404, detail="river workspace not found")
-    return FileResponse(STATIC_ROOT / "river.html")
 
 
-@app.get("/api/jobs/{identifier}/river/manifest")
-def river_manifest(identifier: str, request: Request) -> dict[str, Any]:
-    payload = manager(request).river_manifest(identifier)
-    if payload is None:
-        raise HTTPException(status_code=404, detail="river manifest not found")
-    return payload
 
 
-@app.get("/api/jobs/{identifier}/river/topology/{month}")
-def river_topology(
-    identifier: str, month: str, request: Request
-) -> dict[str, Any]:
-    path = manager(request).river_artifact_path(identifier, "topology", month)
-    if path is None:
-        raise HTTPException(status_code=404, detail="river topology not found")
-    return _npz_payload(path)
 
 
-@app.get("/api/jobs/{identifier}/river/slice/{session}")
-def river_slice(
-    identifier: str, session: str, request: Request
-) -> dict[str, Any]:
-    path = manager(request).river_artifact_path(identifier, "slice", session)
-    if path is None:
-        raise HTTPException(status_code=404, detail="river slice not found")
-    return _npz_payload(path)
 
 
-@app.get("/api/jobs/{identifier}/river/forecast/{index}")
-def river_forecast(
-    identifier: str, index: int, request: Request
-) -> dict[str, Any]:
-    manifest = manager(request).river_manifest(identifier)
-    path = manager(request).artifact_path(
-        identifier, "sector-state-forecasts.npz"
-    )
-    forecasts = manifest.get("forecasts") if isinstance(manifest, dict) else None
-    if (
-        path is None
-        or not isinstance(forecasts, list)
-        or not 0 <= index < len(forecasts)
-    ):
-        raise HTTPException(status_code=404, detail="sector forecast not found")
-    with np.load(path, allow_pickle=False) as archive:
-        required = {"signal_time", "available_at", "mean", "variance"}
-        if not required.issubset(archive.files):
-            raise HTTPException(status_code=422, detail="sector forecast is invalid")
-        if index >= len(archive["signal_time"]):
-            raise HTTPException(status_code=404, detail="sector forecast not found")
-        mean = archive["mean"][index]
-        variance = archive["variance"][index]
-        if mean.size + variance.size > 100_000:
-            raise HTTPException(status_code=413, detail="sector forecast is too large")
-        return {
-            "index": index,
-            "signal_time": _array_json(archive["signal_time"][index]),
-            "available_at": _array_json(archive["available_at"][index]),
-            "mean": _array_json(mean),
-            "variance": _array_json(variance),
-        }
 
 
-@app.get("/api/jobs/{identifier}/river/migration")
-def river_migration(identifier: str, request: Request) -> dict[str, Any]:
-    manifest = manager(request).river_manifest(identifier)
-    if manifest is None:
-        raise HTTPException(status_code=404, detail="river manifest not found")
-    entries = manifest.get("topologies")
-    if not isinstance(entries, list) or len(entries) > 120:
-        raise HTTPException(status_code=422, detail="river topology history is invalid")
-    snapshots: list[tuple[str, dict[str, tuple[int, int]]]] = []
-    for entry in entries:
-        if not isinstance(entry, dict) or not isinstance(entry.get("month"), str):
-            continue
-        month = entry["month"]
-        path = manager(request).river_artifact_path(identifier, "topology", month)
-        if path is None:
-            continue
-        payload = _npz_payload(path)
-        symbols = payload.get("symbols", [])
-        order = payload.get("row_order", [])
-        bands = payload.get("band_ids", [])
-        positions = {int(symbol_index): row for row, symbol_index in enumerate(order)}
-        snapshot = {
-            str(symbol): (positions.get(index, index), int(bands[index]))
-            for index, symbol in enumerate(symbols)
-        }
-        snapshots.append((month, snapshot))
-    transitions: list[dict[str, Any]] = []
-    for (source_month, source), (target_month, target) in zip(
-        snapshots, snapshots[1:]
-    ):
-        for symbol in sorted(set(source) & set(target)):
-            source_row, source_band = source[symbol]
-            target_row, target_band = target[symbol]
-            transitions.append(
-                {
-                    "symbol": symbol,
-                    "from_month": source_month,
-                    "to_month": target_month,
-                    "from_row": source_row,
-                    "to_row": target_row,
-                    "from_band": source_band,
-                    "to_band": target_band,
-                }
-            )
-    return {
-        "months": [month for month, _ in snapshots],
-        "transitions": transitions,
-    }
 
 
-@app.get("/api/jobs/{identifier}/river/symbol/{symbol}")
-def river_symbol(
-    identifier: str, symbol: str, request: Request
-) -> dict[str, Any]:
-    normalized = symbol.replace(".", "").replace("-", "").replace("_", "")
-    if not normalized.isalnum() or len(symbol) > 24:
-        raise HTTPException(status_code=404, detail="river symbol not found")
-    path = manager(request).artifact_path(identifier, "evaluation.json")
-    if path is None:
-        raise HTTPException(status_code=404, detail="river evaluation not found")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=422, detail="river evaluation is invalid") from exc
-    predictions = payload.get("predictions", []) if isinstance(payload, dict) else []
-    if not isinstance(predictions, list):
-        predictions = []
-    selected = [
-        item
-        for item in predictions
-        if isinstance(item, dict) and item.get("symbol") == symbol
-    ][-512:]
-    return {"symbol": symbol, "predictions": selected}
 
 
-def _npz_payload(path: Path, *, maximum_values: int = 1_000_000) -> dict[str, Any]:
-    with np.load(path, allow_pickle=False) as archive:
-        count = sum(int(archive[name].size) for name in archive.files)
-        if count > maximum_values:
-            raise HTTPException(status_code=413, detail="river artifact is too large")
-        return {name: _array_json(archive[name]) for name in archive.files}
 
 
-def _array_json(value: np.ndarray) -> Any:
-    if np.issubdtype(value.dtype, np.datetime64):
-        unit = np.datetime_data(value.dtype)[0]
-        rendered = np.datetime_as_string(value, unit=unit)
-        return rendered.item() if rendered.ndim == 0 else rendered.tolist()
-    payload = value.item() if value.ndim == 0 else value.tolist()
-    return _finite_json(payload)
 
 
-def _finite_json(value: Any) -> Any:
-    if isinstance(value, list):
-        return [_finite_json(item) for item in value]
-    if isinstance(value, float) and not np.isfinite(value):
-        return None
-    return value
 
 
 def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[str, Any]:
@@ -731,16 +466,6 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "predictions.json",
             "fk-diagnostics.json",
             "run-summary.json",
-            "repair-stage-report.md",
-            "sector-flow.png",
-            "sector-flow-report.md",
-            "sector-flow-v2-report.md",
-            "structure-evaluation.json",
-            "sector-regime-report.md",
-            "sector-regime-predictions.json",
-            "sector-regime-evaluation.json",
-            "sector-policy-evaluation.json",
-            "sector-state-forecasts.npz",
             "boundary-daily-states.json",
             "boundary-model-posterior.json",
             "feynman-kac-predictions.json",
@@ -750,14 +475,6 @@ def _job_payload(store: JobManager, record: JobRecord, *, detail: bool) -> dict[
             "path-efficiency-convection-potential-report.md",
             "convection-potential-evaluation.json",
             "boundary-residual-analysis.json",
-            "percolation-evaluation.json",
-            "percolation-baselines.json",
-            "percolation-predictions.json",
-            "percolation-posteriors.json",
-            "percolation-equity.json",
-            "percolation-network-summary.json",
-            "percolation-report-zh.md",
-            "ranking.csv",
             "predictions.csv",
         )
         if store.artifact_path(record.id, name) is not None

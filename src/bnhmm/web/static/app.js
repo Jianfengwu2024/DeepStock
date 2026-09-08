@@ -1,2185 +1,343 @@
 const state = {
   config: null,
-  devices: [],
   jobs: [],
   selectedId: null,
-  symbols: [],
-  datasets: [],
-  dialogSelected: new Set(),
-  resultScopeByJob: new Map(),
-  symbolReportCache: new Map(),
-  boundaryResultCache: new Map(),
-  boundaryTabByJob: new Map(),
-  percolationResultCache: new Map(),
-  percolationTabByJob: new Map(),
-  strategyFormValues: new Map(),
-  activeStrategy: "bnhmm",
-  historyEditing: false,
-  historySelected: new Set(),
-  historyDeleting: false,
-  polling: false,
+  selected: new Set(),
+  editing: false,
 };
 
-const numberFields = new Set([
-  "epochs", "pretrain_epochs", "pretrain_mask_probability", "batch_size", "learning_rate", "kl_weight", "ordinal_weight", "symmetry_weight", "auxiliary_gate_floor", "auxiliary_gate_initial", "auxiliary_warmup_epochs", "forward_sessions", "strong_threshold_sigma",
-  "return_standardization_lookback", "return_standardization_min_observations", "minimum_return_scale_percent",
-  "minimum_train_sessions", "tuning_sessions", "test_sessions", "step_sessions",
-  "max_folds", "bin_width_bps", "max_profile_bins", "normalization_lookback_sessions", "velocity_bins", "velocity_aggregation_minutes", "velocity_clip", "velocity_smoothing", "sequence_length", "sequence_stride",
-  "minimum_sequence_length", "d_model", "latent_states", "transition_rank", "motif_dim", "heads", "layers",
-  "feedforward_dim", "dropout", "mc_samples", "uncertainty_aversion",
-  "transaction_cost_bps", "seed", "conservation_weight",
-  "conservation_grid_points", "conservation_ridge", "minimum_token_bins",
-  "maximum_tokens", "boundary_threshold",
-  "holographic_volume_bins", "holographic_smoothing",
-  "normalization_minimum_observations", "maximum_lag_minutes",
-  "minimum_attribution_rows", "factor_process_variance",
-  "sector_flow_ranking_window", "sector_flow_evaluation_horizon_minutes",
-  "sector_flow_top_k", "sector_flow_monte_carlo_samples",
-  "regime_context_sessions", "regime_hidden_channels", "regime_latent_states",
-  "regime_neutral_sigma", "regime_volatility_lookback_sessions",
-  "regime_volatility_minimum_observations", "regime_confidence_threshold",
-  "regime_maximum_bull_variance", "regime_epochs", "regime_batch_size",
-  "regime_learning_rate", "regime_kl_weight", "regime_state_loss_weight",
-  "regime_mc_samples",
-  "topology_lookback_sessions", "boundary_fk_paths",
-  "boundary_drift_half_life_sessions", "boundary_minimum_direction_probability",
-  "boundary_minimum_signal_to_noise", "boundary_minimum_survival_probability",
-  "boundary_relative_strength_lookback_sessions",
-  "boundary_maximum_drawdown",
-  "percolation_activation_threshold", "percolation_null_permutations",
-  "percolation_posterior_paths", "percolation_phase_probability_threshold",
-]);
-
-const strategyParameterFields = {
-  bnhmm: [
-    "pretrain_epochs", "pretrain_mask_probability", "kl_weight", "ordinal_weight",
-    "symmetry_weight", "deterministic_training", "feature_mode", "auxiliary_gate_floor",
-    "auxiliary_gate_initial", "auxiliary_warmup_epochs", "velocity_bins", "velocity_aggregation_minutes", "velocity_clip",
-    "velocity_smoothing", "sequence_length", "d_model", "motif_dim", "heads", "layers",
-    "feedforward_dim", "dropout", "latent_states", "transition_rank", "mc_samples", "device",
-  ],
-  "holo-bnhmm": [
-    "pretrain_epochs", "pretrain_mask_probability", "kl_weight", "ordinal_weight",
-    "symmetry_weight", "deterministic_training", "velocity_aggregation_minutes",
-    "velocity_clip", "holographic_volume_bins", "holographic_smoothing",
-    "sequence_length", "d_model", "heads", "layers", "feedforward_dim", "dropout",
-    "latent_states", "transition_rank", "mc_samples", "device",
-  ],
-  "holo-bnhmm-lite": [
-    "pretrain_epochs", "pretrain_mask_probability", "kl_weight", "ordinal_weight",
-    "symmetry_weight", "deterministic_training", "velocity_aggregation_minutes",
-    "velocity_clip", "holographic_volume_bins", "holographic_smoothing",
-    "sequence_length", "d_model", "heads", "layers", "feedforward_dim", "dropout",
-    "latent_states", "transition_rank", "mc_samples", "device",
-  ],
-  "holo-repair": [
-    "repair_variant", "pretrain_epochs", "pretrain_mask_probability", "kl_weight",
-    "ordinal_weight", "symmetry_weight", "deterministic_training",
-    "velocity_aggregation_minutes", "velocity_clip", "holographic_volume_bins",
-    "holographic_smoothing", "sequence_length", "d_model", "heads", "layers",
-    "feedforward_dim", "dropout", "latent_states", "transition_rank", "mc_samples", "device",
-  ],
-  "stock-transformer": [
-    "conservation_weight", "conservation_grid_points", "conservation_ridge",
-    "minimum_token_bins", "maximum_tokens", "boundary_threshold", "sequence_length",
-    "d_model", "heads", "layers", "feedforward_dim", "dropout", "mc_samples", "device",
-  ],
-  "fk-stock": [],
-  "sector-flow-bayes": [
-    "minimum_train_sessions", "normalization_lookback_sessions",
-    "sector_flow_path_windows", "sector_flow_top_k", "sector_index_symbol",
-    "regime_context_sessions", "regime_hidden_channels", "regime_latent_states",
-    "regime_neutral_sigma", "regime_volatility_lookback_sessions",
-    "regime_volatility_minimum_observations", "regime_confidence_threshold",
-    "regime_maximum_bull_variance", "regime_epochs", "regime_batch_size",
-    "regime_learning_rate", "regime_kl_weight", "regime_state_loss_weight",
-    "regime_mc_samples", "device",
-  ],
-  "boundary-flow-fk": [
-    "minimum_train_sessions", "max_folds",
-    "regime_neutral_sigma", "boundary_fk_paths", "boundary_drift_half_life_sessions",
-    "boundary_minimum_direction_probability", "boundary_minimum_signal_to_noise",
-    "boundary_minimum_survival_probability", "transaction_cost_bps", "seed",
-    "boundary_relative_strength_lookback_sessions",
-    "boundary_maximum_drawdown",
-  ],
-  "percolation-branching": [
-    "percolation_activation_threshold", "percolation_null_permutations",
-    "percolation_posterior_paths", "percolation_phase_probability_threshold",
-    "transaction_cost_bps", "seed",
-  ],
-};
-
-const strategyNamePrefixes = {
-  bnhmm: "BNHMM",
-  "holo-bnhmm": "HoloBNHMM",
-  "holo-bnhmm-lite": "HoloLite",
-  "holo-repair": "HoloRepair",
-  "stock-transformer": "StockTransformer",
-  "fk-stock": "FKStock",
-  "sector-flow-bayes": "SectorFlow",
-  "boundary-flow-fk": "SectorFK",
-  "percolation-branching": "PercolationBranching",
-};
-
-const statusText = {
-  queued: "排队中", running: "运行中", completed: "已完成", failed: "失败",
-  cancelled: "已停止", interrupted: "已中断",
-};
-
-function icons() {
-  if (window.lucide) window.lucide.createIcons();
-}
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
+    headers: {"Content-Type": "application/json", ...(options.headers || {})},
   });
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    const detail = Array.isArray(payload.detail)
-      ? payload.detail.map(item => item.msg).join("；")
-      : payload.detail || `HTTP ${response.status}`;
-    throw new Error(detail);
+    throw new Error((await response.text()) || ("HTTP " + response.status));
   }
-  return response.json();
+  return response.status === 204 ? null : response.json();
 }
 
-function fillForm(defaults) {
-  const form = document.querySelector("#experiment-form");
-  for (const [name, value] of Object.entries(defaults)) {
-    for (const field of namedFormControls(form, name)) {
-      if (name === "symbols") field.value = value.join(", ");
-      else if (field.type === "radio") field.checked = field.value === value;
-      else if (field.type === "checkbox") field.checked = Boolean(value);
-      else field.value = value ?? "";
-    }
-  }
-  state.activeStrategy = currentStrategy();
-  state.strategyFormValues.set(
-    state.activeStrategy,
-    readFormFields(strategyParameterFields[state.activeStrategy]),
-  );
-  syncStrategySelection();
-  syncModelConstraints();
-  syncDatasetSelection();
-  if (currentStrategy() === "boundary-flow-fk") refreshBoundaryDataStatus();
+function strategy() {
+  return $('input[name="strategy"]:checked').value;
 }
 
-function currentStrategy() {
-  return document.querySelector("[name=strategy]:checked")?.value || "bnhmm";
-}
-
-function strategyPrefix(strategy = currentStrategy()) {
-  if (strategy === "holo-repair") {
-    return document.querySelector("#repair-variant")?.value || "HoloRepair";
-  }
-  return strategyNamePrefixes[strategy] || strategy;
-}
-
-function nextExperimentName(strategy = currentStrategy()) {
-  const prefix = strategyPrefix(strategy);
-  const pattern = new RegExp(`^${prefix}-(\\d+)$`, "i");
-  const maximum = state.jobs.reduce((value, job) => {
-    if (job.request.strategy !== strategy) return value;
-    if (strategy === "holo-repair" && job.request.repair_variant !== prefix) return value;
-    const match = String(job.request.name || "").match(pattern);
-    return match ? Math.max(value, Number(match[1])) : value;
-  }, 0);
-  return `${prefix}-${String(maximum + 1).padStart(3, "0")}`;
-}
-
-function setNextExperimentName(strategy = currentStrategy()) {
-  document.querySelector('[name="name"]').value = nextExperimentName(strategy);
+function isFk() {
+  return strategy() === "boundary-flow-fk";
 }
 
 function namedFormControls(form, name) {
-  return [...form.elements].filter(field => field.name === name);
+  return Array.from(form.elements).filter((item) => item.name === name);
 }
 
 function preferredFormControl(form, name) {
-  const controls = namedFormControls(form, name);
-  return controls.find(field => !field.disabled)
-    || controls.find(field => !field.closest(".hidden"))
-    || controls[0];
+  return namedFormControls(form, name).find((item) => !item.disabled);
 }
 
-function readFormFields(names) {
-  const form = document.querySelector("#experiment-form");
-  return Object.fromEntries(names.map(name => {
-    const field = preferredFormControl(form, name);
-    return [name, field?.type === "checkbox" ? field.checked : field?.value];
-  }));
-}
-
-function writeFormFields(values) {
-  const form = document.querySelector("#experiment-form");
-  for (const [name, value] of Object.entries(values || {})) {
-    for (const field of namedFormControls(form, name)) {
-      if (field.type === "checkbox") field.checked = Boolean(value);
-      else field.value = value ?? "";
+function fillForm(values) {
+  const form = $("#experiment-form");
+  Object.entries(values).forEach(([name, value]) => {
+    const controls = namedFormControls(form, name);
+    if (!controls.length || value == null) return;
+    if (controls[0].type === "radio") {
+      controls.forEach((item) => { item.checked = item.value === String(value); });
+    } else if (controls[0].type === "checkbox") {
+      controls[0].checked = Boolean(value);
+    } else if (name === "symbols") {
+      controls[0].value = Array.isArray(value) ? value.join(",") : value;
+    } else {
+      controls.forEach((item) => { item.value = String(value); });
     }
-  }
-}
-
-function changeStrategy() {
-  const strategy = currentStrategy();
-  if (strategy !== state.activeStrategy) {
-    state.strategyFormValues.set(
-      state.activeStrategy,
-      readFormFields(strategyParameterFields[state.activeStrategy]),
-    );
-    const saved = state.strategyFormValues.get(strategy);
-    const preset = state.config?.strategy_defaults?.[strategy] || {};
-    const fields = strategyParameterFields[strategy];
-    writeFormFields(saved || Object.fromEntries(fields.map(name => [name, preset[name]])));
-    state.activeStrategy = strategy;
-    setNextExperimentName(strategy);
-  }
-  syncStrategySelection();
-  syncModelConstraints();
-  syncDatasetSelection();
-  if (strategy === "boundary-flow-fk") refreshBoundaryDataStatus();
-  icons();
-}
-
-function syncStrategySelection() {
-  const strategy = currentStrategy();
-  const stock = strategy === "stock-transformer";
-  const fk = strategy === "fk-stock";
-  const sectorFlow = strategy === "sector-flow-bayes";
-  const boundaryFlow = strategy === "boundary-flow-fk";
-  const percolation = strategy === "percolation-branching";
-  const holoLite = strategy === "holo-bnhmm-lite";
-  const repair = strategy === "holo-repair";
-  const repairName = document.querySelector("#repair-variant")?.value || "HoloRepair";
-  const holo = strategy === "holo-bnhmm" || holoLite || repair;
-  const bayesianHmm = strategy === "bnhmm" || holo;
-  const neural = !fk && !sectorFlow && !boundaryFlow && !percolation;
-  document.querySelectorAll(".bnhmm-only").forEach(element => element.classList.toggle("hidden", strategy !== "bnhmm"));
-  document.querySelectorAll(".holo-only").forEach(element => element.classList.toggle("hidden", !holo));
-  document.querySelectorAll(".repair-only").forEach(element => element.classList.toggle("hidden", !repair));
-  document.querySelectorAll(".bayesian-hmm-only").forEach(element => element.classList.toggle("hidden", !bayesianHmm));
-  document.querySelectorAll(".flow-only").forEach(element => element.classList.toggle("hidden", !bayesianHmm));
-  document.querySelectorAll(".stock-only").forEach(element => element.classList.toggle("hidden", !stock));
-  document.querySelectorAll(".fk-only").forEach(element => element.classList.toggle("hidden", !fk));
-  document.querySelectorAll(".sector-flow-only").forEach(element => element.classList.toggle("hidden", !sectorFlow));
-  document.querySelectorAll(".boundary-flow-only").forEach(element => element.classList.toggle("hidden", !boundaryFlow));
-  document.querySelectorAll(".percolation-only").forEach(element => element.classList.toggle("hidden", !percolation));
-  document.querySelectorAll(".non-percolation-only").forEach(element => element.classList.toggle("hidden", percolation));
-  document.querySelectorAll(".percolation-technical").forEach(element => element.classList.toggle("hidden", percolation));
-  document.querySelectorAll(".non-boundary-flow-only").forEach(element => element.classList.toggle("hidden", boundaryFlow));
-  document.querySelectorAll(".non-sector-flow-only").forEach(element => element.classList.toggle("hidden", sectorFlow || boundaryFlow || percolation));
-  document.querySelectorAll(".legacy-walk-only").forEach(element => element.classList.toggle("hidden", sectorFlow || boundaryFlow || percolation));
-  document.querySelectorAll(".neural-only").forEach(element => element.classList.toggle("hidden", !neural));
-  document.querySelectorAll(".compute-only").forEach(element => element.classList.toggle("hidden", fk || boundaryFlow || percolation));
-  const scope = document.querySelector("#training-scope");
-  const perSymbol = scope.querySelector('option[value="per-symbol"]');
-  perSymbol.disabled = stock || fk || holo || sectorFlow || boundaryFlow || percolation;
-  if (stock || fk || holo || sectorFlow || boundaryFlow || percolation) scope.value = "sector-pooled";
-  document.querySelector('[name="profile_protocol"]').value = holo
-    ? (holoLite
-      ? "price-volume-holographic-lite-v1"
-      : "price-volume-holographic-flow-v1")
-    : "phase-space-10m-local-flow-v8";
-  document.querySelector("#brand-subtitle").textContent = percolation
-    ? "PercolationBranching · dual propagation networks"
-    : boundaryFlow
-    ? "SectorFK · Bayesian sector direction"
-    : sectorFlow
-    ? "SectorFlow · Bayesian sector dynamics"
-    : fk
-    ? "FKStock · Bayesian Feynman-Kac model"
-    : stock ? "StockTransformer · conservation language model"
-      : holo ? `${repair ? repairName : holoLite ? "HoloLite" : "HoloBNHMM"} · 2D Bayesian flow field`
-        : "BNHMM · Bayesian hidden-state model";
-  document.querySelector("#policy-section-title").textContent = sectorFlow || boundaryFlow || percolation
-    ? "评估与成本"
-    : "仓位策略";
-  document.querySelector("#state-section-title").textContent = stock || fk
-    ? "每日价格-成交量密度态"
-    : holo ? "每日二维全息态" : "每日相空间态";
-  if (neural) {
-    document.querySelector("#model-section-title").textContent = stock
-      ? "第三层 · StockTransformer"
-      : "短期记忆与贝叶斯模型";
-    document.querySelector("#model-backbone-spec").textContent = stock
-      ? "守恒 Token Transformer"
-      : holo ? "二维局部场编码器 + Transformer" : "确定性 Transformer";
-  }
-  const noDataset = (stock || fk || holo || sectorFlow || boundaryFlow || percolation) && state.datasets.length === 0;
-  document.querySelector("#run-button").disabled = noDataset;
-  document.querySelector("#form-error").textContent = noDataset
-    ? `${percolation ? "渗流分枝" : boundaryFlow ? "板块方向 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
-    : "";
-  syncStrategyControlAvailability();
+  });
 }
 
 function syncStrategyControlAvailability() {
-  const form = document.querySelector("#experiment-form");
-  form.querySelectorAll("[name]").forEach(element => {
+  const form = $("#experiment-form");
+  form.querySelectorAll("[name]").forEach((element) => {
+    if (element.name === "strategy") return;
     element.disabled = Boolean(element.closest(".hidden"));
   });
 }
 
-function setupDatasets(datasets) {
-  state.datasets = datasets || [];
-  const select = document.querySelector("#dataset-select");
-  select.replaceChildren(...state.datasets.map(dataset => {
-    const option = document.createElement("option");
-    option.value = dataset.dataset_id;
-    option.textContent = dataset.name;
-    return option;
-  }));
+function nextName(kind) {
+  const prefix = kind === "bnhmm" ? "BNHMM" : "FK-Bayesian";
+  const pattern = new RegExp("^" + prefix + "-(\\d+)$", "i");
+  const last = state.jobs.reduce((maximum, job) => {
+    const match = job.request.name.match(pattern);
+    return match ? Math.max(maximum, Number(match[1])) : maximum;
+  }, 0);
+  return prefix + "-" + String(last + 1).padStart(3, "0");
 }
 
-function setupRepairVariants(variants) {
-  const select = document.querySelector("#repair-variant");
-  select.replaceChildren(...(variants || []).map(variant => {
-    const option = document.createElement("option");
-    option.value = variant.name;
-    option.textContent = variant.implemented
-      ? `${variant.name} · 阶段 ${variant.stage}`
-      : `${variant.name} · 待前序验证`;
-    option.title = variant.description || "";
-    option.disabled = !variant.implemented;
-    return option;
-  }));
+function syncStrategy() {
+  const kind = strategy();
+  const currentName = $('[name="name"]').value;
+  fillForm(state.config.strategy_defaults[kind]);
+  $('input[name="strategy"][value="' + kind + '"]').checked = true;
+  $('[name="name"]').value = currentName && !/^(BNHMM|FK-Bayesian)-\d+$/i.test(currentName)
+    ? currentName : nextName(kind);
+  $("#bnhmm-fields").classList.toggle("hidden", kind !== "bnhmm");
+  $("#boundary-fields").classList.toggle("hidden", kind !== "boundary-flow-fk");
+  $("#dataset-field").classList.toggle("hidden", kind === "bnhmm");
+  syncStrategyControlAvailability();
+  if (kind === "boundary-flow-fk") checkBoundaryData();
 }
 
-function syncDatasetSelection() {
-  const form = document.querySelector("#experiment-form");
-  const sectorMode = form.elements.training_scope.value === "sector-pooled";
-  const datasetFields = document.querySelector("#sector-dataset-fields");
-  const datasetSelect = document.querySelector("#dataset-select");
-  const databaseField = form.elements.database_path;
-  const symbolsField = form.elements.symbols;
-  const chooseButton = document.querySelector("#choose-symbols");
-  datasetFields.classList.toggle("hidden", !sectorMode);
-  datasetSelect.disabled = !sectorMode;
-  databaseField.readOnly = sectorMode;
-  symbolsField.readOnly = sectorMode;
-  chooseButton.disabled = sectorMode;
-  if (!sectorMode) {
-    document.querySelector("#dataset-summary").textContent = "";
-    return;
+function renderDatasets() {
+  const select = $("#dataset-select");
+  select.innerHTML = state.config.datasets.map((item) =>
+    '<option value="' + item.dataset_id + '">' + (item.name || item.dataset_id) + "</option>"
+  ).join("");
+  select.addEventListener("change", applyDataset);
+  applyDataset();
+}
+
+function applyDataset() {
+  const dataset = state.config.datasets.find((item) => item.dataset_id === $("#dataset-select").value);
+  if (!dataset) return;
+  $('[name="database_path"]').value = dataset.database_path;
+  $('[name="symbols"]').value = dataset.symbols.join(",");
+  $("#dataset-summary").textContent = dataset.symbols.length + " 只股票 · " +
+    (dataset.start || "") + " 至 " + (dataset.end || "");
+  checkBoundaryData();
+}
+
+function serializeForm() {
+  const form = $("#experiment-form");
+  const payload = {...state.config.strategy_defaults[strategy()]};
+  const data = new FormData(form);
+  for (const [name, raw] of data.entries()) {
+    if (name === "symbols") {
+      payload.symbols = raw.split(/[\s,]+/).filter(Boolean);
+    } else {
+      const control = preferredFormControl(form, name);
+      payload[name] = control && control.type === "number"
+        ? (raw === "" ? null : Number(raw))
+        : raw;
+    }
   }
-  const dataset = state.datasets.find(item => item.dataset_id === datasetSelect.value)
-    || state.datasets[0];
-  if (!dataset) {
-    document.querySelector("#dataset-summary").textContent = "尚未发现板块数据集";
-    return;
-  }
-  datasetSelect.value = dataset.dataset_id;
-  databaseField.value = dataset.database_path;
-  symbolsField.value = dataset.symbols.join(", ");
-  state.symbols = [...dataset.symbols];
-  document.querySelector("#dataset-summary").innerHTML = `
-    <strong>${escapeHtml(dataset.name)}</strong>
-    <span>${dataset.available_member_count} / ${dataset.member_count} 只股票可用</span>
-    <span>${escapeHtml(dataset.data_start || "-")} 至 ${escapeHtml(dataset.data_end || "-")}</span>
-    <span>${escapeHtml(dataset.source)} · ${escapeHtml(dataset.source_code)}</span>`;
+  payload.strategy = strategy();
+  payload.training_scope = isFk() ? "sector-pooled" : "per-symbol";
+  payload.dataset_id = isFk() ? $("#dataset-select").value : null;
+  payload.deterministic_training = $('[name="deterministic_training"]').checked;
+  if (payload.max_folds == null) delete payload.max_folds;
+  return payload;
 }
 
-async function refreshBoundaryDataStatus() {
-  const element = document.querySelector("#boundary-data-status");
-  const button = document.querySelector("#boundary-data-build");
-  const datasetId = document.querySelector("#dataset-select")?.value;
-  if (!datasetId || currentStrategy() !== "boundary-flow-fk") return;
+async function checkBoundaryData() {
+  if (!isFk() || !$("#dataset-select").value) return;
   try {
-    const payload = await api(`/api/boundary-data/status/${encodeURIComponent(datasetId)}`);
-    const variants = payload.cache?.variants || [];
-    const ready = variants.filter(item => item.status === "ready").length;
-    const expected = 1;
-    button.disabled = payload.status === "running";
-    if (payload.status === "running") element.textContent = `构造中 · 已就绪 ${ready}/${expected}`;
-    else if (payload.status === "failed") element.textContent = `构造失败 · ${payload.error || "请查看日志"}`;
-    else if (ready === expected) element.textContent = `${expected} 套数据已就绪 · ${variants[0]?.start || ""} 至 ${variants[0]?.end || ""}`;
-    else element.textContent = `已就绪 ${ready}/${expected}，请先构造`;
-  } catch (exception) {
-    element.textContent = exception.message;
-    button.disabled = false;
+    const result = await api("/api/boundary-data/status/" + encodeURIComponent($("#dataset-select").value));
+    const variant = (result.variants || []).find((item) => item.lookback_sessions === 60);
+    $("#boundary-data-status").textContent = variant && variant.status === "ready"
+      ? "已就绪（滚动60日锚点）" : "需要重建";
+  } catch {
+    $("#boundary-data-status").textContent = "状态读取失败";
   }
 }
 
 async function buildBoundaryData() {
-  const form = document.querySelector("#experiment-form");
-  const button = document.querySelector("#boundary-data-build");
-  const status = document.querySelector("#boundary-data-status");
-  button.disabled = true;
-  status.textContent = "正在启动构造任务";
-  try {
-    await api("/api/boundary-data/build", {
-      method: "POST",
-      body: JSON.stringify({
-        dataset_id: form.elements.dataset_id.value,
-        start: form.elements.start.value,
-        end: form.elements.end.value,
-      }),
-    });
-    await refreshBoundaryDataStatus();
-  } catch (exception) {
-    status.textContent = exception.message;
-    button.disabled = false;
-  }
+  const dataset = state.config.datasets.find((item) => item.dataset_id === $("#dataset-select").value);
+  if (!dataset) return;
+  $("#boundary-data-status").textContent = "正在重建";
+  await api("/api/boundary-data/build", {
+    method: "POST",
+    body: JSON.stringify({
+      dataset_id: dataset.dataset_id,
+      database_path: dataset.database_path,
+      symbols: dataset.symbols,
+      start: dataset.start,
+      end: dataset.end,
+    }),
+  });
 }
 
-function syncModelConstraints() {
-  const strategy = currentStrategy();
-  const fk = strategy === "fk-stock";
-  const holoLite = strategy === "holo-bnhmm-lite";
-  const holo = strategy === "holo-bnhmm" || holoLite || strategy === "holo-repair";
-  const velocityField = document.querySelector("[name=velocity_bins]");
-  const latentField = document.querySelector("[name=latent_states]");
-  const transitionRankField = document.querySelector("[name=transition_rank]");
-  const sequenceLengthField = document.querySelector("[name=sequence_length]");
-  const strongThresholdField = document.querySelector("[name=strong_threshold_sigma]");
-  const standardizationLookbackField = document.querySelector("[name=return_standardization_lookback]");
-  const standardizationMinimumField = document.querySelector("[name=return_standardization_min_observations]");
-  const widthField = document.querySelector("[name=d_model]");
-  const headsField = document.querySelector("[name=heads]");
-  const auxiliaryFloorField = document.querySelector("[name=auxiliary_gate_floor]");
-  const auxiliaryInitialField = document.querySelector("[name=auxiliary_gate_initial]");
-  const velocityBins = Number(velocityField.value || 3);
-  const holographicVolumeBins = Number(document.querySelector("[name=holographic_volume_bins]").value || 5);
-  const holographicFieldCount = holoLite ? 5 : 8;
-  const minimum = holo
-    ? holographicVolumeBins * holographicFieldCount
-    : 4 + velocityBins ** 2;
-  latentField.min = String(minimum);
-  if (Number(latentField.value) < minimum) latentField.value = String(minimum);
-
-  const latentStates = Number(latentField.value || minimum);
-  transitionRankField.max = String(latentStates);
-  if (Number(transitionRankField.value) > latentStates) {
-    transitionRankField.value = String(latentStates);
-  }
-
-  const channelCount = document.querySelector("#profile-channel-count");
-  if (channelCount) {
-    channelCount.textContent = `4 + ${velocityBins}² = ${4 + velocityBins ** 2} 通道`;
-  }
-  const holographicChannelCount = document.querySelector("#holographic-channel-count");
-  if (holographicChannelCount) {
-    holographicChannelCount.textContent = `${holographicVolumeBins} × ${holographicFieldCount} = ${holographicVolumeBins * holographicFieldCount} 通道`;
-  }
-  const holographicFieldSpec = document.querySelector("#holographic-field-spec");
-  if (holographicFieldSpec) {
-    holographicFieldSpec.textContent = holoLite
-      ? "密度、价格流、成交量流、散度、旋度"
-      : "密度、双流、温度、协方差、散度、旋度";
-  }
-
-  const memoryLength = Number(sequenceLengthField.value || 5);
-  const memorySpec = document.querySelector("#memory-length-spec");
-  if (memorySpec) memorySpec.textContent = `最近 ${memoryLength} 个交易日`;
-
-  standardizationMinimumField.max = standardizationLookbackField.value;
-  if (Number(standardizationMinimumField.value) > Number(standardizationLookbackField.value)) {
-    standardizationMinimumField.value = standardizationLookbackField.value;
-  }
-
-  const strongThreshold = Number(strongThresholdField.value || 0.75);
-  const strongSpec = document.querySelector("#strong-threshold-spec");
-  if (strongSpec) {
-    strongSpec.textContent = `-${strongThreshold.toFixed(2)}σ / 0 / +${strongThreshold.toFixed(2)}σ`;
-  }
-
-  const width = Number(widthField.value);
-  const heads = Number(headsField.value);
-  headsField.setCustomValidity(
-    !fk && width && heads && width % heads !== 0
-      ? "状态编码宽度必须能被注意力头数整除"
-      : "",
-  );
-  auxiliaryInitialField.setCustomValidity(
-    !fk && Number(auxiliaryInitialField.value) < Number(auxiliaryFloorField.value)
-      ? "辅助初始权重不能低于辅助权重下限"
-      : "",
-  );
+function statusText(status) {
+  return ({queued: "排队", running: "运行中", completed: "完成", failed: "失败",
+    cancelled: "已终止", interrupted: "已中断"})[status] || status;
 }
 
-function setupDevices(devices) {
-  state.devices = devices;
-  const select = document.querySelector("#device-select");
-  select.replaceChildren(...devices.map(device => {
-    const option = document.createElement("option");
-    option.value = device.id;
-    option.textContent = device.id === "cpu" ? "CPU" : `${device.id} · ${device.name}`;
-    option.dataset.device = JSON.stringify(device);
-    return option;
-  }));
-  if (devices.some(item => item.id === "cuda:0")) select.value = "cuda:0";
-  updateDeviceNote();
-  renderGpuMonitor();
+function updateSelection() {
+  $("#history-selected-count").textContent = "已选 " + state.selected.size;
+  $("#batch-delete-button").classList.toggle("hidden", !state.editing || !state.selected.size);
+  $("#history-batch-actions").classList.toggle("hidden", !state.editing);
+  $("#history-select-all").checked = state.jobs.length > 0 &&
+    state.selected.size === state.jobs.length;
 }
 
-function updateDeviceNote() {
-  const select = document.querySelector("#device-select");
-  const note = document.querySelector("#device-note");
-  const device = state.devices.find(item => item.id === select.value);
-  if (!device) return;
-  note.textContent = device.id === "cpu" ? "" : `${device.memory_used_mib} / ${device.memory_total_mib} MiB · ${device.temperature_c}°C`;
-}
-
-function updateDevices(devices) {
-  state.devices = devices;
-  for (const option of document.querySelectorAll("#device-select option")) {
-    const device = devices.find(item => item.id === option.value);
-    if (device) option.dataset.device = JSON.stringify(device);
-  }
-  updateDeviceNote();
-  renderGpuMonitor();
-}
-
-function renderGpuMonitor() {
-  const monitor = document.querySelector("#gpu-monitor");
-  const gpus = state.devices.filter(item => item.id.startsWith("cuda:"));
-  monitor.innerHTML = gpus.map(gpu => {
-    const percent = Number.isFinite(Number(gpu.memory_percent))
-      ? Number(gpu.memory_percent)
-      : Number(gpu.memory_used_mib) / Math.max(Number(gpu.memory_total_mib), 1) * 100;
-    const level = percent >= 90 ? "critical" : percent >= 75 ? "high" : "";
-    const used = (gpu.memory_used_mib / 1024).toFixed(1);
-    const total = (gpu.memory_total_mib / 1024).toFixed(0);
-    const index = gpu.id.split(":")[1];
-    const free = Number.isFinite(Number(gpu.memory_free_mib))
-      ? Number(gpu.memory_free_mib)
-      : Number(gpu.memory_total_mib) - Number(gpu.memory_used_mib);
-    return `<div class="gpu-chip ${level}" title="${escapeHtml(gpu.name)} · 剩余 ${(free / 1024).toFixed(1)} GB"><div class="gpu-chip-head"><span>GPU ${index}</span><strong>${used} / ${total} GB</strong></div><div class="gpu-memory-track"><span style="width:${Math.min(percent, 100)}%"></span></div></div>`;
+function renderJobs() {
+  $("#run-count").textContent = state.jobs.length;
+  $("#job-list").innerHTML = state.jobs.map((job) => {
+    const check = state.editing
+      ? '<input class="job-check" type="checkbox" ' +
+        (state.selected.has(job.id) ? "checked" : "") + ">"
+      : "";
+    return '<button class="job-item ' + (job.id === state.selectedId ? "active" : "") +
+      '" data-id="' + job.id + '">' + check + "<span><strong>" +
+      escapeHtml(job.request.name) + "</strong><small>" +
+      (job.request.strategy === "bnhmm" ? "BNHMM" : "FK-贝叶斯") + " · " +
+      statusText(job.status) + " · " +
+      (job.summary?.symbols ?? job.request.symbols.length) + " 只</small></span></button>";
   }).join("");
-}
-
-function formPayload() {
-  const form = document.querySelector("#experiment-form");
-  syncStrategyControlAvailability();
-  const data = new FormData();
-  for (const element of form.querySelectorAll("[name]")) {
-    if (element.disabled) continue;
-    if (["checkbox", "radio"].includes(element.type) && !element.checked) continue;
-    data.append(element.name, element.value);
-  }
-  const payload = {};
-  for (const [name, value] of data.entries()) {
-    if (name === "symbols") {
-      payload.symbols = value.split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
-    } else if (name === "sector_flow_path_windows") {
-      payload[name] = value.split(",").map(item => Number(item.trim())).filter(Number.isFinite);
-    } else if (numberFields.has(name)) {
-      payload[name] = value === "" && ["max_folds", "factor_process_variance"].includes(name) ? null : Number(value);
+  $$(".job-item").forEach((button) => button.addEventListener("click", (event) => {
+    const id = button.dataset.id;
+    if (state.editing) {
+      event.preventDefault();
+      state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
+      renderJobs();
     } else {
-      payload[name] = value;
+      selectJob(id);
     }
-  }
-  const deterministicField = preferredFormControl(form, "deterministic_training");
-  if (deterministicField && !deterministicField.disabled) {
-    payload.deterministic_training = deterministicField.checked;
-  }
-  if (["holo-bnhmm", "holo-bnhmm-lite", "holo-repair"].includes(currentStrategy())) {
-    payload.holographic_fields = currentStrategy() === "holo-bnhmm-lite"
-      ? ["density", "price_current", "volume_current", "divergence", "vorticity"]
-      : ["density", "price_current", "volume_current", "price_temperature", "volume_temperature", "covariance_flux", "divergence", "vorticity"];
-    payload.holographic_conv_layers = currentStrategy() === "holo-bnhmm-lite" ? 1 : 2;
-  }
-  if (currentStrategy() === "percolation-branching") {
-    const dataset = state.datasets.find(item => item.dataset_id === payload.dataset_id);
-    if (dataset) {
-      payload.database_path = dataset.database_path;
-      payload.symbols = [...dataset.symbols];
-    }
-    payload.maximum_lag_minutes = 3;
-    payload.topology_lookback_sessions = 60;
-    payload.training_scope = "sector-pooled";
-    payload.device = "cpu";
-  }
-  return payload;
-}
-
-async function submitExperiment(event) {
-  event.preventDefault();
-  const error = document.querySelector("#form-error");
-  const button = document.querySelector("#run-button");
-  error.textContent = "";
-  button.disabled = true;
-  try {
-    const job = await api("/api/jobs", { method: "POST", body: JSON.stringify(formPayload()) });
-    state.selectedId = job.id;
-    await refreshAll();
-    setNextExperimentName();
-    document.querySelector("#config-panel").classList.remove("open");
-  } catch (exception) {
-    error.textContent = exception.message;
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function refreshAll() {
-  if (state.polling) return;
-  state.polling = true;
-  try {
-    const [jobs, gpuPayload] = await Promise.all([
-      api("/api/jobs"),
-      api("/api/gpus").catch(() => api("/api/config").then(config => ({ devices: config.devices }))),
-    ]);
-    state.jobs = jobs;
-    updateDevices(gpuPayload.devices);
-    if (!state.jobs.some(job => job.id === state.selectedId)) {
-      state.selectedId = state.jobs[0]?.id || null;
-    }
-    renderJobList();
-    if (state.selectedId) {
-      const job = await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`);
-      renderJob(job);
-    } else {
-      renderEmptyState();
-    }
-    renderGlobalStatus();
-    if (currentStrategy() === "boundary-flow-fk") await refreshBoundaryDataStatus();
-  } catch (exception) {
-    document.querySelector("#job-subtitle").textContent = exception.message;
-  } finally {
-    state.polling = false;
-  }
-}
-
-function renderEmptyState() {
-  document.querySelector("#empty-state").classList.remove("hidden");
-  document.querySelector("#job-view").classList.add("hidden");
-  document.querySelector("#job-subtitle").textContent = "开始新的实验";
-}
-
-function renderJobList() {
-  const list = document.querySelector("#job-list");
-  document.querySelector("#run-count").textContent = state.jobs.length;
-  const activeIds = new Set(
-    state.jobs
-      .filter(job => ["queued", "running"].includes(job.status))
-      .map(job => job.id),
-  );
-  const existingIds = new Set(state.jobs.map(job => job.id));
-  for (const identifier of state.historySelected) {
-    if (!existingIds.has(identifier) || activeIds.has(identifier)) {
-      state.historySelected.delete(identifier);
-    }
-  }
-  renderHistoryEditor(activeIds);
-  list.replaceChildren(...state.jobs.map(job => {
-    const strategy = job.request.strategy === "holo-repair"
-      ? job.request.repair_variant
-      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow", "boundary-flow-fk": "板块方向 FK" })[job.request.strategy] || job.request.strategy;
-    const symbolCount = job.summary?.symbols ?? job.request.symbols.length;
-    const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${symbolCount} 股</div>`;
-    if (state.historyEditing) {
-      const label = document.createElement("label");
-      const disabled = activeIds.has(job.id) || state.historyDeleting;
-      label.className = `job-item selection-mode${state.historySelected.has(job.id) ? " selected" : ""}${disabled ? " disabled" : ""}`;
-      label.title = activeIds.has(job.id) ? "运行中的任务不能删除" : "";
-      label.innerHTML = `<input class="history-job-checkbox" type="checkbox" ${state.historySelected.has(job.id) ? "checked" : ""} ${disabled ? "disabled" : ""}><div class="job-item-content">${content}</div>`;
-      label.querySelector("input").addEventListener("change", event => {
-        if (event.target.checked) state.historySelected.add(job.id);
-        else state.historySelected.delete(job.id);
-        renderJobList();
-      });
-      return label;
-    }
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `job-item${job.id === state.selectedId ? " active" : ""}`;
-    button.innerHTML = content;
-    button.addEventListener("click", () => {
-      state.selectedId = job.id;
-      refreshAll();
-    });
-    return button;
   }));
-  icons();
+  updateSelection();
 }
 
-function renderHistoryEditor(activeIds) {
-  const editButton = document.querySelector("#edit-history-button");
-  editButton.innerHTML = state.historyEditing
-    ? '<i data-lucide="check"></i>'
-    : '<i data-lucide="pencil"></i>';
-  const editLabel = state.historyEditing ? "完成编辑" : "编辑历史测试";
-  editButton.title = editLabel;
-  editButton.setAttribute("aria-label", editLabel);
-  editButton.disabled = state.historyDeleting;
-  const eligible = state.jobs.filter(job => !activeIds.has(job.id));
-  const selectedEligible = eligible.filter(job => state.historySelected.has(job.id));
-  const deleteButton = document.querySelector("#batch-delete-button");
-  deleteButton.disabled = !state.historyEditing || selectedEligible.length === 0 || state.historyDeleting;
-  deleteButton.title = state.historyDeleting ? "删除中" : "删除选中的测试";
-  deleteButton.setAttribute("aria-label", deleteButton.title);
-  const actions = document.querySelector("#history-batch-actions");
-  actions.classList.toggle("hidden", !state.historyEditing);
-  if (!state.historyEditing) return;
-  const selectAll = document.querySelector("#history-select-all");
-  selectAll.checked = eligible.length > 0 && selectedEligible.length === eligible.length;
-  selectAll.indeterminate = selectedEligible.length > 0 && selectedEligible.length < eligible.length;
-  selectAll.disabled = eligible.length === 0 || state.historyDeleting;
-  document.querySelector("#history-selected-count").textContent = `已选 ${selectedEligible.length}`;
+async function refreshJobs() {
+  state.jobs = await api("/api/jobs");
+  renderJobs();
+  $("#global-status").textContent = state.jobs.some((item) => item.status === "running")
+    ? "运行中" : "空闲";
+  if (state.selectedId) await selectJob(state.selectedId, false);
 }
 
-function renderGlobalStatus() {
-  const active = state.jobs.filter(job => ["queued", "running"].includes(job.status)).length;
-  const badge = document.querySelector("#global-status");
-  badge.className = `status-badge ${active ? "running" : "neutral"}`;
-  badge.textContent = active ? `${active} 个任务` : "空闲";
+function setTab(name) {
+  $$("#result-tabs button").forEach((button) =>
+    button.classList.toggle("active", button.dataset.tab === name));
+  $$(".result-panel").forEach((panel) =>
+    panel.classList.toggle("hidden", panel.dataset.panel !== name));
 }
 
-function renderJob(job) {
-  document.querySelector("#empty-state").classList.add("hidden");
-  document.querySelector("#job-view").classList.remove("hidden");
-  document.querySelector("#run-title").textContent = job.request.name;
-  document.querySelector("#job-subtitle").textContent = job.id;
-  const badge = document.querySelector("#run-status");
-  badge.className = `status-badge ${job.status}`;
-  badge.textContent = statusText[job.status];
-  const stock = job.request.strategy === "stock-transformer";
-  const fk = job.request.strategy === "fk-stock";
-  const sectorFlow = job.request.strategy === "sector-flow-bayes";
-  const boundaryFlow = job.request.strategy === "boundary-flow-fk";
-  const percolation = job.request.strategy === "percolation-branching";
-  const holoLite = job.request.strategy === "holo-bnhmm-lite";
-  const repair = job.request.strategy === "holo-repair";
-  const holo = job.request.strategy === "holo-bnhmm" || holoLite || repair;
-  const dataset = state.datasets.find(
-    item => item.dataset_id === job.request.dataset_id,
-  );
-  if (percolation) {
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 双向分枝网络 · 固定 1–3 分钟传播 · 60 日月度骨架 · ${formatInteger(job.request.percolation_posterior_paths)} 条后验路径 · CPU`;
-  } else if (boundaryFlow) {
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 路径效率 FK · 整板块单一日状态 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
-  } else if (sectorFlow) {
-    const water = job.summary?.latest_water_state || {};
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 1分钟同步 · 最大滞后 ${job.request.maximum_lag_minutes} 分钟 · 水势 ${formatNumber(water.flow_strength, 3)} · ${job.request.normalization_lookback_sessions}日因果归一化`;
-  } else if (fk) {
-    const fields = job.summary?.folds?.at(-1)?.outer_field_diagnostics;
-    const fieldText = fields
-      ? `μ=${formatNumber(fields.effective_drift_mean, 4)} · σ²=${formatNumber(fields.diffusion_variance_mean, 4)}`
-      : "单特征贝叶斯生成元";
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 滚动扩散 → 贝叶斯后验 · ${fieldText} · 1 个有效输入`;
-  } else if (stock) {
-    const law = job.summary?.folds?.at(-1)?.conservation_law;
-    const tokens = job.summary?.folds?.at(-1)?.token_diagnostics;
-    const lawText = law
-      ? `D=${formatNumber(law.diffusion, 4)} · v=${formatNumber(law.drift, 4)} · noise=${formatNumber(law.noise_scale, 4)}`
-      : `${job.request.conservation_grid_points}点守恒网格`;
-    const tokenText = tokens
-      ? `日均 ${formatNumber(tokens.mean_tokens_per_day, 1)} Token · ${formatNumber(tokens.mean_sentences_per_day, 1)} 句`
-      : `最多 ${job.request.maximum_tokens} Token/日`;
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 随机连续性方程 → 守恒分词/断句 → StockTransformer · ${lawText} · ${tokenText} · ${job.request.sequence_length}日记忆 · ${job.request.device}`;
-  } else {
-  const stateMode = job.request.state_timeframe === "mixed"
-    ? "小时 + 日状态"
-    : "日状态（1分钟线生成）";
-  const profileMode = ["price-volume-holographic-flow-v1", "price-volume-holographic-lite-v1"].includes(job.request.profile_protocol)
-    ? `${job.request.bin_width_bps} BP × ${job.request.holographic_volume_bins} 档成交活跃度 · 二维散度/旋度场`
-    : job.request.profile_protocol === "phase-space-10m-local-flow-v8"
-    ? `${job.request.bin_width_bps} BP 局部联合速度场 · ${job.request.normalization_lookback_sessions}日归一化`
-    : ["phase-space-10m-joint-return-v7", "phase-space-joint-return-v6"].includes(job.request.profile_protocol)
-      ? `${job.request.bin_width_bps} BP 联合速度相空间 · ${job.request.normalization_lookback_sessions}日归一化`
-    : job.request.profile_protocol === "phase-space-joint-v5"
-      ? `${job.request.bin_width_bps} BP 旧联合速度相空间`
-    : job.request.profile_protocol === "phase-space-gated-v4"
-      ? `${job.request.bin_width_bps} BP 旧边际速度相空间`
-    : job.request.profile_protocol === "phase-space-log-v3"
-      ? `${job.request.bin_width_bps} BP 旧22通道相空间`
-      : job.request.profile_protocol === "legacy-fixed-bins"
-        ? "旧固定柱协议"
-        : `${job.request.bin_width_bps} BP 可变日态（旧）`;
-  const modelName = repair
-    ? job.request.repair_variant
-    : holo ? (holoLite ? "HoloLite" : "HoloBNHMM") : "BNHMM";
-  const modelScope = ({
-    "per-symbol": `逐标的独立 ${modelName}`,
-    "sector-pooled": `${dataset?.name || job.request.dataset_id || "板块"}联合 ${modelName}`,
-    "shared-legacy": "多标的共享模型（旧）",
-  })[job.request.training_scope] || job.request.training_scope;
-  const latentStates = job.request.latent_states ?? 10;
-  const featureMode = holo ? (holoLite ? "二维核心场轻量模型" : "二维价格-成交活跃度全息流场") : ({
-    "gated-full": "价格主干 + 门控成交量/联合速度",
-    "price-only": "仅价格",
-    "price-volume": "价格 + 成交量",
-    "price-velocity": "价格 + Z2 流态（推荐）",
-    "legacy-entangled": "旧混合特征",
-  })[job.request.feature_mode] || "旧混合特征";
-  const auxiliaryMode = holo
-    ? `${job.request.holographic_fields?.length ?? (holoLite ? 5 : 8)} 个局部场 · 平滑 ${Number(job.request.holographic_smoothing ?? 0.75).toFixed(2)}`
-    : job.request.feature_mode === "price-only"
-    ? "辅助分支关闭"
-    : `辅助门 ${Number(job.request.auxiliary_gate_initial ?? 0.05).toFixed(2)} 初始 / ${Number(job.request.auxiliary_gate_floor ?? 0).toFixed(2)} 下限 / ${job.request.auxiliary_warmup_epochs ?? 0} 轮全权重`;
-  const outputMode = ["price-volume-holographic-flow-v1", "price-volume-holographic-lite-v1", "phase-space-10m-local-flow-v8", "phase-space-10m-joint-return-v7", "phase-space-joint-return-v6"].includes(job.request.profile_protocol)
-    ? ((job.summary?.class_support?.length ?? 4) === 3
-      ? "连续收益后验 → 空/平/多（旧）"
-      : "连续收益后验 → 强空/弱空/弱多/强多")
-    : "旧三分类证据头";
-  const outputHead = job.summary?.model_config?.output_hidden_states
-    ? `${job.summary.model_config.output_hidden_states} 隐藏节点（旧）`
-    : "动态先验 + 收益/序数双头";
-  const thresholds = job.summary?.regime_protocol?.thresholds || [];
-  const thresholdText = thresholds.length === 2
-    ? `平状态 ${formatPercent(Math.abs(Number(thresholds[1])))}`
-    : job.request.strong_threshold_sigma == null
-      ? `强弱分界 ±${Number(job.request.strong_threshold_percent ?? 1.5).toFixed(2)}%（旧）`
-      : `强弱分界 ±${Number(job.request.strong_threshold_sigma).toFixed(2)}σ · ${job.request.return_standardization_lookback}日标准化`;
-  document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${job.request.symbols.join(", ")} · ${modelScope} · ${featureMode} · ${auxiliaryMode} · ${latentStates} 隐状态 → ${outputHead} · ${outputMode} · ${thresholdText} · ${stateMode} · ${profileMode} · ${job.request.device}`;
-  }
-  renderJobGpuMemory(job);
+async function artifactJson(job, names) {
+  const name = names.find((item) => job.artifacts[item]);
+  return name ? api(job.artifacts[name]) : null;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"]/g, (char) =>
+    ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[char]));
+}
+
+function jsonBlock(value) {
+  return value == null
+    ? '<div class="empty-state">暂无结果</div>'
+    : "<pre>" + escapeHtml(JSON.stringify(value, null, 2)) + "</pre>";
+}
+
+function imageBlock(url, alt) {
+  return url
+    ? '<img class="result-image" src="' + url + '" alt="' + alt + '">'
+    : '<div class="empty-state">暂无结果</div>';
+}
+
+function isJobFk(job) {
+  return job.request.strategy === "boundary-flow-fk";
+}
+
+async function renderArtifacts(job) {
+  const evaluation = await artifactJson(job, isJobFk(job)
+    ? ["sector-direction-evaluation.json", "boundary-policy-evaluation.json"]
+    : ["evaluation.json"]);
+  const predictions = await artifactJson(job, isJobFk(job)
+    ? ["feynman-kac-predictions.json"] : ["predictions.json"]);
+  const posterior = await artifactJson(job, isJobFk(job)
+    ? ["boundary-model-posterior.json"] : ["fk-diagnostics.json"]);
+  const summary = await artifactJson(job, ["run-summary.json"]);
+  const residual = await artifactJson(job, ["boundary-residual-analysis.json"]);
+  $("#evaluation-content").innerHTML = jsonBlock(evaluation);
+  $("#predictions-content").innerHTML = jsonBlock(predictions);
+  $("#posterior-content").innerHTML = jsonBlock(posterior);
+  $("#summary-content").innerHTML = jsonBlock(summary);
+  $("#residuals-content").innerHTML = residual
+    ? jsonBlock(residual) : imageBlock(job.artifacts["residuals.png"], "残差图");
+  $("#returns-content").innerHTML = job.artifacts["equity_drawdown.png"]
+    ? imageBlock(job.artifacts["equity_drawdown.png"], "净值与回撤")
+    : jsonBlock(await artifactJson(job, ["boundary-policy-evaluation.json"]));
+}
+
+async function selectJob(id, rerender = true) {
+  state.selectedId = id;
+  const job = await api("/api/jobs/" + encodeURIComponent(id));
+  $("#empty-state").classList.add("hidden");
+  $("#job-view").classList.remove("hidden");
+  $("#run-title").textContent = job.request.name;
+  $("#run-meta").textContent = (isJobFk(job) ? "FK-贝叶斯" : "BNHMM") + " · " +
+    job.request.start + " 至 " + job.request.end + " · " + statusText(job.status);
+  $("#job-subtitle").textContent = job.error || job.output_dir;
+  $("#job-log").textContent = job.log || "";
   const active = ["queued", "running"].includes(job.status);
-  document.querySelector("#cancel-button").classList.toggle("hidden", !active);
-  document.querySelector("#progress-band").classList.toggle("hidden", !active);
-  document.querySelector("#progress-label").textContent = job.status === "queued"
-    ? (percolation ? "等待渗流分枝任务" : boundaryFlow ? "等待板块方向 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
-    : percolation ? "渗流分枝月度样本外计算中" : boundaryFlow ? "板块方向 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
-  document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
-  document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
-  renderResultScope(job);
-  renderSelectedResult(job);
-  icons();
+  $("#cancel-button").classList.toggle("hidden", !active);
+  $("#cancel-button").onclick = async () => {
+    await api("/api/jobs/" + encodeURIComponent(job.id) + "/cancel", {method: "POST"});
+    await refreshJobs();
+  };
+  $("#progress-band").classList.toggle("hidden", !active);
+  const progress = job.progress || {};
+  $("#progress-label").textContent = progress.message || statusText(job.status);
+  $("#progress-value").value = Math.round((progress.fraction || 0) * 100);
+  $("#elapsed-time").textContent = progress.elapsed_seconds
+    ? Math.round(progress.elapsed_seconds) + " 秒" : "";
+  $("#gpu-monitor").textContent = job.peak_gpu_memory_mib
+    ? "显存 " + job.current_gpu_memory_mib + " / 峰值 " +
+      job.peak_gpu_memory_mib + " MiB" : "";
+  await renderArtifacts(job);
+  if (rerender) renderJobs();
 }
 
-function resultScope(job) {
-  const requested = state.resultScopeByJob.get(job.id) || "portfolio";
-  return requested === "portfolio" || job.symbol_artifacts?.[requested]
-    ? requested
-    : "portfolio";
-}
-
-function renderResultScope(job) {
-  const section = document.querySelector("#result-scope");
-  const symbols = Object.keys(job.symbol_artifacts || {});
-  const independent = job.request.training_scope === "per-symbol" && symbols.length > 0;
-  section.classList.toggle("hidden", !independent);
-  if (!independent) return;
-
-  const selected = resultScope(job);
-  document.querySelector("#result-scope-note").textContent = selected === "portfolio"
-    ? "当前显示各独立模型的组合汇总"
-    : `当前只显示 ${selected} 的独立模型结果`;
-  document.querySelector("#result-scope-badge").textContent = selected === "portfolio"
-    ? "组合汇总"
-    : "单股独立模型";
-
-  const choices = [
-    { value: "portfolio", label: "组合总览" },
-    ...symbols.map(symbol => ({ value: symbol, label: symbol })),
-  ];
-  const tabs = document.querySelector("#scope-tabs");
-  tabs.replaceChildren(...choices.map(choice => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `scope-tab${choice.value === selected ? " active" : ""}`;
-    button.textContent = choice.label;
-    button.setAttribute("role", "tab");
-    button.setAttribute("aria-selected", String(choice.value === selected));
-    button.addEventListener("click", () => {
-      state.resultScopeByJob.set(job.id, choice.value);
-      renderResultScope(job);
-      renderSelectedResult(job);
+async function submit(event) {
+  event.preventDefault();
+  $("#form-error").textContent = "";
+  try {
+    const job = await api("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify(serializeForm()),
     });
-    return button;
-  }));
-}
-
-function renderSelectedResult(job) {
-  const sectorFlow = job.request.strategy === "sector-flow-bayes";
-  const boundaryFlow = job.request.strategy === "boundary-flow-fk";
-  const percolation = job.request.strategy === "percolation-branching";
-  document.querySelector("#sector-flow-results").classList.toggle("hidden", !sectorFlow);
-  document.querySelector("#boundary-flow-results").classList.toggle("hidden", !boundaryFlow);
-  document.querySelector("#percolation-results").classList.toggle("hidden", !percolation);
-  const activePanel = document.querySelector(".tab.active")?.dataset.tab || "overview";
-  document.querySelectorAll(".standard-result-only").forEach(element => {
-    if (sectorFlow || boundaryFlow || percolation) element.classList.add("hidden");
-    else if (element.matches(".tab-panel")) element.classList.toggle("hidden", element.dataset.panel !== activePanel);
-    else element.classList.remove("hidden");
-  });
-  if (percolation) {
-    renderPercolationResult(job);
-    return;
-  }
-  if (boundaryFlow) {
-    renderBoundaryFlowResult(job);
-    return;
-  }
-  if (sectorFlow) {
-    renderSectorFlowResult(job);
-    return;
-  }
-  const scope = resultScope(job);
-  if (scope === "portfolio") {
-    document.querySelector("#insight-label").textContent = job.summary?.model_scope === "per-symbol"
-      ? "独立模型组合结论"
-      : "本次结论";
-    renderInsight(job.summary);
-    renderMetrics(job.summary);
-    renderSymbolMetrics(job.summary?.per_symbol || []);
-    renderFolds(job.summary?.folds || []);
-    renderArtifacts(job, job.artifacts || {});
-    return;
-  }
-
-  const row = job.summary?.per_symbol?.find(item => item.symbol === scope) || {};
-  const fallback = {
-    ...row,
-    symbol: scope,
-    model_scope: "single-symbol",
-    regime_protocol: job.summary?.regime_protocol,
-  };
-  const key = `${job.id}:${scope}`;
-  const cached = state.symbolReportCache.get(key);
-  const summary = cached ? {
-    ...cached,
-    symbol: scope,
-    model_scope: "single-symbol",
-    regime_protocol: job.summary?.regime_protocol,
-    oos_predictions: cached.observation_count,
-  } : fallback;
-  renderSymbolResult(job, scope, summary);
-
-  const evaluationUrl = job.symbol_artifacts?.[scope]?.["evaluation.json"];
-  if (!evaluationUrl || state.symbolReportCache.has(key)) return;
-  state.symbolReportCache.set(key, null);
-  const activeButton = document.querySelector(`.scope-tab.active`);
-  activeButton?.classList.add("loading");
-  api(evaluationUrl).then(report => {
-    state.symbolReportCache.set(key, report);
-    if (state.selectedId !== job.id || resultScope(job) !== scope) return;
-    renderSymbolResult(job, scope, {
-      ...report,
-      symbol: scope,
-      model_scope: "single-symbol",
-      regime_protocol: job.summary?.regime_protocol,
-      oos_predictions: report.observation_count,
-    });
-    renderResultScope(job);
-  }).catch(() => {
-    state.symbolReportCache.delete(key);
-    activeButton?.classList.remove("loading");
-  });
-}
-
-function renderBoundaryFlowResult(job) {
-  const status = document.querySelector("#boundary-flow-result-status");
-  const evaluationUrl = job.artifacts?.["boundary-policy-evaluation.json"];
-  const predictionsUrl = job.artifacts?.["feynman-kac-predictions.json"];
-  const posteriorUrl = job.artifacts?.["boundary-model-posterior.json"];
-  const residualUrl = job.artifacts?.["boundary-residual-analysis.json"];
-  const potentialUrl = job.artifacts?.["convection-potential-evaluation.json"];
-  const directionReportUrl = job.artifacts?.["sector-direction-evaluation.json"];
-  const downloads = {
-    "path-efficiency-fk-report.md": "中文报告",
-    "path-efficiency-convection-potential-report.md": "一日反向流量外势报告",
-    "boundary-policy-evaluation.json": "策略评估",
-    "convection-potential-evaluation.json": "一日反向流量外势统计",
-    "feynman-kac-predictions.json": "样本外预测",
-    "boundary-model-posterior.json": "模型后验",
-    "boundary-residual-analysis.json": "残差分析",
-    "boundary-daily-states.json": "每日板块状态",
-    "sector-direction-evaluation.json": "方向评估",
-    "run-summary.json": "运行摘要",
-  };
-  document.querySelector("#boundary-flow-downloads").innerHTML = Object.entries(downloads)
-    .filter(([name]) => job.artifacts?.[name])
-    .map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`)
-    .join("");
-
-  const cached = state.boundaryResultCache.get(job.id);
-  if (cached?.error) {
-    status.textContent = `结果读取失败：${cached.error}`;
-    return;
-  }
-  if (cached?.stages && cached?.predictions) {
-    paintBoundaryFlowResult(job, cached);
-    return;
-  }
-  if (!evaluationUrl || !predictionsUrl) {
-    status.textContent = job.status === "failed"
-      ? "运行失败，请查看日志"
-      : ["queued", "running"].includes(job.status) ? "板块方向 FK 样本外计算中" : "暂无可读取的结果制品";
-    document.querySelector("#boundary-probabilities").replaceChildren();
-    document.querySelector("#boundary-dynamics").replaceChildren();
-    document.querySelector("#boundary-prediction-table").replaceChildren();
-    document.querySelector("#boundary-gate-reason").textContent = "";
-    return;
-  }
-  if (cached?.loading) {
-    status.textContent = "正在读取样本外结果";
-    return;
-  }
-
-  state.boundaryResultCache.set(job.id, { loading: true });
-  status.textContent = "正在读取样本外结果";
-  Promise.all([
-    api(evaluationUrl),
-    api(predictionsUrl),
-    posteriorUrl ? api(posteriorUrl) : Promise.resolve([]),
-    residualUrl ? api(residualUrl) : Promise.resolve({}),
-    potentialUrl ? api(potentialUrl) : Promise.resolve({}),
-    directionReportUrl ? api(directionReportUrl) : Promise.resolve({}),
-  ]).then(([stages, predictions, posterior, residual, potential, directionReport]) => {
-    const payload = {
-      stages: Array.isArray(stages) ? stages : [],
-      predictions: Array.isArray(predictions) ? predictions : [],
-      posterior: Array.isArray(posterior) ? posterior : [],
-      residual: residual || {},
-      potential: potential || {},
-      directionReport: directionReport || {},
-    };
-    state.boundaryResultCache.set(job.id, payload);
-    if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload);
-  }).catch(exception => {
-    state.boundaryResultCache.set(job.id, { error: exception.message });
-    if (state.selectedId === job.id) status.textContent = `结果读取失败：${exception.message}`;
-  });
-}
-
-function switchBoundaryResultTab(name, jobId = state.selectedId) {
-  if (jobId) state.boundaryTabByJob.set(jobId, name);
-  document.querySelectorAll("[data-boundary-tab]").forEach(button => {
-    const selected = button.dataset.boundaryTab === name;
-    button.classList.toggle("active", selected);
-    button.setAttribute("aria-selected", String(selected));
-  });
-  document.querySelectorAll("[data-boundary-panel]").forEach(panel => {
-    panel.classList.toggle("hidden", panel.dataset.boundaryPanel !== name);
-  });
-}
-
-function boundaryMetric(label, value, note = "") {
-  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ""}</div>`;
-}
-
-function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
-  const strategyReturn = Number(metrics.net_total_return);
-  const baselineReturn = Number(baselineMetrics.net_total_return);
-  const strategyDrawdown = Math.abs(Number(metrics.maximum_drawdown));
-  const baselineDrawdown = Math.abs(Number(baselineMetrics.maximum_drawdown));
-  const returnDelta = strategyReturn - baselineReturn;
-  const drawdownImprovement = baselineDrawdown - strategyDrawdown;
-
-  if (![strategyReturn, baselineReturn, strategyDrawdown, baselineDrawdown].every(Number.isFinite)) {
-    return {
-      title: "基线数据不完整，暂时无法判断是否改进",
-      level: "caution",
-      returnDelta,
-      drawdownImprovement,
-      passed: false,
-    };
-  }
-  if (returnDelta > 0) {
-    return {
-      title: "最强 1/2 超过全板块策略",
-      level: "positive",
-      returnDelta,
-      drawdownImprovement,
-      passed: true,
-    };
-  }
-  return {
-    title: drawdownImprovement > 0
-      ? "最强 1/2 降低回撤，但没有提高收益，未通过改进标准"
-      : "最强 1/2 未改善全板块策略，未通过改进标准",
-    level: drawdownImprovement > 0 ? "caution" : "negative",
-    returnDelta,
-    drawdownImprovement,
-    passed: false,
-  };
-}
-
-function selectBoundaryStages(stages) {
-  const completed = stages.filter(item => item?.status === "completed" && item?.model_name);
-  const strategy = completed.find(item => item.model_name === "SectorFK-FeatureEvidence")
-    || completed[0] || stages[0] || {};
-  const baseline = completed.find(item => item.model_name === "SectorFK-LabelAligned")
-    || completed.find(item => item.model_name !== strategy.model_name) || {};
-  return { strategy, baseline };
-}
-
-function boundaryModelLabel(modelName) {
-  const name = String(modelName || "");
-  if (name.includes("SectorFK-LabelAligned")) return "标签口径对齐（基础漂移）";
-  if (name.includes("SectorFK-BayesianHurdle")) return "两阶段贝叶斯（显著波动 + 多空）";
-  if (name.includes("SectorFK-FeatureEvidence")) return "特征证据门控（当前默认）";
-  if (name.includes("SectorFK-Regime")) return "延续 / 反转状态（实验已否决）";
-  if (name.includes("SectorFK-PathFull")) return "路径、同步率与短期记忆";
-  if (name.includes("SectorFK-PathMemory")) return "路径效率与短期记忆";
-  if (name.includes("SectorFK-PathSync")) return "路径效率与同步率";
-  if (name.includes("SectorFK-PathOnly")) return "纯路径效率";
-  if (name.includes("StrongestHalf")) return "历史最强前 1/2";
-  if (name.includes("Beta0PlusC1-Baseline")) return "历史 β0 + C1 基线";
-  if (name.includes("PathEfficiencyFK-60D-OneDayPotential")) return "β0 + C1 外势 FK";
-  if (name.includes("Baseline")) return "纯路径效率基线";
-  return name || "未命名阶段";
-}
-
-function boundaryFailureReason(reason) {
-  const labels = {
-    "fewer than 30 tradable bull/bear signals": "多空信号少于 30 个",
-    "fewer than 15 predicted signals on each bull/bear side": "预测多或预测空少于 15 个",
-    "tradable direction accuracy did not beat its matched majority baseline": "命中率未超过同样本多数方向",
-    "tradable bull/bear balanced accuracy did not beat 50 percent": "多空平衡正确率未超过 50%",
-  };
-  return labels[String(reason || "")] || String(reason || "");
-}
-
-function paintSectorDirectionComparison(report) {
-  const table = document.querySelector("#boundary-direction-comparison");
-  if (!table) return;
-  const baselines = report?.baselines || {};
-  const baselineRows = [
-    ["昨日方向基线", baselines.previous_day_direction],
-    ["当日路径效率方向", baselines.path_efficiency_direction],
-  ].map(([label, accuracy]) => `<tr><td>${label}</td><td>${formatPercent(accuracy)}</td><td>—</td><td>—</td><td>100.00%</td><td>—</td><td>—</td><td>—</td><td>参照</td></tr>`);
-  const modelRows = (report?.models || []).map(item => {
-    const metrics = item.metrics || {};
-    const verdict = item.model_name === "SectorFK-Regime"
-      ? "实验否决"
-      : item.passed ? "通过" : "未通过";
-    return `<tr><td>${escapeHtml(boundaryModelLabel(item.model_name))}</td><td>${formatPercent(metrics.direction_signal_accuracy)}</td><td>${formatPercent(metrics.direction_signal_majority_baseline)}</td><td>${formatPercent(metrics.direction_signal_balanced_accuracy)}</td><td>${formatPercent(metrics.direction_signal_coverage)}</td><td>${formatInteger(metrics.direction_signal_count)}</td><td>${formatInteger(metrics.direction_signal_bull_count)}</td><td>${formatInteger(metrics.direction_signal_bear_count)}</td><td title="${escapeHtml(boundaryFailureReason(item.failure_reason))}">${verdict}</td></tr>`;
-  });
-  table.innerHTML = [...baselineRows, ...modelRows].join("");
-}
-
-function paintBoundaryFlowResult(job, payload) {
-  const { stages, predictions: allPredictions, posterior, residual, potential, directionReport } = payload;
-  const selectedStages = selectBoundaryStages(stages);
-  const stage = selectedStages.strategy;
-  const baselineStage = selectedStages.baseline;
-  const potentialModel = stage.model_name || "";
-  const baselineModel = baselineStage.model_name || "";
-  const predictions = allPredictions.filter(item => item.model_version === potentialModel);
-  const baselinePredictions = allPredictions.filter(item => item.model_version === baselineModel);
-  const strategyLabel = boundaryModelLabel(potentialModel);
-  const baselineLabel = boundaryModelLabel(baselineModel);
-  document.querySelector("#boundary-result-title").textContent = `${strategyLabel} · 固定主模型`;
-  const metrics = stage.metrics || {};
-  const baselineMetrics = baselineStage.metrics || {};
-  const latest = predictions.at(-1);
-  const trailingStopEvents = predictions.filter(item => item.trailing_stop_pending).length;
-  const trailingStopExitDays = predictions.filter(item => item.trailing_stop_forced_exit).length;
-  document.querySelector("#boundary-flow-result-status").textContent =
-    `${formatInteger(predictions.length)} 个样本外交易日 · ${strategyLabel}`;
-
-  const passed = Boolean(stage.passed);
-  document.querySelector("#boundary-evaluation-summary").innerHTML = `
-    <span>多空交易结论</span><strong>${passed ? "特征增量证据通过交易门槛" : "特征增量证据尚未形成稳定优势"}</strong>
-    <p>真实平盘日不评分，模型看平视为弃权。至少 30 个多空信号，预测多和预测空各不少于 15 个，同时超过同样本多数方向，才算具有交易方向信息。</p>`;
-  document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${passed ? "positive" : "caution"}`;
-  document.querySelector("#boundary-evaluation-metrics").innerHTML = [
-    boundaryMetric("真实多空交易日", formatInteger(metrics.directional_observations), "真实平盘日已剔除"),
-    boundaryMetric("实际多空信号", formatInteger(metrics.direction_signal_count), "模型看平不计为预测正确"),
-    boundaryMetric("预测多", formatInteger(metrics.direction_signal_bull_count), "防止只靠单边看多取得表面高准确率"),
-    boundaryMetric("预测空", formatInteger(metrics.direction_signal_bear_count), "多、空两侧都必须至少 15 个"),
-    boundaryMetric("多空信号覆盖率", formatPercent(metrics.direction_signal_coverage), "多空信号数 ÷ 真实多空交易日"),
-    boundaryMetric("多空命中率", formatPercent(metrics.direction_signal_accuracy), "只统计实际发出的空或多信号"),
-    boundaryMetric("同样本多空多数基线", formatPercent(metrics.direction_signal_majority_baseline), "在完全相同的信号日期只猜多数方向"),
-    boundaryMetric("多空平衡正确率", formatPercent(metrics.direction_signal_balanced_accuracy), "看多与看空召回率取平均"),
-  ].join("");
-  paintSectorDirectionComparison(directionReport);
-
-  if (!latest) {
-    document.querySelector("#boundary-probabilities").innerHTML = '<p class="boundary-empty">没有样本外预测。</p>';
-    document.querySelector("#boundary-dynamics").replaceChildren();
-    document.querySelector("#boundary-gate-reason").textContent = "没有产生可展示的板块预测。";
-    return;
-  }
-
-  const states = ["空", "平", "多"];
-  const sector = latest.sector || latest.branches?.[0] || null;
-  const probabilities = sector?.state_probabilities || [];
-  const directionLabel = ({ bear: "空", flat: "平", bull: "多" })[sector?.direction] || "—";
-  document.querySelector("#boundary-probabilities").innerHTML = `
-    <div class="boundary-probability ${sector?.direction === "bear" ? "bear" : sector?.direction === "bull" ? "bull" : "neutral"}">
-      <strong>板块判断 · ${directionLabel}</strong>
-      ${states.map((label, index) => `<span>${label} ${formatPercent(probabilities[index])}</span>`).join("")}
-    </div>`;
-
-  const dynamics = [
-    ["板块预期涨跌", formatPercent(sector?.expected_drift)],
-    ["一日有效势", formatNumber(sector?.expected_effective_potential, 4)],
-    ["趋势延续可信度", formatPercent(sector?.survival_confidence)],
-    ["看多概率", formatPercent(sector?.bullish_drift_probability)],
-    ["趋势信噪比", formatNumber(sector?.drift_signal_to_noise, 3)],
-  ];
-  document.querySelector("#boundary-dynamics").innerHTML = dynamics
-    .map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`)
-    .join("");
-
-  const totalExposure = Number(latest.target_exposure ?? (latest.branch_target_exposures || []).reduce((total, value) => total + value, 0));
-  const flatSignalCount = Number(latest.flat_signal_count ?? latest.branch_flat_signal_counts?.[0] ?? 0);
-  const normalHoldings = latest.selected_symbols?.length
-    ? `当前持有 ${latest.selected_symbols.length} 只股票 · 目标仓位 ${formatPercent(totalExposure)}`
-    : `当前空仓 · 连续看平 ${flatSignalCount} 次`;
-  const holdings = latest.trailing_stop_pending
-    ? `板块峰值回撤止损已触发 · 全局清仓锁生效 · 实际剩余 ${latest.actual_symbols?.length || 0} 只股票`
-    : normalHoldings;
-  const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
-  const potentialTrace = `有效势 ${formatNumber(sector?.expected_effective_potential, 4)} · 存活率 ${formatPercent(sector?.survival_confidence)}`;
-  const sectorEquity = latest.sector_equity ?? latest.branch_equities?.[0];
-  const sectorDrawdown = latest.sector_trailing_drawdown ?? latest.branch_trailing_drawdowns?.[0];
-  const riskTrace = `板块权益 ${formatNumber(sectorEquity, 4)} · 峰值回撤 ${formatPercent(sectorDrawdown)}`;
-  document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span><span>${escapeHtml(potentialTrace)}</span><span>${escapeHtml(riskTrace)}</span>`;
-
-  document.querySelector("#boundary-prediction-table").innerHTML = predictions.slice(-60).reverse().map(item => {
-    const itemSector = item.sector || item.branches?.[0] || {};
-    const exposure = (item.actual_weights || []).reduce((sum, value) => sum + Number(value || 0), 0);
-    const label = ({ bear: "空", flat: "平", bull: "多" })[itemSector.direction] || "—";
-    const potentialText = formatPercent(itemSector.convection_potential_features?.reverse_flow_1d);
-    const blocked = Number(item.failed_buy_orders || 0) + Number(item.failed_sell_orders || 0);
-    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${escapeHtml(label)}</td><td>${escapeHtml(potentialText)}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.actual_symbols?.length || 0)}</td><td>${formatInteger(blocked)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
-  }).join("");
-
-  const latestPosterior = [...(posterior || [])].reverse().find(item => item.model_name === potentialModel) || posterior?.at(-1) || {};
-  document.querySelector("#boundary-model-quality").innerHTML = [
-    boundaryMetric("显著波动后验", formatPercent(sector?.significant_move_probability), "下一日涨跌超过平盘阈值的概率"),
-    boundaryMetric("条件看多后验", formatPercent(sector?.conditional_bullish_probability), "已发生显著波动时，看多的概率"),
-    boundaryMetric("训练先验看多率", formatPercent(sector?.prior_bullish_probability), "训练期显著涨跌样本中的看多比例"),
-    boundaryMetric("特征增量证据", formatNumber(sector?.feature_log_odds_delta, 3), `去掉截距先验后的对数胜算增量 · 后验 ${formatPercent(sector?.feature_bullish_probability)}`),
-    boundaryMetric("最新 β0", formatNumber(latestPosterior.potential_mean?.[0], 4), "板块背景外势"),
-    boundaryMetric("概率整体误差", formatNumber(metrics.brier_score, 4), "越小越好"),
-    boundaryMetric("概率校准偏差", formatPercent(metrics.ece), "预测概率与实际频率的差"),
-    boundaryMetric("多空平衡正确率", formatPercent(metrics.direction_signal_balanced_accuracy), "平盘日不参与"),
-    boundaryMetric("训练成熟样本", formatInteger(stage.minimum_fit_rows), "板块后验估计使用的历史交易日"),
-  ].join("");
-
-  paintBoundaryReturnComparison(
-    job,
-    metrics,
-    predictions,
-    baselineMetrics,
-    baselinePredictions,
-    strategyLabel,
-    baselineLabel,
-  );
-  const modelResidual = Array.isArray(residual)
-    ? residual.find(item => item.model_name === potentialModel) || {}
-    : residual;
-  paintBoundaryResidualAnalysis(metrics, modelResidual, predictions);
-  document.querySelector("#boundary-run-summary").innerHTML = [
-    boundaryMetric("数据集", job.request.dataset_id || "—"),
-    boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
-    boundaryMetric("股票数量", `${formatInteger(job.summary?.symbols || job.request.symbols?.length)} 只`),
-    boundaryMetric("板块状态", "全部成分股单一日状态"),
-    boundaryMetric("外势输入", "背景势 β0 + 一日反向流量 C1"),
-    boundaryMetric("FK 模拟路径", formatInteger(job.request.boundary_fk_paths)),
-    boundaryMetric("模型版本", latest.model_version || posterior?.[0]?.model_name || "PathEfficiencyFK"),
-    boundaryMetric("训练截止", latest.training_cutoff || "—"),
-    boundaryMetric("板块止损", `峰值回撤超过 ${formatPercent(job.request.boundary_maximum_drawdown ?? job.request.boundary_maximum_branch_drawdown ?? 0.05)}`, "触发后全局清仓"),
-    boundaryMetric("运行耗时", `${formatNumber(job.summary?.elapsed_seconds, 2)} 秒`),
-  ].join("");
-  switchBoundaryResultTab(state.boundaryTabByJob.get(job.id) || "evaluation", job.id);
-}
-
-function boundaryEquitySeries(job, predictions) {
-  const costRate = Number(job.request.transaction_cost_bps || 0) / 10000;
-  let equity = 1;
-  return predictions.map(item => {
-    equity *= 1 + Number(item.gross_strategy_return || 0) - costRate * Number(item.turnover || 0);
-    return equity;
-  });
-}
-
-function paintBoundaryReturnComparison(
-  job,
-  metrics,
-  predictions,
-  baselineMetrics,
-  baselinePredictions,
-  strategyLabel,
-  baselineLabel,
-) {
-  const strategyEquity = boundaryEquitySeries(job, predictions);
-  const baselineEquity = boundaryEquitySeries(job, baselinePredictions);
-  const wins = predictions.filter(item => Number(item.gross_strategy_return) > 0).length;
-  document.querySelector("#boundary-return-legend").innerHTML = `
-    <span><i class="persistence"></i>${escapeHtml(strategyLabel)}净值</span>
-    <span><i class="baseline"></i>${escapeHtml(baselineLabel)}</span>`;
-  document.querySelector("#boundary-return-metrics").innerHTML = [
-    boundaryMetric(`${strategyLabel}收益`, formatPercent(metrics.net_total_return)),
-    boundaryMetric(`${baselineLabel}收益`, formatPercent(baselineMetrics.net_total_return)),
-    boundaryMetric("相对基线", formatPercent(Number(metrics.net_total_return || 0) - Number(baselineMetrics.net_total_return || 0))),
-    boundaryMetric(`${strategyLabel}最大回撤`, formatPercent(metrics.maximum_drawdown)),
-    boundaryMetric(`${baselineLabel}最大回撤`, formatPercent(baselineMetrics.maximum_drawdown)),
-    boundaryMetric(`${strategyLabel}平均仓位`, formatPercent(metrics.average_exposure)),
-    boundaryMetric(`${baselineLabel}平均仓位`, formatPercent(baselineMetrics.average_exposure)),
-    boundaryMetric("盈利交易日", formatPercent(predictions.length ? wins / predictions.length : 0)),
-    boundaryMetric("平均换手", formatPercent(metrics.average_turnover)),
-  ].join("");
-  drawBoundaryComparison(
-    document.querySelector("#boundary-return-canvas"),
-    [
-      { values: strategyEquity, color: "#176b87" },
-      { values: baselineEquity, color: "#69767c" },
-    ],
-    1,
-  );
-}
-
-function drawBoundaryComparison(canvas, series, baseline) {
-  const allValues = series.flatMap(item => item.values).filter(Number.isFinite);
-  if (!canvas || !allValues.length) return;
-  const context = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  const padding = { left: 58, right: 22, top: 22, bottom: 35 };
-  const minimum = Math.min(...allValues, baseline);
-  const maximum = Math.max(...allValues, baseline);
-  const span = Math.max(maximum - minimum, 1e-9);
-  const y = value => padding.top + (maximum - value) * (height - padding.top - padding.bottom) / span;
-  context.clearRect(0, 0, width, height);
-  context.strokeStyle = "#d9dfe1";
-  context.lineWidth = 1;
-  for (let row = 0; row <= 4; row += 1) {
-    const py = padding.top + row * (height - padding.top - padding.bottom) / 4;
-    context.beginPath(); context.moveTo(padding.left, py); context.lineTo(width - padding.right, py); context.stroke();
-  }
-  context.strokeStyle = "#aab2b6";
-  context.beginPath(); context.moveTo(padding.left, y(baseline)); context.lineTo(width - padding.right, y(baseline)); context.stroke();
-  series.forEach(item => {
-    if (!item.values.length) return;
-    const x = index => padding.left + index * (width - padding.left - padding.right) / Math.max(item.values.length - 1, 1);
-    context.strokeStyle = item.color;
-    context.lineWidth = 3;
-    context.beginPath();
-    item.values.forEach((value, index) => index ? context.lineTo(x(index), y(value)) : context.moveTo(x(index), y(value)));
-    context.stroke();
-  });
-  context.fillStyle = "#34444a";
-  context.font = "16px sans-serif";
-  context.fillText(maximum.toFixed(3), 4, padding.top + 5);
-  context.fillText(minimum.toFixed(3), 4, height - padding.bottom + 5);
-}
-
-function paintBoundaryReturnAnalysis(job, metrics, predictions) {
-  const costRate = Number(job.request.transaction_cost_bps || 0) / 10000;
-  let equity = 1;
-  let peak = 1;
-  const series = predictions.map(item => {
-    equity *= 1 + Number(item.gross_strategy_return || 0) - costRate * Number(item.turnover || 0);
-    peak = Math.max(peak, equity);
-    return { value: equity, drawdown: equity / peak - 1 };
-  });
-  const wins = predictions.filter(item => Number(item.gross_strategy_return) > 0).length;
-  document.querySelector("#boundary-return-metrics").innerHTML = [
-    boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return)),
-    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
-    boundaryMetric("盈利交易日", formatPercent(predictions.length ? wins / predictions.length : 0)),
-    boundaryMetric("平均换手", formatPercent(metrics.average_turnover)),
-  ].join("");
-  drawBoundaryLine(document.querySelector("#boundary-return-canvas"), series.map(item => item.value), "策略净值", "#176b87", 1);
-}
-
-function paintBoundaryResidualAnalysis(metrics, residual, predictions) {
-  const values = predictions.map(item => {
-    const branches = item.branches || [];
-    const errors = branches.map(branch => Number(branch.actual_return) - Number(branch.expected_drift)).filter(Number.isFinite);
-    return errors.length ? errors.reduce((sum, value) => sum + value, 0) / errors.length : 0;
-  });
-  const mean = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-  const mae = values.length ? values.reduce((sum, value) => sum + Math.abs(value), 0) / values.length : 0;
-  document.querySelector("#boundary-residual-metrics").innerHTML = [
-    boundaryMetric("平均预测偏差", formatPercent(mean), "应接近 0"),
-    boundaryMetric("平均绝对误差", formatPercent(mae), "越小越好"),
-    boundaryMetric("误差连续性", formatNumber(residual.probability_residual_autocorrelation ?? metrics.probability_residual_autocorrelation, 3), "接近 0 表示没有连续偏错"),
-    boundaryMetric("样本数量", formatInteger(values.length)),
-  ].join("");
-  drawBoundaryLine(document.querySelector("#boundary-residual-canvas"), values, "实际收益 - 预测收益", "#b64b45", 0);
-}
-
-function drawBoundaryLine(canvas, values, label, color, baseline) {
-  if (!canvas || !values.length) return;
-  const context = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  const padding = { left: 58, right: 22, top: 35, bottom: 35 };
-  const minimum = Math.min(...values, baseline);
-  const maximum = Math.max(...values, baseline);
-  const span = Math.max(maximum - minimum, 1e-9);
-  const x = index => padding.left + index * (width - padding.left - padding.right) / Math.max(values.length - 1, 1);
-  const y = value => padding.top + (maximum - value) * (height - padding.top - padding.bottom) / span;
-  context.clearRect(0, 0, width, height);
-  context.strokeStyle = "#d9dfe1";
-  context.lineWidth = 1;
-  for (let row = 0; row <= 4; row += 1) {
-    const py = padding.top + row * (height - padding.top - padding.bottom) / 4;
-    context.beginPath(); context.moveTo(padding.left, py); context.lineTo(width - padding.right, py); context.stroke();
-  }
-  context.strokeStyle = "#889499";
-  context.beginPath(); context.moveTo(padding.left, y(baseline)); context.lineTo(width - padding.right, y(baseline)); context.stroke();
-  context.strokeStyle = color;
-  context.lineWidth = 3;
-  context.beginPath();
-  values.forEach((value, index) => index ? context.lineTo(x(index), y(value)) : context.moveTo(x(index), y(value)));
-  context.stroke();
-  context.fillStyle = "#34444a";
-  context.font = "20px sans-serif";
-  context.fillText(label, padding.left, 24);
-  context.font = "16px sans-serif";
-  context.fillText(maximum.toFixed(3), 4, padding.top + 5);
-  context.fillText(minimum.toFixed(3), 4, height - padding.bottom + 5);
-}
-
-const percolationPhaseNames = ["bear", "none", "conflict", "bull"];
-const percolationPhaseLabels = {
-  bear: "看空贯通",
-  none: "无贯通",
-  conflict: "多空冲突",
-  bull: "看多贯通",
-};
-
-function renderPercolationResult(job) {
-  const status = document.querySelector("#percolation-result-status");
-  const artifactLabels = {
-    "percolation-report-zh.md": "中文报告",
-    "percolation-evaluation.json": "策略评估",
-    "percolation-baselines.json": "基线结果",
-    "percolation-predictions.json": "相变预测",
-    "percolation-posteriors.json": "临界后验",
-    "percolation-equity.json": "收益序列",
-    "percolation-network-summary.json": "传播网络",
-    "run-summary.json": "运行摘要",
-  };
-  document.querySelector("#percolation-downloads").innerHTML = Object.entries(artifactLabels)
-    .filter(([name]) => job.artifacts?.[name])
-    .map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`)
-    .join("");
-
-  const cached = state.percolationResultCache.get(job.id);
-  if (cached?.error) {
-    status.textContent = `结果读取失败：${cached.error}`;
-    return;
-  }
-  if (cached?.evaluation && cached?.predictions) {
-    paintPercolationResult(job, cached);
-    return;
-  }
-  const evaluationUrl = job.artifacts?.["percolation-evaluation.json"];
-  const predictionsUrl = job.artifacts?.["percolation-predictions.json"];
-  if (!evaluationUrl || !predictionsUrl) {
-    status.textContent = job.status === "failed"
-      ? "运行失败，请查看日志"
-      : ["queued", "running"].includes(job.status) ? "双网络样本外计算中" : "暂无可读取的结果";
-    return;
-  }
-  if (cached?.loading) {
-    status.textContent = "正在读取结果";
-    return;
-  }
-
-  state.percolationResultCache.set(job.id, { loading: true });
-  status.textContent = "正在读取结果";
-  const load = name => job.artifacts?.[name] ? api(job.artifacts[name]) : Promise.resolve(name.endsWith(".json") ? {} : null);
-  Promise.all([
-    load("percolation-evaluation.json"),
-    load("percolation-baselines.json"),
-    load("percolation-predictions.json"),
-    load("percolation-posteriors.json"),
-    load("percolation-equity.json"),
-    load("percolation-network-summary.json"),
-  ]).then(([evaluation, baselines, predictions, posteriors, equity, networks]) => {
-    const payload = {
-      evaluation: evaluation || {},
-      baselines: baselines || {},
-      predictions: Array.isArray(predictions) ? predictions : [],
-      posteriors: Array.isArray(posteriors) ? posteriors : [],
-      equity: Array.isArray(equity) ? equity : [],
-      networks: Array.isArray(networks) ? networks : [],
-    };
-    state.percolationResultCache.set(job.id, payload);
-    if (state.selectedId === job.id) paintPercolationResult(job, payload);
-  }).catch(exception => {
-    state.percolationResultCache.set(job.id, { error: exception.message });
-    if (state.selectedId === job.id) status.textContent = `结果读取失败：${exception.message}`;
-  });
-}
-
-function switchPercolationResultTab(name, jobId = state.selectedId) {
-  if (jobId) state.percolationTabByJob.set(jobId, name);
-  document.querySelectorAll("[data-percolation-tab]").forEach(button => {
-    const active = button.dataset.percolationTab === name;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", String(active));
-  });
-  document.querySelectorAll("[data-percolation-panel]").forEach(panel => {
-    panel.classList.toggle("hidden", panel.dataset.percolationPanel !== name);
-  });
-}
-
-function paintPercolationResult(job, payload) {
-  const metrics = payload.evaluation || {};
-  const predictions = payload.predictions || [];
-  const latest = predictions.at(-1) || {};
-  const probabilities = Array.isArray(latest.phase_probabilities) ? latest.phase_probabilities : [0, 0, 0, 0];
-  document.querySelector("#percolation-result-status").textContent = job.status === "completed"
-    ? `${formatInteger(metrics.observations ?? predictions.length)} 次样本外预测`
-    : job.status === "failed" ? "运行失败，请查看日志" : "计算中";
-
-  document.querySelector("#percolation-phase-probabilities").innerHTML = percolationPhaseNames.map((name, index) => `
-    <div class="percolation-phase ${name}${latest.predicted_phase === name ? " active" : ""}">
-      <span>${percolationPhaseLabels[name]}</span>
-      <strong>${formatPercent(probabilities[index])}</strong>
-      <div><i style="width:${Math.max(0, Math.min(100, Number(probabilities[index] || 0) * 100))}%"></i></div>
-    </div>`).join("");
-
-  const bestBaseline = Math.max(0, ...Object.values(payload.baselines || {}).map(item => Number(item?.accuracy || 0)));
-  const summary = document.querySelector("#percolation-evaluation-summary");
-  summary.className = "boundary-evaluation-summary caution";
-  summary.innerHTML = `<strong>结果用于人机协同评估，不自动判定策略有效</strong><span>四相均衡准确率 ${formatPercent(metrics.balanced_accuracy)}；最高简单基线准确率 ${formatPercent(bestBaseline)}。还要结合概率校准、回撤和样本数量判断。</span>`;
-  document.querySelector("#percolation-evaluation-metrics").innerHTML = [
-    boundaryMetric("均衡准确率", formatPercent(metrics.balanced_accuracy)),
-    boundaryMetric("Macro F1", formatNumber(metrics.macro_f1, 4)),
-    boundaryMetric("Brier", formatNumber(metrics.brier_score, 4), "越低越好"),
-    boundaryMetric("校准误差 ECE", formatNumber(metrics.ece, 4), "越接近 0 越好"),
-    boundaryMetric("成本后收益", formatPercent(metrics.net_total_return)),
-    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
-  ].join("");
-  document.querySelector("#percolation-baseline-table").innerHTML = Object.entries(payload.baselines || {}).map(([name, item]) => `
-    <tr><td>${escapeHtml(percolationBaselineLabel(name))}</td><td>${formatInteger(item.correct)}</td><td>${formatInteger(item.observations)}</td><td>${formatPercent(item.accuracy)}</td></tr>`).join("");
-
-  document.querySelector("#percolation-prediction-table").innerHTML = predictions.slice(-80).reverse().map(item => {
-    const failed = Number(item.failed_buy_orders || 0) + Number(item.failed_sell_orders || 0);
-    return `<tr><td>${escapeHtml(item.signal_time || "—")}</td><td>${escapeHtml(item.target_session || "—")}</td><td>${escapeHtml(percolationPhaseLabels[item.predicted_phase] || item.predicted_phase || "—")}</td><td>${escapeHtml(percolationPhaseLabels[item.actual_phase] || item.actual_phase || "—")}</td><td>${formatPercent(item.phase_probabilities?.[3])}</td><td>${formatPercent(item.phase_probabilities?.[0])}</td><td>${formatInteger(item.selected_symbols?.length || 0)} 只</td><td>${failed ? `${failed} 笔受限` : "无"}</td></tr>`;
-  }).join("");
-  drawPercolationPhaseTimeline(document.querySelector("#percolation-phase-canvas"), predictions);
-
-  const latestBullPosterior = [...payload.posteriors].reverse().find(item => item.direction === "bull") || {};
-  const latestBearPosterior = [...payload.posteriors].reverse().find(item => item.direction === "bear") || {};
-  document.querySelector("#percolation-critical-summary").innerHTML = [
-    percolationCriticalCard("R+ 多头传播", latest.bull_reproduction_mean, latest.bull_supercritical_probability, latest.bull_giant_fraction_mean, latestBullPosterior),
-    percolationCriticalCard("R− 空头传播", latest.bear_reproduction_mean, latest.bear_supercritical_probability, latest.bear_giant_fraction_mean, latestBearPosterior),
-  ].join("");
-
-  const latestNetwork = payload.networks.at(-1) || {};
-  document.querySelector("#percolation-network-sources").innerHTML = [
-    percolationSourceTable("多头传播源", latestNetwork.bull_sources || []),
-    percolationSourceTable("空头传播源", latestNetwork.bear_sources || []),
-  ].join("");
-
-  document.querySelector("#percolation-return-metrics").innerHTML = [
-    boundaryMetric("成本前收益", formatPercent(metrics.gross_total_return)),
-    boundaryMetric("成本后收益", formatPercent(metrics.net_total_return)),
-    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown)),
-    boundaryMetric("平均仓位", formatPercent(metrics.average_exposure)),
-    boundaryMetric("平均换手", formatPercent(metrics.average_turnover)),
-    boundaryMetric("开仓比例", formatPercent(metrics.open_rate)),
-    boundaryMetric("涨停买入受限", formatInteger(metrics.failed_buy_orders)),
-    boundaryMetric("跌停卖出受限", formatInteger(metrics.failed_sell_orders)),
-  ].join("");
-  drawPercolationEquity(document.querySelector("#percolation-equity-canvas"), payload.equity || []);
-
-  document.querySelector("#percolation-calibration-metrics").innerHTML = [
-    boundaryMetric("Brier", formatNumber(metrics.brier_score, 4)),
-    boundaryMetric("Log Loss", formatNumber(metrics.log_loss, 4)),
-    boundaryMetric("ECE", formatNumber(metrics.ece, 4)),
-    boundaryMetric("样本数量", formatInteger(metrics.observations)),
-  ].join("");
-  paintPercolationConfusion(metrics.confusion_matrix || []);
-  paintPercolationCalibration(predictions);
-
-  const configuration = job.summary?.configuration || {};
-  document.querySelector("#percolation-run-summary").innerHTML = [
-    boundaryMetric("数据集", job.request.dataset_id || "—"),
-    boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
-    boundaryMetric("成分股", `${formatInteger(job.summary?.symbols || job.request.symbols?.length)} 只`),
-    boundaryMetric("有效预测", formatInteger(metrics.observations ?? predictions.length)),
-    boundaryMetric("月度折数", formatInteger(job.summary?.folds?.length)),
-    boundaryMetric("固定骨架", `${configuration.topology_lookback_sessions ?? 60} 日`),
-    boundaryMetric("传播延迟", `1 至 ${configuration.maximum_lag_minutes ?? 3} 分钟`),
-    boundaryMetric("置换次数", formatInteger(configuration.null_permutations ?? job.request.percolation_null_permutations)),
-    boundaryMetric("后验路径", formatInteger(configuration.posterior_paths ?? job.request.percolation_posterior_paths)),
-    boundaryMetric("模型版本", job.summary?.model_version || latest.model_version || "percolation-branching-v1"),
-    boundaryMetric("训练截止", latest.training_cutoff || "—"),
-    boundaryMetric("排除股票", formatInteger(job.summary?.excluded_symbols?.length || 0)),
-  ].join("");
-  switchPercolationResultTab(state.percolationTabByJob.get(job.id) || "evaluation", job.id);
-}
-
-function percolationBaselineLabel(name) {
-  return ({ majority: "多数相", persistence: "昨日相延续", transition: "相位转移", simple_reproduction: "简单再生数" })[name] || name;
-}
-
-function percolationCriticalCard(title, reproduction, supercritical, giantFraction, posterior) {
-  const variances = (posterior.variance || []).flat(2).map(Number).filter(Number.isFinite);
-  const meanVariance = variances.length ? variances.reduce((sum, value) => sum + value, 0) / variances.length : NaN;
-  const critical = Number(reproduction) >= 1;
-  return `<section class="percolation-critical-card ${critical ? "supercritical" : "subcritical"}"><div><span>${title}</span><strong>${formatNumber(reproduction, 3)}</strong></div><div class="critical-line"><i style="left:${Math.max(0, Math.min(100, Number(reproduction || 0) / 2 * 100))}%"></i><b></b></div><dl><div><dt>临界线</dt><dd>1.000</dd></div><div><dt>超过临界概率</dt><dd>${formatPercent(supercritical)}</dd></div><div><dt>巨型簇比例</dt><dd>${formatPercent(giantFraction)}</dd></div><div><dt>边强度平均方差</dt><dd>${formatNumber(meanVariance, 5)}</dd></div></dl></section>`;
-}
-
-function percolationSourceTable(title, sources) {
-  const rows = sources.slice(0, 10).map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(item.symbol)}</td><td>${formatNumber(item.outgoing_strength, 4)}</td></tr>`).join("");
-  return `<section><h3>${title}</h3><div class="table-scroll"><table><thead><tr><th>#</th><th>股票</th><th>传播强度</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
-}
-
-function paintPercolationConfusion(matrix) {
-  const header = percolationPhaseNames.map(name => `<th>${percolationPhaseLabels[name]}</th>`).join("");
-  const rows = percolationPhaseNames.map((name, row) => `<tr><th>${percolationPhaseLabels[name]}</th>${percolationPhaseNames.map((_, column) => `<td>${formatInteger(matrix?.[row]?.[column] ?? 0)}</td>`).join("")}</tr>`).join("");
-  document.querySelector("#percolation-confusion-matrix").innerHTML = `<table><thead><tr><th>实际＼预测</th>${header}</tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-function paintPercolationCalibration(predictions) {
-  const bins = [
-    { minimum: 0.25, maximum: 0.40, values: [] },
-    { minimum: 0.40, maximum: 0.55, values: [] },
-    { minimum: 0.55, maximum: 0.70, values: [] },
-    { minimum: 0.70, maximum: 0.85, values: [] },
-    { minimum: 0.85, maximum: 1.01, values: [] },
-  ];
-  predictions.forEach(item => {
-    const probabilities = item.phase_probabilities || [];
-    const confidence = Math.max(...probabilities.map(Number).filter(Number.isFinite), 0);
-    const bin = bins.find(entry => confidence >= entry.minimum && confidence < entry.maximum);
-    if (bin) bin.values.push({ confidence, correct: item.predicted_phase === item.actual_phase ? 1 : 0 });
-  });
-  document.querySelector("#percolation-calibration").innerHTML = bins.map(bin => {
-    const count = bin.values.length;
-    const confidence = count ? bin.values.reduce((sum, item) => sum + item.confidence, 0) / count : 0;
-    const accuracy = count ? bin.values.reduce((sum, item) => sum + item.correct, 0) / count : 0;
-    return `<div class="calibration-row"><span>${Math.round(bin.minimum * 100)}–${Math.round(Math.min(bin.maximum, 1) * 100)}%</span><div><i style="width:${confidence * 100}%"></i><b style="width:${accuracy * 100}%"></b></div><strong>${count ? `${formatPercent(accuracy)} / ${formatPercent(confidence)}` : "无样本"}</strong><small>${count} 次</small></div>`;
-  }).join("");
-}
-
-function drawPercolationPhaseTimeline(canvas, predictions) {
-  if (!canvas || !predictions.length) return;
-  const context = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  const padding = { left: 86, right: 22, top: 30, bottom: 34 };
-  const colors = { bear: "#147f63", none: "#7b878c", conflict: "#b57a20", bull: "#c8463f" };
-  const x = index => padding.left + index * (width - padding.left - padding.right) / Math.max(predictions.length - 1, 1);
-  const y = phase => padding.top + (3 - Math.max(0, percolationPhaseNames.indexOf(phase))) * (height - padding.top - padding.bottom) / 3;
-  context.clearRect(0, 0, width, height);
-  context.font = "14px sans-serif";
-  percolationPhaseNames.forEach(name => {
-    context.strokeStyle = "#d9dfe1";
-    context.beginPath(); context.moveTo(padding.left, y(name)); context.lineTo(width - padding.right, y(name)); context.stroke();
-    context.fillStyle = "#58676d";
-    context.fillText(percolationPhaseLabels[name], 4, y(name) + 5);
-  });
-  [["actual_phase", 6], ["predicted_phase", -6]].forEach(([field, offset]) => {
-    predictions.forEach((item, index) => {
-      context.fillStyle = field === "actual_phase" ? colors[item[field]] || "#7b878c" : "#ffffff";
-      context.strokeStyle = colors[item[field]] || "#7b878c";
-      context.lineWidth = 2;
-      context.beginPath(); context.arc(x(index), y(item[field]) + offset, 3.5, 0, Math.PI * 2); context.fill(); context.stroke();
-    });
-  });
-  context.fillStyle = "#58676d";
-  context.fillText("实心：实际　空心：预测", padding.left, height - 8);
-}
-
-function drawPercolationEquity(canvas, rows) {
-  if (!canvas || !rows.length) return;
-  const context = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  const padding = { left: 58, right: 22, top: 22, bottom: 28 };
-  const split = Math.round(height * 0.70);
-  const gross = rows.map(item => Number(item.gross_equity)).filter(Number.isFinite);
-  const net = rows.map(item => Number(item.net_equity)).filter(Number.isFinite);
-  const drawdown = rows.map(item => Number(item.drawdown)).filter(Number.isFinite);
-  const all = [...gross, ...net, 1];
-  const minimum = Math.min(...all);
-  const maximum = Math.max(...all);
-  const span = Math.max(maximum - minimum, 1e-9);
-  const x = index => padding.left + index * (width - padding.left - padding.right) / Math.max(rows.length - 1, 1);
-  const y = value => padding.top + (maximum - value) * (split - padding.top - 12) / span;
-  context.clearRect(0, 0, width, height);
-  context.strokeStyle = "#d9dfe1";
-  context.beginPath(); context.moveTo(padding.left, split); context.lineTo(width - padding.right, split); context.stroke();
-  [[gross, "#7b878c"], [net, "#176b87"]].forEach(([values, color]) => {
-    context.strokeStyle = color; context.lineWidth = 3; context.beginPath();
-    values.forEach((value, index) => index ? context.lineTo(x(index), y(value)) : context.moveTo(x(index), y(value)));
-    context.stroke();
-  });
-  const maxDrawdown = Math.max(...drawdown, 1e-9);
-  context.fillStyle = "rgba(200,70,63,.20)";
-  context.beginPath(); context.moveTo(padding.left, split);
-  drawdown.forEach((value, index) => context.lineTo(x(index), split + value / maxDrawdown * (height - split - padding.bottom)));
-  context.lineTo(width - padding.right, split); context.closePath(); context.fill();
-  context.fillStyle = "#34444a"; context.font = "14px sans-serif";
-  context.fillText(maximum.toFixed(3), 4, padding.top + 5);
-  context.fillText(minimum.toFixed(3), 4, split - 12);
-  context.fillText(`最大回撤 ${formatPercent(maxDrawdown)}`, 4, height - 8);
-}
-
-function renderSectorFlowResult(job) {
-  const summary = job.summary || {};
-  const regimeMode = summary.protocol === "river-regime-v3";
-  const container = document.querySelector("#sector-flow-results");
-  container.classList.toggle("regime-mode", regimeMode);
-  document.querySelector("#sector-regime-results").classList.toggle("hidden", !regimeMode);
-  if (regimeMode) {
-    renderSectorRegimeResult(job);
-    return;
-  }
-  const metrics = summary.metrics || {};
-  const water = summary.latest_water_state || {};
-  const status = document.querySelector("#sector-flow-result-status");
-  const riverButton = document.querySelector("#open-river-view");
-  const riverAvailable = job.status === "completed" && ["river-topology-v2", "river-regime-v3"].includes(summary.protocol);
-  riverButton.classList.toggle("hidden", !riverAvailable);
-  riverButton.href = riverAvailable ? `/jobs/${encodeURIComponent(job.id)}/river` : "#";
-  status.textContent = job.status === "completed"
-    ? `${formatInteger(summary.oos_predictions)} 条样本外预测`
-    : job.status === "failed" ? "运行失败，请查看日志" : "水势计算中";
-  const waterValues = [
-    ["方向", formatNumber(water.direction, 3)],
-    ["水势强度", formatNumber(water.flow_strength, 3)],
-    ["活跃度", formatNumber(water.activity, 2)],
-    ["广度", formatPercent(water.breadth)],
-    ["同步性", formatPercent(water.coherence)],
-    ["不确定性", formatNumber(water.uncertainty, 3)],
-  ];
-  document.querySelector("#sector-flow-water-state").innerHTML = waterValues
-    .map(([label, value]) => `<div class="water-state-item"><span>${label}</span><strong>${value}</strong></div>`)
-    .join("");
-
-  const ranking = summary.latest_ranking || [];
-  document.querySelector("#sector-flow-ranking-table").innerHTML = ranking.map(item => `<tr>
-    <td><strong>${escapeHtml(item.symbol)}</strong></td>
-    <td>${formatPercent(item.source_proximity_probability)}</td>
-    <td>${formatPercent(item.lead_or_response_probability)}</td>
-    <td>${formatPercent(item.coupling_probability)}</td>
-    <td>${formatPercent(item.efficiency_probability)}</td>
-    <td>${formatPercent(item.low_residual_probability)}</td>
-    <td>${formatPercent(item.activity_confirmation_probability)}</td>
-    <td>${formatPercent(item.leader_probability)}</td>
-    <td>${formatPercent(item.response_probability)}</td>
-  </tr>`).join("");
-
-  const baselineLabels = {
-    random: "随机",
-    momentum: "一分钟动量",
-    relative_volume: "相对成交量",
-    path_efficiency: "路径效率",
-    static_beta: "静态 Beta",
-  };
-  document.querySelector("#sector-flow-baseline-table").innerHTML = Object.entries(summary.baselines || {}).map(([name, value]) => `<tr>
-    <td>${baselineLabels[name] || escapeHtml(name)}</td>
-    <td>${formatNumber(value.rank_ic, 4)}</td>
-    <td>${formatPercent(value.top_bottom_return)}</td>
-    <td>${formatPercent(value.net_top_bottom_return)}</td>
-    <td>${formatPercent(value.turnover)}</td>
-  </tr>`).join("");
-
-  setImage("sector-flow-image", job.artifacts?.["sector-flow.png"], `?v=${encodeURIComponent(job.finished_at || Date.now())}`);
-  const downloads = {
-    "sector-flow-v2-report.md": "v2 完整报告",
-    "structure-evaluation.json": "结构评估",
-    "sector-flow-report.md": "完整报告",
-    "evaluation.json": "评估数据",
-    "ranking.csv": "排名明细",
-    "predictions.csv": "样本外预测",
-  };
-  document.querySelector("#sector-flow-downloads").innerHTML = Object.entries(downloads)
-    .filter(([name]) => job.artifacts?.[name])
-    .map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`)
-    .join("");
-
-  document.querySelector("#metrics-grid").innerHTML = [
-    ["Brier", formatNumber(metrics.brier_score, 4)],
-    ["Log Loss", formatNumber(metrics.log_loss, 4)],
-    ["Rank IC", formatNumber(metrics.rank_ic, 4)],
-    ["成本后 Top-Bottom", formatPercent(metrics.net_top_bottom_return)],
-    ["后验覆盖率", formatPercent(metrics.posterior_coverage)],
-    ["换手率", formatPercent(metrics.turnover)],
-  ].map(([label, value]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong></div>`).join("");
-}
-
-function renderSectorRegimeResult(job) {
-  const summary = job.summary || {};
-  const regime = summary.regime_metrics || {};
-  const policy = summary.policy_metrics || {};
-  const latest = summary.latest_regime || {};
-  const latestPolicy = summary.latest_policy || {};
-  const probabilities = latest.probability_mean || [0, 0, 0];
-  const labels = ["看跌", "平稳", "看涨"];
-  const tones = ["bear", "flat", "bull"];
-  const predicted = Number.isInteger(latest.predicted_state) ? latest.predicted_state : -1;
-  const status = document.querySelector("#sector-flow-result-status");
-  status.textContent = job.status === "completed"
-    ? `${formatInteger(summary.oos_regime_predictions)} 次板块样本外预测`
-    : job.status === "failed" ? "运行失败，请查看日志" : "正在训练板块状态模型";
-  const riverButton = document.querySelector("#open-river-view");
-  const riverAvailable = job.status === "completed";
-  riverButton.classList.toggle("hidden", !riverAvailable);
-  riverButton.href = riverAvailable ? `/jobs/${encodeURIComponent(job.id)}/river` : "#";
-
-  document.querySelector("#sector-regime-probabilities").innerHTML = probabilities.map((value, index) => `
-    <div class="regime-probability ${tones[index]}${predicted === index ? " active" : ""}">
-      <div><span>${labels[index]}</span><strong>${formatPercent(value)}</strong></div>
-      <div class="probability-track"><span style="width:${Math.max(0, Math.min(100, Number(value) * 100))}%"></span></div>
-    </div>
-  `).join("");
-
-  document.querySelector("#sector-regime-baselines").innerHTML = [
-    ["模型准确率", formatPercent(regime.accuracy)],
-    ["平衡准确率", formatPercent(regime.balanced_accuracy)],
-    ["多数类基线", formatPercent(regime.majority_baseline_accuracy)],
-    ["昨日状态延续", formatPercent(regime.persistence_baseline_accuracy)],
-    ["Macro F1", formatNumber(regime.macro_f1, 4)],
-  ].map(([label, value]) => `<div class="regime-stat"><span>${label}</span><strong>${value}</strong></div>`).join("");
-
-  document.querySelector("#sector-regime-policy").innerHTML = [
-    ["当前动作", latestPolicy.selected_symbols?.length ? `买入 ${latestPolicy.selected_symbols.join("、")}` : "空仓"],
-    ["开仓比例", formatPercent(policy.exposure_rate)],
-    ["策略总收益", formatPercent(policy.total_return)],
-    ["最大回撤", formatPercent(policy.maximum_drawdown)],
-    ["开仓日胜率", formatPercent(policy.win_rate)],
-  ].map(([label, value]) => `<div class="regime-stat"><span>${label}</span><strong>${escapeHtml(String(value))}</strong></div>`).join("");
-
-  document.querySelector("#metrics-grid").innerHTML = [
-    ["平衡准确率", formatPercent(regime.balanced_accuracy)],
-    ["多数类基线", formatPercent(regime.majority_baseline_accuracy)],
-    ["Brier", formatNumber(regime.brier_score, 4)],
-    ["Log Loss", formatNumber(regime.log_loss, 4)],
-    ["策略收益", formatPercent(policy.total_return)],
-    ["实际开仓", formatInteger(policy.exposed_sessions)],
-  ].map(([label, value]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong></div>`).join("");
-
-  const downloads = {
-    "sector-regime-report.md": "中文报告",
-    "sector-regime-predictions.json": "板块预测",
-    "sector-regime-evaluation.json": "板块评估",
-    "sector-policy-evaluation.json": "策略评估",
-    "sector-state-forecasts.npz": "状态图预测",
-  };
-  document.querySelector("#sector-flow-downloads").innerHTML = Object.entries(downloads)
-    .filter(([name]) => job.artifacts?.[name])
-    .map(([name, label]) => `<a href="${job.artifacts[name]}" download>${label}</a>`)
-    .join("");
-}
-
-function renderSymbolResult(job, symbol, summary) {
-  document.querySelector("#insight-label").textContent = `${symbol} 单股结论`;
-  renderInsight(summary);
-  renderMetrics(summary);
-  const row = job.summary?.per_symbol?.find(item => item.symbol === symbol);
-  renderSymbolMetrics(row ? [row] : []);
-  renderFolds((job.summary?.folds || []).filter(fold => fold.symbol === symbol));
-  renderArtifacts(job, job.symbol_artifacts?.[symbol] || {});
-}
-
-function renderJobGpuMemory(job) {
-  const element = document.querySelector("#run-gpu-memory");
-  const isGpu = !["fk-stock", "boundary-flow-fk", "percolation-branching"].includes(job.request.strategy) && String(job.request.device).startsWith("cuda:");
-  const trackingAvailable = Object.prototype.hasOwnProperty.call(job, "peak_gpu_memory_mib");
-  if (isGpu && job.status === "running" && !trackingAvailable) {
-    element.classList.remove("hidden");
-    element.textContent = "本任务显存：该任务启动早于监控启用，下一任务开始记录";
-    return;
-  }
-  const hasSample = Number(job.peak_gpu_memory_mib) > 0;
-  if (!isGpu || (!hasSample && job.status !== "running")) {
-    element.classList.add("hidden");
-    return;
-  }
-  element.classList.remove("hidden");
-  element.textContent = job.status === "running"
-    ? `本任务显存：当前 ${formatMemory(job.current_gpu_memory_mib)} · 峰值 ${formatMemory(job.peak_gpu_memory_mib)}`
-    : `本任务峰值显存：${formatMemory(job.peak_gpu_memory_mib)}`;
-}
-
-function classificationBaseline(summary) {
-  const reportedCount = Array.isArray(summary.class_support) ? summary.class_support.length : 0;
-  const protocolCount = Array.isArray(summary.regime_protocol?.states)
-    ? summary.regime_protocol.states.length
-    : 0;
-  const count = reportedCount >= 2 ? reportedCount : (protocolCount >= 2 ? protocolCount : 5);
-  const label = ({ 3: "三", 4: "四", 5: "五" })[count] || String(count);
-  return {
-    count,
-    label,
-    accuracy: 1 / count,
-    brier: 1 - 1 / count,
-    logLoss: Math.log(count),
-  };
-}
-
-function renderInsight(summary) {
-  const panel = document.querySelector("#result-insight");
-  if (!summary) {
-    panel.classList.add("hidden");
-    return;
-  }
-  const accuracy = Number(summary.accuracy);
-  const brier = Number(summary.brier_score);
-  const logLoss = Number(summary.log_loss);
-  const baseline = classificationBaseline(summary);
-  const majority = Number(summary.majority_baseline);
-  const balanced = Number(summary.balanced_accuracy);
-  const comparisons = summary.baselines || {};
-  const priorBrier = Number(comparisons.class_prior_brier);
-  const priorLogLoss = Number(comparisons.class_prior_log_loss);
-  const correlation = Number(summary.return_residual?.correlation);
-  let level = "weak";
-  let title = "只有微弱信号，暂不足以用于实盘";
-  let detail = `命中率必须超过多数类基线，均衡命中率必须显著超过 ${formatPercent(baseline.accuracy)}，才能说明模型具有分类能力。`;
-  if (accuracy <= majority || balanced <= baseline.accuracy + 0.01 || correlation <= 0 || logLoss >= priorLogLoss || brier >= priorBrier) {
-    level = "poor";
-    title = accuracy <= majority ? "模型未超过多数类基线" : "模型没有稳定的方向区分能力";
-    detail = `本次命中率 ${formatPercent(accuracy)}，多数类基线 ${formatPercent(majority)}，均衡命中率 ${formatPercent(balanced)}，收益相关性 ${formatNumber(correlation, 4)}。较高的普通命中率可能只是类别不均衡造成的。`;
-  } else if (
-    accuracy >= majority + 0.03
-    && balanced >= baseline.accuracy + 0.05
-    && Number.isFinite(priorBrier) && brier <= priorBrier - 0.02
-    && Number.isFinite(priorLogLoss) && logLoss <= priorLogLoss - 0.03
-  ) {
-    level = "promising";
-    title = "模型出现初步区分能力，仍需扩大样本验证";
-    detail = `命中率和均衡命中率均超过基线，概率误差也优于按真实类别比例预测的基线，但仍需更多标的和滚动窗口确认稳定性。`;
-  }
-  const gate = summary.validation_gate;
-  if (gate && !gate.passed) {
-    const labels = {
-      beats_majority_accuracy: "命中率未超过多数类",
-      balanced_accuracy_above_random: "均衡命中率优势不足",
-      positive_log_information_gain: "Log Loss 未优于训练期先验",
-      beats_prior_brier: "Brier 未优于训练期先验",
-      beats_dynamic_prior_return_rmse: "收益误差未优于滚动均值",
-      beats_zero_return_rmse: "收益误差未优于零收益预测",
-      positive_return_correlation: "收益相关性非正",
-      minimum_oos_observations: "样本外数量不足 200",
-    };
-    const failed = Object.entries(gate.checks || {})
-      .filter(([, passed]) => !passed)
-      .map(([name]) => labels[name] || name);
-    level = "poor";
-    title = "未通过样本外发布门槛";
-    detail = `当前结果仅供研究，不能发布为可交易模型。未通过：${failed.join("、")}。`;
-  }
-  const backtest = summary.backtest || {};
-  const inactive = Number.isFinite(Number(backtest.average_abs_position))
-    ? Number(backtest.average_abs_position) < 0.02
-    : Math.abs(Number(backtest.total_return || 0)) < 0.001 && Math.abs(Number(backtest.max_drawdown || 0)) < 0.002;
-  if (inactive) detail += " 蓝色净值几乎不动，表示不确定性过滤后仓位接近零。";
-  if (summary.model_scope === "per-symbol") detail += " 顶部指标是各标的独立模型的组合汇总，单股结论请查看滚动验证页。";
-  if (summary.model_scope === "sector-pooled") detail += " 各股票独立构造日态并独立归一化，只在严格按日期切分后共享板块模型。";
-  if (summary.model_scope === "single-symbol") detail += ` 当前页面只统计 ${summary.symbol}，没有混入其他股票。`;
-  panel.className = `result-insight ${level}`;
-  document.querySelector("#insight-title").textContent = title;
-  document.querySelector("#insight-detail").textContent = detail;
-}
-
-function renderMetrics(summary) {
-  const grid = document.querySelector("#metrics-grid");
-  if (!summary) {
-    grid.replaceChildren();
-    return;
-  }
-  const baseline = classificationBaseline(summary);
-  const comparisons = summary.baselines || {};
-  const values = [
-    ["样本外信号", formatInteger(summary.oos_predictions), "未参与训练的预测数量"],
-    [`${baseline.label}状态命中率`, formatPercent(summary.accuracy), `随机约 ${formatPercent(baseline.accuracy)}，越高越好`],
-    ["均衡命中率", formatPercent(summary.balanced_accuracy), `${baseline.label}种状态分别计算召回率后取平均`],
-    ["训练先验基线", formatPercent(summary.majority_baseline), "每折只用训练期多数状态，不读取样本外标签"],
-    ["状态持续基线", comparisons.persistence_accuracy == null ? "—" : formatPercent(comparisons.persistence_accuracy), "直接沿用上一交易日状态"],
-    ["状态反转基线", comparisons.reversal_accuracy == null ? "—" : formatPercent(comparisons.reversal_accuracy), "强空↔强多、弱空↔弱多"],
-    ["概率误差 Brier", formatNumber(summary.brier_score, 4), `类别比例基线 ${formatNumber(comparisons.class_prior_brier, 4)}`],
-    ["概率损失 Log Loss", formatNumber(summary.log_loss, 4), `类别比例基线 ${formatNumber(comparisons.class_prior_log_loss, 4)}`],
-    ["对数信息增益", formatNumber(comparisons.log_information_gain, 4), "大于 0 才说明当前状态提供了超越历史先验的信息"],
-    ["有序概率误差 RPS", formatNumber(summary.ranked_probability_score, 4), "越低越好，距离更远的错判惩罚更大"],
-    ["收益相关性", formatNumber(summary.return_residual?.correlation, 4), "预测收益与实际收益的样本外相关性"],
-    ["收益 RMSE", formatPercent(summary.return_residual?.rmse), `零收益 ${formatPercent(comparisons.zero_return_rmse)} · 滚动均值 ${formatPercent(comparisons.dynamic_prior_return_rmse)}`],
-    ["发布验证", summary.validation_gate ? (summary.validation_gate.passed ? "通过" : "未通过") : "未评估", "必须同时通过分类、收益误差、相关性和样本量门槛"],
-    ["模型策略收益", formatPercent(summary.backtest?.total_return), "已扣除设定的交易成本"],
-    ["最大回撤", formatPercent(Math.abs(Number(summary.backtest?.max_drawdown))), "历史峰值后的最大跌幅"],
-  ];
-  grid.innerHTML = values.map(([label, value, help]) => `<div class="metric-card"><span>${label}</span><strong>${value}</strong><small>${help}</small></div>`).join("");
-}
-
-function renderFolds(folds) {
-  const table = document.querySelector("#fold-table");
-  table.innerHTML = folds.map(fold => `<tr><td>${escapeHtml(fold.symbol || "共享（旧）")}</td><td>${fold.fold + 1}</td><td>${fold.tuning_start}</td><td>${fold.test_start} → ${fold.test_end}</td><td>${fold.selected_epochs ?? "闭式"}</td><td>${fold.pretest_sequences ?? fold.generator_fit_rows ?? "—"}</td><td>${fold.outer_test_predictions}</td><td>${formatNumber(fold.tuning_best_validation_loss ?? fold.tuning_metrics?.log_loss, 4)}</td></tr>`).join("");
-}
-
-function renderSymbolMetrics(rows) {
-  const section = document.querySelector("#symbol-results");
-  const table = document.querySelector("#symbol-metrics-table");
-  section.classList.toggle("hidden", !rows.length);
-  table.innerHTML = rows.map(row => `<tr><td>${escapeHtml(row.symbol)}</td><td>${formatInteger(row.oos_predictions)}</td><td>${formatPercent(row.accuracy)}</td><td>${formatPercent(row.balanced_accuracy)}</td><td>${formatPercent(row.majority_baseline)}</td><td>${formatNumber(row.brier_score, 4)}</td><td>${formatNumber(row.log_loss, 4)}</td><td>${formatPercent(row.backtest?.total_return)}</td><td>${formatPercent(Math.abs(Number(row.backtest?.max_drawdown)))}</td></tr>`).join("");
-}
-
-function renderArtifacts(job, artifacts) {
-  const cache = `?v=${encodeURIComponent(job.finished_at || Date.now())}`;
-  setImage("equity-image", artifacts["equity_drawdown.png"], cache);
-  setImage("residual-image", artifacts["residuals.png"], cache);
-  setImage("calibration-image", artifacts["calibration_acf.png"], cache);
-  const row = document.querySelector("#download-row");
-  const names = { "evaluation.json": "评估数据", "predictions.json": "OOS 预测", "fk-diagnostics.json": "FK 场诊断", "run-summary.json": "运行摘要", "repair-stage-report.md": "阶段报告", "sector-flow-report.md": "水势报告", "ranking.csv": "排名明细", "predictions.csv": "预测明细" };
-  row.innerHTML = Object.entries(names).filter(([name]) => artifacts[name]).map(([name, label]) => `<a href="${artifacts[name]}" download>${label}</a>`).join("");
-}
-
-function setImage(id, source, cache) {
-  const image = document.querySelector(`#${id}`);
-  const wrapper = image.closest(".report-image-wrap");
-  wrapper.classList.toggle("hidden", !source);
-  if (source) image.src = source + cache;
-  else image.removeAttribute("src");
-}
-
-async function openSymbolDialog() {
-  const dialog = document.querySelector("#symbol-dialog");
-  if (!state.symbols.length) {
-    const path = document.querySelector("[name=database_path]").value;
-    try {
-      state.symbols = (await api(`/api/symbols?limit=200&database_path=${encodeURIComponent(path)}`)).symbols;
-    } catch (exception) {
-      document.querySelector("#form-error").textContent = exception.message;
-      return;
-    }
-  }
-  state.dialogSelected = selectedSymbols();
-  renderSymbolOptions();
-  dialog.showModal();
-  icons();
-}
-
-function selectedSymbols() {
-  return new Set(document.querySelector("[name=symbols]").value.split(/[\s,;]+/).filter(Boolean));
-}
-
-function renderSymbolOptions(filter = "") {
-  const values = state.symbols.filter(symbol => symbol.includes(filter.trim()));
-  const list = document.querySelector("#symbol-list");
-  list.replaceChildren(...values.map(symbol => {
-    const label = document.createElement("label");
-    label.className = "symbol-option";
-    label.innerHTML = `<input type="checkbox" value="${escapeHtml(symbol)}" ${state.dialogSelected.has(symbol) ? "checked" : ""}><span>${escapeHtml(symbol)}</span>`;
-    label.querySelector("input").addEventListener("change", event => {
-      if (event.target.checked) state.dialogSelected.add(symbol);
-      else state.dialogSelected.delete(symbol);
-      updateSelectedCount();
-    });
-    return label;
-  }));
-  updateSelectedCount();
-}
-
-function updateSelectedCount() {
-  const count = state.dialogSelected.size;
-  document.querySelector("#selected-count").textContent = `已选 ${count}`;
-}
-
-function applySymbols() {
-  const values = [...state.dialogSelected];
-  document.querySelector("[name=symbols]").value = values.join(", ");
-  document.querySelector("#symbol-dialog").close();
-}
-
-function setupEvents() {
-  document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
-  document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
-  document.querySelectorAll("[name=strategy]").forEach(field => field.addEventListener("change", changeStrategy));
-  document.querySelector("#repair-variant").addEventListener("change", () => {
-    setNextExperimentName("holo-repair");
-    syncStrategySelection();
-  });
-  for (const name of ["velocity_bins", "holographic_volume_bins", "latent_states", "transition_rank", "sequence_length", "strong_threshold_sigma", "return_standardization_lookback", "return_standardization_min_observations", "d_model", "heads", "auxiliary_gate_floor", "auxiliary_gate_initial"]) {
-    document.querySelector(`[name=${name}]`).addEventListener("input", syncModelConstraints);
-  }
-  document.querySelector("#refresh-button").addEventListener("click", refreshAll);
-  document.querySelector("#edit-history-button").addEventListener("click", () => {
-    state.historyEditing = !state.historyEditing;
-    if (!state.historyEditing) state.historySelected.clear();
-    renderJobList();
-  });
-  document.querySelector("#history-select-all").addEventListener("change", event => {
-    const eligible = state.jobs.filter(job => !["queued", "running"].includes(job.status));
-    state.historySelected.clear();
-    if (event.target.checked) eligible.forEach(job => state.historySelected.add(job.id));
-    renderJobList();
-  });
-  document.querySelector("#batch-delete-button").addEventListener("click", deleteSelectedJobs);
-  document.querySelector("#choose-symbols").addEventListener("click", openSymbolDialog);
-  document.querySelector("#training-scope").addEventListener("change", syncDatasetSelection);
-  document.querySelector("#dataset-select").addEventListener("change", syncDatasetSelection);
-  document.querySelector("#boundary-data-build").addEventListener("click", buildBoundaryData);
-  document.querySelectorAll("[data-boundary-tab]").forEach(button => {
-    button.addEventListener("click", () => switchBoundaryResultTab(button.dataset.boundaryTab));
-  });
-  document.querySelectorAll("[data-percolation-tab]").forEach(button => {
-    button.addEventListener("click", () => switchPercolationResultTab(button.dataset.percolationTab));
-  });
-  document.querySelector("#apply-symbols").addEventListener("click", applySymbols);
-  document.querySelector("#symbol-search").addEventListener("input", event => renderSymbolOptions(event.target.value));
-  document.querySelector("#select-all").addEventListener("click", () => { document.querySelectorAll("#symbol-list input").forEach(item => { item.checked = true; state.dialogSelected.add(item.value); }); updateSelectedCount(); });
-  document.querySelector("#clear-symbols").addEventListener("click", () => { state.dialogSelected.clear(); document.querySelectorAll("#symbol-list input").forEach(item => item.checked = false); updateSelectedCount(); });
-  document.querySelector("#cancel-button").addEventListener("click", async () => { if (state.selectedId) { await api(`/api/jobs/${state.selectedId}/cancel`, { method: "POST" }); refreshAll(); } });
-  document.querySelector("#open-config").addEventListener("click", () => document.querySelector("#config-panel").classList.add("open"));
-  document.querySelector("#close-config").addEventListener("click", () => document.querySelector("#config-panel").classList.remove("open"));
-  document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(item => item.classList.toggle("active", item === tab));
-    document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("hidden", panel.dataset.panel !== tab.dataset.tab));
-  }));
-}
-
-async function deleteSelectedJobs() {
-  const jobs = state.jobs.filter(
-    job => state.historySelected.has(job.id) && !["queued", "running"].includes(job.status),
-  );
-  if (!jobs.length || state.historyDeleting) return;
-  if (!window.confirm(`确定删除选中的 ${jobs.length} 个测试及其全部检查点和报告吗？此操作不可撤销。`)) return;
-  state.historyDeleting = true;
-  renderJobList();
-  const results = await Promise.allSettled(
-    jobs.map(job => api(`/api/jobs/${encodeURIComponent(job.id)}`, { method: "DELETE" })),
-  );
-  const deletedIds = new Set(
-    results
-      .map((result, index) => result.status === "fulfilled" ? jobs[index].id : null)
-      .filter(Boolean),
-  );
-  state.jobs = state.jobs.filter(job => !deletedIds.has(job.id));
-  deletedIds.forEach(identifier => {
-    state.historySelected.delete(identifier);
-    state.resultScopeByJob.delete(identifier);
-    state.boundaryResultCache.delete(identifier);
-    state.boundaryTabByJob.delete(identifier);
-    for (const key of state.symbolReportCache.keys()) {
-      if (key.startsWith(`${identifier}:`)) state.symbolReportCache.delete(key);
-    }
-  });
-  if (deletedIds.has(state.selectedId)) state.selectedId = state.jobs[0]?.id || null;
-  const failures = results.filter(result => result.status === "rejected");
-  state.historyDeleting = false;
-  if (!failures.length) {
-    state.historyEditing = false;
-    state.historySelected.clear();
-  }
-  renderJobList();
-  await refreshAll();
-  if (failures.length) {
-    window.alert(`已删除 ${deletedIds.size} 个，${failures.length} 个删除失败：${failures[0].reason.message}`);
+    state.selectedId = job.id;
+    await refreshJobs();
+    $('[name="name"]').value = nextName(strategy());
+  } catch (error) {
+    $("#form-error").textContent = error.message;
   }
 }
 
-function formatDate(value) { return new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }
-function formatNumber(value, digits = 2) { return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—"; }
-function formatInteger(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString("zh-CN") : "—"; }
-function formatPercent(value) { return Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(2)}%` : "—"; }
-function formatMemory(value) { const mib = Number(value || 0); return mib >= 1024 ? `${(mib / 1024).toFixed(2)} GB` : `${Math.round(mib)} MiB`; }
-function elapsed(start, end) { const seconds = Math.max(0, (new Date(end || Date.now()) - new Date(start)) / 1000); return seconds < 60 ? `${Math.floor(seconds)} 秒` : `${Math.floor(seconds / 60)} 分 ${Math.floor(seconds % 60)} 秒`; }
-function escapeHtml(value) { return String(value).replace(/[&<>"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[character])); }
-
-async function initialize() {
-  setupEvents();
+async function init() {
   state.config = await api("/api/config");
-  setupDatasets(state.config.datasets);
-  setupRepairVariants(state.config.repair_variants);
+  renderDatasets();
+  $("#device-select").innerHTML = (state.config.devices || []).map((item) =>
+    '<option value="' + item.id + '">' + item.name + "</option>").join("");
   fillForm(state.config.defaults);
-  setupDevices(state.config.devices);
-  await refreshAll();
-  setNextExperimentName();
-  icons();
-  setInterval(refreshAll, 2500);
+  await refreshJobs();
+  syncStrategy();
+  $$('input[name="strategy"]').forEach((input) =>
+    input.addEventListener("change", syncStrategy));
+  $("#experiment-form").addEventListener("submit", submit);
+  $("#refresh-button").addEventListener("click", refreshJobs);
+  $("#boundary-data-build").addEventListener("click", buildBoundaryData);
+  $("#edit-history-button").addEventListener("click", () => {
+    state.editing = !state.editing;
+    state.selected.clear();
+    $("#edit-history-button").textContent = state.editing ? "完成" : "编辑";
+    renderJobs();
+  });
+  $("#history-select-all").addEventListener("change", (event) => {
+    state.selected = event.target.checked
+      ? new Set(state.jobs.map((item) => item.id)) : new Set();
+    renderJobs();
+  });
+  $("#batch-delete-button").addEventListener("click", async () => {
+    for (const id of state.selected) {
+      await api("/api/jobs/" + encodeURIComponent(id), {method: "DELETE"});
+    }
+    state.selected.clear();
+    state.selectedId = null;
+    await refreshJobs();
+  });
+  $$("#result-tabs button").forEach((button) =>
+    button.addEventListener("click", () => setTab(button.dataset.tab)));
+  window.setInterval(refreshJobs, 3000);
 }
 
-initialize().catch(exception => {
-  document.querySelector("#job-subtitle").textContent = exception.message;
+init().catch((error) => {
+  $("#form-error").textContent = error.message;
 });

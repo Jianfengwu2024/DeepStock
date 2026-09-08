@@ -28,20 +28,6 @@ class BoundaryEvaluationConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class BoundaryForecastObservation:
-    signal_time: np.datetime64
-    available_at: np.datetime64
-    target_time: np.datetime64
-    training_cutoff: np.datetime64
-    model_version: str
-    forecast: BoundaryFeynmanKacForecast
-    actual_return: float
-    neutral_threshold: float
-    decision: BoundaryPolicyDecision
-    gross_strategy_return: float
-
-
-@dataclass(frozen=True, slots=True)
 class TwoBranchForecastObservation:
     signal_time: np.datetime64
     available_at: np.datetime64
@@ -101,109 +87,6 @@ class BoundaryEvaluationMetrics:
     direction_signal_bear_precision: float = 0.0
     failed_buy_orders: int = 0
     failed_sell_orders: int = 0
-
-
-def evaluate_boundary_forecasts(
-    observations: tuple[BoundaryForecastObservation, ...],
-    config: BoundaryEvaluationConfig | None = None,
-) -> BoundaryEvaluationMetrics:
-    settings = config or BoundaryEvaluationConfig()
-    if not observations:
-        raise ValueError("boundary evaluation requires observations")
-    for item in observations:
-        _validate_observation(item)
-
-    probabilities = np.asarray(
-        [item.forecast.raw_state_probabilities for item in observations],
-        dtype=np.float64,
-    )
-    actual_returns = np.asarray([item.actual_return for item in observations])
-    actual_classes = np.asarray(
-        [_return_class(item.actual_return, item.neutral_threshold) for item in observations]
-    )
-    predicted_classes = np.argmax(probabilities, axis=1)
-    one_hot = np.eye(3, dtype=np.float64)[actual_classes]
-    selected_probability = probabilities[np.arange(len(observations)), actual_classes]
-    log_loss = -float(np.mean(np.log(np.clip(selected_probability, 1e-12, 1.0))))
-    brier = float(np.mean(np.sum(np.square(probabilities - one_hot), axis=1)))
-
-    confidence = probabilities.max(axis=1)
-    correct = predicted_classes == actual_classes
-    ece = _expected_calibration_error(confidence, correct, settings.calibration_bins)
-    crps = float(
-        np.mean(
-            [
-                _normal_crps(
-                    item.forecast.expected_return,
-                    sqrt(max(item.forecast.total_return_variance, 1e-16)),
-                    item.actual_return,
-                )
-                for item in observations
-            ]
-        )
-    )
-    interval_z = _normal_quantile((1.0 + settings.coverage_probability) * 0.5)
-    covered = [
-        abs(item.actual_return - item.forecast.expected_return)
-        <= interval_z * sqrt(max(item.forecast.total_return_variance, 0.0))
-        for item in observations
-    ]
-
-    exposure = np.asarray(
-        [sum(item.decision.target_weights) for item in observations], dtype=np.float64
-    )
-    opened = exposure > 0.0
-    gross_returns = np.asarray(
-        [item.gross_strategy_return if is_open else 0.0 for item, is_open in zip(observations, opened)]
-    )
-    turnover = opened.astype(np.float64) * 2.0
-    net_returns = gross_returns - turnover * settings.transaction_cost_bps / 10_000.0
-    gross_equity = np.cumprod(1.0 + gross_returns)
-    net_equity = np.cumprod(1.0 + net_returns)
-    probability_residual = one_hot[:, 2] - probabilities[:, 2]
-    expected_drift = np.asarray(
-        [item.forecast.expected_drift for item in observations], dtype=np.float64
-    )
-    tradable = _tradable_direction_statistics(actual_classes, predicted_classes)
-
-    return BoundaryEvaluationMetrics(
-        observations=len(observations),
-        log_loss=log_loss,
-        brier_score=brier,
-        ece=ece,
-        crps=crps,
-        interval_coverage=float(np.mean(covered)),
-        balanced_accuracy=_balanced_accuracy(actual_classes, predicted_classes),
-        macro_f1=_macro_f1(actual_classes, predicted_classes),
-        probability_residual_autocorrelation=_lag_one_autocorrelation(probability_residual),
-        gross_total_return=float(gross_equity[-1] - 1.0),
-        net_total_return=float(net_equity[-1] - 1.0),
-        maximum_drawdown=_maximum_drawdown(net_equity),
-        average_turnover=float(np.mean(turnover)),
-        average_exposure=float(np.mean(exposure)),
-        open_rate=float(np.mean(opened)),
-        profit_concentration=_profit_concentration(net_returns[opened]),
-        direction_counts=tuple(
-            int(np.sum(predicted_classes == label)) for label in range(3)
-        ),
-        drift_rank_ic=_rank_correlation(expected_drift, actual_returns),
-        drift_direction_accuracy=float(
-            np.mean(np.sign(expected_drift) == np.sign(actual_returns))
-        ),
-        drift_balanced_accuracy=_binary_balanced_direction_accuracy(
-            actual_returns, expected_drift
-        ),
-        directional_observations=tradable.directional_observations,
-        direction_signal_count=tradable.signal_count,
-        direction_signal_coverage=tradable.coverage,
-        direction_signal_accuracy=tradable.accuracy,
-        direction_signal_majority_baseline=tradable.majority_baseline,
-        direction_signal_balanced_accuracy=tradable.balanced_accuracy,
-        direction_signal_bull_count=tradable.bull_count,
-        direction_signal_bear_count=tradable.bear_count,
-        direction_signal_bull_precision=tradable.bull_precision,
-        direction_signal_bear_precision=tradable.bear_precision,
-    )
 
 
 def evaluate_two_branch_forecasts(
@@ -328,27 +211,6 @@ def evaluate_two_branch_forecasts(
         failed_buy_orders=int(sum(item.failed_buy_orders for item in observations)),
         failed_sell_orders=int(sum(item.failed_sell_orders for item in observations)),
     )
-
-
-def _validate_observation(item: BoundaryForecastObservation) -> None:
-    signal = np.datetime64(item.signal_time, "ns")
-    available = np.datetime64(item.available_at, "ns")
-    target = np.datetime64(item.target_time, "ns")
-    cutoff = np.datetime64(item.training_cutoff, "ns")
-    if cutoff > signal:
-        raise ValueError("training_cutoff cannot exceed signal_time")
-    if available < signal or available >= target:
-        raise ValueError("available_at must lie between signal_time and target_time")
-    if target <= signal:
-        raise ValueError("target_time must follow signal_time")
-    if not item.model_version:
-        raise ValueError("model_version is required")
-    values = (item.actual_return, item.neutral_threshold, item.gross_strategy_return)
-    if any(not np.isfinite(value) for value in values) or item.neutral_threshold < 0.0:
-        raise ValueError("boundary evaluation returns and threshold must be finite")
-    probabilities = np.asarray(item.forecast.raw_state_probabilities)
-    if np.any(probabilities < 0.0) or not np.isclose(probabilities.sum(), 1.0, atol=1e-8):
-        raise ValueError("raw state probabilities must form a distribution")
 
 
 def _validate_two_branch_observation(item: TwoBranchForecastObservation) -> None:

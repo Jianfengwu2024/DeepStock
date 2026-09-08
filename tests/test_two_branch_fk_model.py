@@ -9,7 +9,6 @@ from bnhmm.boundary_fk.branch_model import (
     BayesianBranchModel,
     BayesianBranchModelConfig,
     BayesianBranchPosterior,
-    BayesianConvectionDriftPosterior,
     DRIFT_FEATURE_NAMES,
 )
 from bnhmm.boundary_fk.convection import CONVECTION_POTENTIAL_FEATURE_NAMES
@@ -30,25 +29,18 @@ def _dataset(rows: int = 80) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
     rng = np.random.default_rng(17)
     sessions = np.busday_offset(np.datetime64("2024-01-02"), np.arange(rows))
     feature_names = (
-        "return_1d",
-        "return_mean_5",
-        "return_mean_20",
-        "volatility_20",
-        "coherence_1d",
-        "signed_path_efficiency",
-        "path_efficiency_delta_1d",
-        "path_direction_consistency_3d",
-        "signed_member_synchronization",
+        "rolling_log_position_60d",
+        "rolling_drift_60d",
+        "rolling_diffusion_60d",
+        "rolling_path_efficiency_60d",
     )
     values = rng.normal(0.0, 0.01, size=(rows, 2, len(feature_names)))
-    values[:, :, 3] = 0.01
-    values[:, :, 4] = 0.8
-    values[:, :, 5] = rng.uniform(-1.0, 1.0, size=(rows, 2))
-    values[1:, :, 6] = np.diff(values[:, :, 5], axis=0)
-    values[:, :, 7] = np.sign(values[:, :, 5])
-    values[:, :, 8] = np.sign(values[:, :, 5]) * 0.8
+    values[:, :, 3] = rng.uniform(-1.0, 1.0, size=(rows, 2))
+    values[:, :, 0] = values[:, :, 3] * 0.10
+    values[:, :, 1] = values[:, :, 3] * 0.001
+    values[:, :, 2] = np.abs(rng.normal(0.001, 0.0001, size=(rows, 2)))
     next_return = np.column_stack(
-        (0.02 * values[:, 0, 5], -0.02 * values[:, 1, 5])
+        (0.02 * values[:, 0, 3], -0.02 * values[:, 1, 3])
     ) + rng.normal(0.0, 0.001, size=(rows, 2))
     target = np.full(rows, np.datetime64("NaT", "ns"), dtype="datetime64[ns]")
     target[:-1] = sessions[1:].astype("datetime64[ns]")
@@ -126,47 +118,6 @@ def test_disruption_potential_has_beta0_and_one_day_reverse_flow() -> None:
     assert design[0] == 1.0
 
 
-def test_c1_only_potential_fixes_beta0_to_zero() -> None:
-    states, labels = _dataset(rows=140)
-    potential_features, potential_valid = _potential_inputs(states)
-
-    posterior = BayesianBranchModel(
-        BayesianBranchModelConfig(minimum_rows=30, potential_mode="c1_only")
-    ).fit(
-        states,
-        labels,
-        potential_features=potential_features,
-        potential_valid=potential_valid,
-        branch=0,
-        training_cutoff=labels.target_time[120],
-    )
-
-    assert posterior.potential_mode == "c1_only"
-    assert posterior.potential_mean[0] == 0.0
-    assert posterior.potential_mean[1] >= 0.0
-    assert posterior.potential_covariance[0, 0] == 0.0
-
-
-def test_beta0_only_potential_fixes_c1_coefficient_to_zero() -> None:
-    states, labels = _dataset(rows=140)
-    potential_features, potential_valid = _potential_inputs(states)
-
-    posterior = BayesianBranchModel(
-        BayesianBranchModelConfig(minimum_rows=30, potential_mode="beta0_only")
-    ).fit(
-        states,
-        labels,
-        potential_features=potential_features,
-        potential_valid=potential_valid,
-        branch=0,
-        training_cutoff=labels.target_time[120],
-    )
-
-    assert posterior.potential_mode == "beta0_only"
-    assert posterior.potential_mean[1] == 0.0
-    assert posterior.potential_covariance[1, 1] == 0.0
-
-
 def test_direction_model_uses_the_minimal_causal_feature_set() -> None:
     states, labels = _intraday_dataset()
     cutoff = labels.target_time[59]
@@ -179,8 +130,8 @@ def test_direction_model_uses_the_minimal_causal_feature_set() -> None:
         training_cutoff=cutoff,
     )
     assert DRIFT_FEATURE_NAMES == (
-        "signed_path_efficiency",
-        "signed_member_synchronization",
+        "rolling_log_position_60d",
+        "rolling_path_efficiency_60d",
     )
     assert posterior.drift_feature_names == DRIFT_FEATURE_NAMES
     assert posterior.drift_model == "bayesian_direction_logit"
@@ -189,6 +140,8 @@ def test_direction_model_uses_the_minimal_causal_feature_set() -> None:
     assert np.all(posterior.drift_center == 0.0)
     with pytest.raises(TypeError):
         BayesianBranchModelConfig(drift_feature_set="legacy")
+    with pytest.raises(TypeError):
+        BayesianBranchModelConfig(potential_mode="c1_only")
 
 
 def test_direction_model_learns_a_prior_shrunk_positive_drift_baseline() -> None:
@@ -265,26 +218,25 @@ def test_balanced_direction_labels_keep_the_drift_baseline_near_zero() -> None:
     assert abs(posterior.drift_mean[0]) < 0.05
 
 
-def test_direction_model_accepts_the_best_ordered_feature_subset() -> None:
+def test_direction_model_rejects_removed_daily_reset_features() -> None:
     features = (
         "signed_path_efficiency",
         "signed_member_synchronization",
     )
 
-    config = BayesianBranchModelConfig(drift_feature_names=features)
-
-    assert config.drift_feature_names == features
+    with pytest.raises(ValueError, match="rolling 60-session drift features"):
+        BayesianBranchModelConfig(drift_feature_names=features)
 
 
 def test_direction_model_excludes_ambiguous_training_returns() -> None:
     states, labels = _dataset(rows=100)
-    driver = np.sign(states.feature("signed_path_efficiency")[:, 0])
+    driver = np.sign(states.feature("rolling_path_efficiency_60d")[:, 0])
     changed_returns = labels.next_return.copy()
     changed_returns[:79, 0] = -driver[:79] * 0.0001
     changed_returns[::4, 0] = driver[::4] * 0.01
     changed = replace(labels, next_return=changed_returns)
     cutoff = labels.target_time[78]
-    features = ("signed_path_efficiency", "signed_member_synchronization")
+    features = DRIFT_FEATURE_NAMES
 
     unfiltered = _fit_branch(
         BayesianBranchModel(
@@ -387,7 +339,7 @@ def test_one_day_potential_has_no_future_market_feature() -> None:
 def test_recent_weighted_drift_follows_the_new_market_regime() -> None:
     states, labels = _dataset(rows=140)
     changed_returns = labels.next_return.copy()
-    driver = states.feature("signed_path_efficiency")[:, 0]
+    driver = states.feature("rolling_path_efficiency_60d")[:, 0]
     changed_returns[:70, 0] = driver[:70]
     changed_returns[70:139, 0] = -driver[70:139]
     changed = replace(labels, next_return=changed_returns)
@@ -421,7 +373,7 @@ def test_effective_potential_is_confidence_not_a_second_drift_shrinkage() -> Non
     states, labels = _dataset()
     base = BayesianBranchPosterior(
         branch=0,
-        drift_feature_names=("signed_path_efficiency",),
+        drift_feature_names=("rolling_path_efficiency_60d",),
         drift_center=np.zeros(1),
         drift_scale=np.ones(1),
         drift_mean=np.asarray([0.02, 0.0]),
@@ -460,102 +412,11 @@ def test_effective_potential_is_confidence_not_a_second_drift_shrinkage() -> Non
     assert high.expected_effective_potential > low.expected_effective_potential
 
 
-def test_signed_convection_correction_can_flip_bearish_drift_to_bullish() -> None:
-    states, _ = _dataset()
-    posterior = BayesianBranchPosterior(
-        branch=0,
-        drift_feature_names=("signed_path_efficiency",),
-        drift_center=np.zeros(1),
-        drift_scale=np.ones(1),
-        drift_mean=np.asarray([-0.01, 0.0]),
-        drift_covariance=np.eye(2) * 1e-12,
-        diffusion_variance=1e-6,
-        potential_feature_names=CONVECTION_POTENTIAL_FEATURE_NAMES,
-        potential_center=np.zeros(1),
-        potential_scale=np.ones(1),
-        potential_mean=np.asarray([-8.0, 0.0]),
-        potential_covariance=np.eye(2) * 1e-12,
-        training_cutoff=np.datetime64("2024-01-01"),
-        fit_rows=60,
-    )
-    correction = BayesianConvectionDriftPosterior(
-        feature_names=("signed_reverse_flow_1d",),
-        scale=np.ones(1),
-        mean=np.asarray([0.03]),
-        covariance=np.eye(1) * 1e-12,
-        fit_rows=40,
-    )
-
-    forecast = BranchFeynmanKacForecaster(
-        BoundaryFeynmanKacConfig(
-            paths=5000,
-            seed=31,
-            use_convection_drift_correction=True,
-        )
-    ).predict(
-        posterior,
-        states,
-        row=40,
-        potential_features=np.asarray([0.2]),
-        convection_drift_posterior=correction,
-        convection_drift_features=np.asarray([1.0]),
-        neutral_threshold=0.002,
-    )
-
-    assert forecast.expected_base_drift < 0.0
-    assert forecast.expected_convection_drift_correction > 0.0
-    assert forecast.expected_drift > 0.0
-    assert forecast.bullish_drift_probability > 0.99
-
-
-def test_zero_convection_correction_preserves_common_fk_random_paths() -> None:
-    states, labels = _dataset()
-    posterior = _fit_branch(
-        BayesianBranchModel(BayesianBranchModelConfig(minimum_rows=30)),
-        states,
-        labels,
-        branch=0,
-        training_cutoff=labels.target_time[59],
-    )
-    correction = BayesianConvectionDriftPosterior(
-        feature_names=("signed_reverse_flow_1d",),
-        scale=np.ones(1),
-        mean=np.zeros(1),
-        covariance=np.zeros((1, 1)),
-        fit_rows=40,
-    )
-    kwargs = {
-        "posterior": posterior,
-        "states": states,
-        "row": 40,
-        "potential_features": np.asarray([0.2]),
-        "neutral_threshold": 0.002,
-    }
-
-    baseline = BranchFeynmanKacForecaster(
-        BoundaryFeynmanKacConfig(paths=5000, seed=37)
-    ).predict(**kwargs)
-    corrected = BranchFeynmanKacForecaster(
-        BoundaryFeynmanKacConfig(
-            paths=5000,
-            seed=37,
-            use_convection_drift_correction=True,
-        )
-    ).predict(
-        **kwargs,
-        convection_drift_posterior=correction,
-        convection_drift_features=np.asarray([1.0]),
-    )
-
-    assert corrected.raw_state_probabilities == baseline.raw_state_probabilities
-    assert corrected.expected_effective_potential == baseline.expected_effective_potential
-
-
 def test_branch_ablation_disables_one_day_potential() -> None:
     states, _ = _dataset()
     posterior = BayesianBranchPosterior(
         branch=0,
-        drift_feature_names=("signed_path_efficiency",),
+        drift_feature_names=("rolling_path_efficiency_60d",),
         drift_center=np.zeros(1),
         drift_scale=np.ones(1),
         drift_mean=np.asarray([0.0015, 0.0]),
@@ -599,11 +460,13 @@ def test_branch_ablation_disables_one_day_potential() -> None:
 def test_direction_sign_is_not_flipped_by_monte_carlo_seed() -> None:
     states, _ = _dataset()
     row = int(
-        np.flatnonzero(states.feature("signed_path_efficiency")[:, 0] > 0.0)[0]
+        np.flatnonzero(
+            states.feature("rolling_path_efficiency_60d")[:, 0] > 0.0
+        )[0]
     )
     posterior = BayesianBranchPosterior(
         branch=0,
-        drift_feature_names=("signed_path_efficiency",),
+        drift_feature_names=("rolling_path_efficiency_60d",),
         drift_center=np.zeros(1),
         drift_scale=np.ones(1),
         drift_mean=np.asarray([0.0, 1e-4]),
