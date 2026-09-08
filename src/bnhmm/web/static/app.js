@@ -82,7 +82,7 @@ function syncStrategy() {
   $("#boundary-fields").classList.toggle("hidden", kind !== "boundary-flow-fk");
   $("#dataset-field").classList.toggle("hidden", kind === "bnhmm");
   syncStrategyControlAvailability();
-  if (kind === "boundary-flow-fk") checkBoundaryData();
+  if (kind === "boundary-flow-fk") applyDataset();
 }
 
 function renderDatasets() {
@@ -97,10 +97,14 @@ function renderDatasets() {
 function applyDataset() {
   const dataset = state.config.datasets.find((item) => item.dataset_id === $("#dataset-select").value);
   if (!dataset) return;
+  const start = (dataset.data_start || dataset.start || "").slice(0, 10);
+  const end = (dataset.data_end || dataset.end || "").slice(0, 10);
   $('[name="database_path"]').value = dataset.database_path;
   $('[name="symbols"]').value = dataset.symbols.join(",");
+  if (start) $('[name="start"]').value = start;
+  if (end) $('[name="end"]').value = end;
   $("#dataset-summary").textContent = dataset.symbols.length + " 只股票 · " +
-    (dataset.start || "") + " 至 " + (dataset.end || "");
+    start + " 至 " + end;
   checkBoundaryData();
 }
 
@@ -130,7 +134,8 @@ async function checkBoundaryData() {
   if (!isFk() || !$("#dataset-select").value) return;
   try {
     const result = await api("/api/boundary-data/status/" + encodeURIComponent($("#dataset-select").value));
-    const variant = (result.variants || []).find((item) => item.lookback_sessions === 60);
+    const variants = result.cache?.variants || result.variants || [];
+    const variant = variants.find((item) => item.lookback_sessions === 60);
     $("#boundary-data-status").textContent = variant && variant.status === "ready"
       ? "已就绪（滚动60日锚点）" : "需要重建";
   } catch {
@@ -148,8 +153,8 @@ async function buildBoundaryData() {
       dataset_id: dataset.dataset_id,
       database_path: dataset.database_path,
       symbols: dataset.symbols,
-      start: dataset.start,
-      end: dataset.end,
+      start: $('[name="start"]').value,
+      end: $('[name="end"]').value,
     }),
   });
 }

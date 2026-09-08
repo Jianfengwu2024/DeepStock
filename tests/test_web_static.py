@@ -104,8 +104,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.29.0', html)
-        self.assertIn('/static/styles.css?v=0.29.0', html)
+        self.assertIn('/static/app.js?v=0.29.1', html)
+        self.assertIn('/static/styles.css?v=0.29.1', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('id="boundary-data-build"', html)
         self.assertIn('id="boundary-data-status"', html)
@@ -132,6 +132,16 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             "运行摘要",
         ):
             self.assertIn(tab, html)
+
+    def test_fk_dataset_switch_uses_catalog_dates_and_nested_cache_status(self) -> None:
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('const start = (dataset.data_start || dataset.start || "").slice(0, 10);', script)
+        self.assertIn('const end = (dataset.data_end || dataset.end || "").slice(0, 10);', script)
+        self.assertIn('const variants = result.cache?.variants || result.variants || [];', script)
+        self.assertIn('if (kind === "boundary-flow-fk") applyDataset();', script)
+        self.assertIn('start: $(\'[name="start"]\').value,', script)
+        self.assertIn('end: $(\'[name="end"]\').value,', script)
 
     def test_fk_policy_is_described_without_obsolete_strategy_variants(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
