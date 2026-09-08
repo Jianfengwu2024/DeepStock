@@ -95,6 +95,10 @@ class BoundaryEvaluationMetrics:
     direction_signal_accuracy: float = 0.0
     direction_signal_majority_baseline: float = 0.5
     direction_signal_balanced_accuracy: float = 0.0
+    direction_signal_bull_count: int = 0
+    direction_signal_bear_count: int = 0
+    direction_signal_bull_precision: float = 0.0
+    direction_signal_bear_precision: float = 0.0
     failed_buy_orders: int = 0
     failed_sell_orders: int = 0
 
@@ -195,6 +199,10 @@ def evaluate_boundary_forecasts(
         direction_signal_accuracy=tradable.accuracy,
         direction_signal_majority_baseline=tradable.majority_baseline,
         direction_signal_balanced_accuracy=tradable.balanced_accuracy,
+        direction_signal_bull_count=tradable.bull_count,
+        direction_signal_bear_count=tradable.bear_count,
+        direction_signal_bull_precision=tradable.bull_precision,
+        direction_signal_bear_precision=tradable.bear_precision,
     )
 
 
@@ -313,6 +321,10 @@ def evaluate_two_branch_forecasts(
         direction_signal_accuracy=tradable.accuracy,
         direction_signal_majority_baseline=tradable.majority_baseline,
         direction_signal_balanced_accuracy=tradable.balanced_accuracy,
+        direction_signal_bull_count=tradable.bull_count,
+        direction_signal_bear_count=tradable.bear_count,
+        direction_signal_bull_precision=tradable.bull_precision,
+        direction_signal_bear_precision=tradable.bear_precision,
         failed_buy_orders=int(sum(item.failed_buy_orders for item in observations)),
         failed_sell_orders=int(sum(item.failed_sell_orders for item in observations)),
     )
@@ -432,6 +444,10 @@ class _TradableDirectionStatistics:
     accuracy: float
     majority_baseline: float
     balanced_accuracy: float
+    bull_count: int
+    bear_count: int
+    bull_precision: float
+    bear_precision: float
 
 
 def _tradable_direction_statistics(
@@ -450,11 +466,30 @@ def _tradable_direction_statistics(
     )
     if not signal_count:
         return _TradableDirectionStatistics(
-            directional_observations, 0, coverage, 0.0, 0.5, 0.0
+            directional_observations,
+            0,
+            coverage,
+            0.0,
+            0.5,
+            0.0,
+            0,
+            0,
+            0.0,
+            0.0,
         )
 
     actual_signals = actual[signaled]
     predicted_signals = predicted[signaled]
+    predicted_bull = predicted_signals == 2
+    predicted_bear = predicted_signals == 0
+    bull_count = int(np.sum(predicted_bull))
+    bear_count = int(np.sum(predicted_bear))
+    bull_precision = (
+        float(np.mean(actual_signals[predicted_bull] == 2)) if bull_count else 0.0
+    )
+    bear_precision = (
+        float(np.mean(actual_signals[predicted_bear] == 0)) if bear_count else 0.0
+    )
     accuracy = float(np.mean(predicted_signals == actual_signals))
     bullish_rate = float(np.mean(actual_signals == 2))
     majority_baseline = max(bullish_rate, 1.0 - bullish_rate)
@@ -475,6 +510,10 @@ def _tradable_direction_statistics(
         accuracy,
         majority_baseline,
         balanced_accuracy,
+        bull_count,
+        bear_count,
+        bull_precision,
+        bear_precision,
     )
 
 

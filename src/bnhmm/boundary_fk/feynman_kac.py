@@ -50,6 +50,8 @@ class BoundaryFeynmanKacForecast:
     conditional_bullish_probability: float = 0.5
     prior_bullish_probability: float = 0.5
     feature_log_odds_delta: float = 0.0
+    feature_bullish_probability: float = 0.5
+    minimum_feature_evidence_probability: float = 0.5
 
 
 class BoundaryFeynmanKacForecaster:
@@ -176,6 +178,8 @@ class BranchFeynmanKacForecaster:
         hurdle_direction_probability: np.ndarray | None = None
         prior_bullish_probability = 0.5
         feature_log_odds_delta = 0.0
+        feature_bullish_probability = 0.5
+        minimum_feature_evidence_probability = 0.5
         if hurdle_posterior is not None:
             if hurdle_posterior.branch != posterior.branch:
                 raise ValueError("hurdle and FK branch posteriors must align")
@@ -205,8 +209,11 @@ class BranchFeynmanKacForecaster:
             prior_bullish_probability = float(
                 np.mean(expit(direction_coefficients[:, 0]))
             )
-            feature_log_odds_delta = float(
-                np.mean(direction_coefficients[:, 1:] @ direction_design[1:])
+            feature_delta = direction_coefficients[:, 1:] @ direction_design[1:]
+            feature_log_odds_delta = float(np.mean(feature_delta))
+            feature_bullish_probability = float(np.mean(feature_delta > 0.0))
+            minimum_feature_evidence_probability = (
+                hurdle_posterior.minimum_feature_evidence_probability
             )
             base_drift = (
                 hurdle_move_probability
@@ -316,6 +323,10 @@ class BranchFeynmanKacForecaster:
             conditional_bullish_probability=float(np.mean(direction_probability)),
             prior_bullish_probability=prior_bullish_probability,
             feature_log_odds_delta=feature_log_odds_delta,
+            feature_bullish_probability=feature_bullish_probability,
+            minimum_feature_evidence_probability=(
+                minimum_feature_evidence_probability
+            ),
         )
 
 

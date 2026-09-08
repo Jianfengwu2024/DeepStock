@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import numpy as np
 
 from bnhmm.boundary_fk.branch_state import BRANCH_FEATURE_NAMES
-from bnhmm.boundary_fk.pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
+from bnhmm.boundary_fk.pipeline import (
+    BoundaryFlowPipeline,
+    BoundaryFlowPipelineConfig,
+    _passes_sector_direction_gate,
+)
 from bnhmm.boundary_fk.types import TwoBranchDailyStates, TwoBranchDataset, TwoBranchLabels
 
 
@@ -77,6 +82,7 @@ def test_pipeline_predicts_one_sector_without_branch_memberships(tmp_path) -> No
     assert result.model_names == (
         "SectorFK-LabelAligned",
         "SectorFK-BayesianHurdle",
+        "SectorFK-FeatureEvidence",
     )
     assert all(stage.metrics and stage.metrics.observations > 0 for stage in result.stages)
     predictions = json.loads((tmp_path / "feynman-kac-predictions.json").read_text())
@@ -107,6 +113,11 @@ def test_pipeline_predicts_one_sector_without_branch_memberships(tmp_path) -> No
     assert hurdle_posteriors
     assert hurdle_posteriors[0]["model_type"] == "bayesian_hurdle"
     assert hurdle_posteriors[0]["direction_label_sigma"] == 1e-12
+    evidence_posteriors = [
+        item for item in posteriors if item["model_name"] == "SectorFK-FeatureEvidence"
+    ]
+    assert evidence_posteriors
+    assert 0.5 <= evidence_posteriors[0]["minimum_feature_evidence_probability"] <= 0.95
 
 
 def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
@@ -126,13 +137,15 @@ def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
         "previous_day_direction",
         "path_efficiency_direction",
     }
-    assert len(report["models"]) == 2
-    assert report["preferred_model"] == "SectorFK-BayesianHurdle"
+    assert len(report["models"]) == 3
+    assert report["preferred_model"] == "SectorFK-FeatureEvidence"
     assert report["selection_rule"] == "fixed_predeclared_baseline"
     for model in report["models"]:
         metrics = model["metrics"]
         expected = (
             metrics["direction_signal_count"] >= 30
+            and metrics["direction_signal_bull_count"] >= 15
+            and metrics["direction_signal_bear_count"] >= 15
             and metrics["direction_signal_accuracy"]
             > metrics["direction_signal_majority_baseline"]
             and metrics["direction_signal_balanced_accuracy"] > 0.5
@@ -140,3 +153,29 @@ def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
         assert model["passed"] is expected
         assert model["promotion_eligible"] is expected
         assert model["monthly_direction_accuracy"]
+
+
+def test_sector_direction_gate_rejects_one_sided_predictions(tmp_path) -> None:
+    result = BoundaryFlowPipeline(
+        BoundaryFlowPipelineConfig(
+            minimum_train_sessions=30,
+            max_folds=1,
+            fk_paths=1000,
+            neutral_sigma=1e-12,
+            minimum_signal_to_noise=0.0,
+            minimum_survival_probability=0.0,
+        )
+    ).run(_direct_dataset(), tmp_path)
+    metrics = result.stages[0].metrics
+    assert metrics is not None
+    one_sided = replace(
+        metrics,
+        direction_signal_count=64,
+        direction_signal_accuracy=0.70,
+        direction_signal_majority_baseline=0.60,
+        direction_signal_balanced_accuracy=0.55,
+        direction_signal_bull_count=63,
+        direction_signal_bear_count=1,
+    )
+
+    assert not _passes_sector_direction_gate(one_sided)

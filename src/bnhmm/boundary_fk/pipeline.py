@@ -44,11 +44,16 @@ BOUNDARY_MODEL_NAMES = (
 SECTOR_MODEL_FEATURES = {
     "SectorFK-LabelAligned": ("signed_path_efficiency",),
     "SectorFK-BayesianHurdle": ("signed_path_efficiency",),
+    "SectorFK-FeatureEvidence": ("signed_path_efficiency",),
 }
 SECTOR_MODEL_NAMES = tuple(SECTOR_MODEL_FEATURES)
-SECTOR_HURDLE_MODELS = frozenset({"SectorFK-BayesianHurdle"})
-SECTOR_PRIMARY_MODEL = "SectorFK-BayesianHurdle"
+SECTOR_HURDLE_MODELS = frozenset(
+    {"SectorFK-BayesianHurdle", "SectorFK-FeatureEvidence"}
+)
+SECTOR_FEATURE_EVIDENCE_MODELS = frozenset({"SectorFK-FeatureEvidence"})
+SECTOR_PRIMARY_MODEL = "SectorFK-FeatureEvidence"
 MINIMUM_TRADABLE_DIRECTION_SIGNALS = 30
+MINIMUM_TRADABLE_SIGNALS_PER_SIDE = 15
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
 
@@ -58,6 +63,8 @@ def _passes_sector_direction_gate(
 ) -> bool:
     return (
         metrics.direction_signal_count >= MINIMUM_TRADABLE_DIRECTION_SIGNALS
+        and metrics.direction_signal_bull_count >= MINIMUM_TRADABLE_SIGNALS_PER_SIDE
+        and metrics.direction_signal_bear_count >= MINIMUM_TRADABLE_SIGNALS_PER_SIDE
         and metrics.direction_signal_accuracy
         > metrics.direction_signal_majority_baseline
         and metrics.direction_signal_balanced_accuracy > 0.5
@@ -67,6 +74,11 @@ def _passes_sector_direction_gate(
 def _sector_direction_failure_reason(metrics: BoundaryEvaluationMetrics) -> str:
     if metrics.direction_signal_count < MINIMUM_TRADABLE_DIRECTION_SIGNALS:
         return "fewer than 30 tradable bull/bear signals"
+    if (
+        metrics.direction_signal_bull_count < MINIMUM_TRADABLE_SIGNALS_PER_SIDE
+        or metrics.direction_signal_bear_count < MINIMUM_TRADABLE_SIGNALS_PER_SIDE
+    ):
+        return "fewer than 15 predicted signals on each bull/bear side"
     if metrics.direction_signal_accuracy <= metrics.direction_signal_majority_baseline:
         return "tradable direction accuracy did not beat its matched majority baseline"
     return "tradable bull/bear balanced accuracy did not beat 50 percent"
@@ -575,16 +587,26 @@ class BoundaryFlowPipeline:
         prediction_payloads: list[dict[str, object]] = []
         posterior_payloads: list[dict[str, object]] = []
         fit_rows: dict[str, list[int]] = {name: [] for name in SECTOR_MODEL_NAMES}
-        policy = BoundaryPolicy(
-            BoundaryPolicyConfig(
-                minimum_direction_probability=self.config.minimum_direction_probability,
-                minimum_significant_move_probability=(
-                    self.config.minimum_significant_move_probability
-                ),
-                minimum_signal_to_noise=self.config.minimum_signal_to_noise,
-                minimum_survival_probability=self.config.minimum_survival_probability,
+        policies = {
+            name: BoundaryPolicy(
+                BoundaryPolicyConfig(
+                    minimum_direction_probability=(
+                        self.config.minimum_direction_probability
+                    ),
+                    minimum_significant_move_probability=(
+                        self.config.minimum_significant_move_probability
+                    ),
+                    minimum_signal_to_noise=self.config.minimum_signal_to_noise,
+                    minimum_survival_probability=(
+                        self.config.minimum_survival_probability
+                    ),
+                    require_feature_evidence=(
+                        name in SECTOR_FEATURE_EVIDENCE_MODELS
+                    ),
+                )
             )
-        )
+            for name in SECTOR_MODEL_NAMES
+        }
         potential_names, potential_values, potential_valid = (
             convection_potential_features(data, 0)
         )
@@ -662,6 +684,10 @@ class BoundaryFlowPipeline:
                             "hurdle_direction_fit_rows": (
                                 hurdle_posterior.direction_fit_rows
                             ),
+                            "minimum_feature_evidence_probability": (
+                                hurdle_posterior.minimum_feature_evidence_probability
+                            ),
+                            "calibration_rows": hurdle_posterior.calibration_rows,
                         }
                     )
                 posterior_payloads.append(posterior_payload)
@@ -697,7 +723,7 @@ class BoundaryFlowPipeline:
                         neutral_threshold=threshold,
                         hurdle_posterior=hurdle_posteriors.get(model_name),
                     )
-                    decision = policy.decide(
+                    decision = policies[model_name].decide(
                         (forecast,),
                         branches=(selected_symbols,),
                         neutral_thresholds=(threshold,),
@@ -878,6 +904,12 @@ class BoundaryFlowPipeline:
                 ),
                 "prior_bullish_probability": forecast.prior_bullish_probability,
                 "feature_log_odds_delta": forecast.feature_log_odds_delta,
+                "feature_bullish_probability": (
+                    forecast.feature_bullish_probability
+                ),
+                "minimum_feature_evidence_probability": (
+                    forecast.minimum_feature_evidence_probability
+                ),
                 "expected_diffusion_variance": forecast.expected_diffusion_variance,
                 "actual_return": observation.actual_returns[0],
                 "neutral_threshold": observation.neutral_thresholds[0],

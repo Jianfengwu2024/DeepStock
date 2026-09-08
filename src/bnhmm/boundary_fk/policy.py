@@ -14,6 +14,7 @@ class BoundaryPolicyConfig:
     minimum_significant_move_probability: float = 0.50
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
+    require_feature_evidence: bool = False
 
     def __post_init__(self) -> None:
         if not 0.5 <= self.minimum_direction_probability <= 1.0:
@@ -150,10 +151,20 @@ class BoundaryPolicy:
             forecast.bullish_drift_probability
             >= self.config.minimum_direction_probability
         ):
+            if self.config.require_feature_evidence and (
+                forecast.feature_bullish_probability
+                < forecast.minimum_feature_evidence_probability
+            ):
+                return "flat"
             return "bull"
         if (
             forecast.bullish_drift_probability
             <= 1.0 - self.config.minimum_direction_probability
         ):
+            if self.config.require_feature_evidence and (
+                forecast.feature_bullish_probability
+                > 1.0 - forecast.minimum_feature_evidence_probability
+            ):
+                return "flat"
             return "bear"
         return "flat"

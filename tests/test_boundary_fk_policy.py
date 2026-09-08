@@ -252,6 +252,57 @@ def test_hurdle_abstains_when_a_significant_move_is_not_probable() -> None:
     assert not decision.open_position
 
 
+def test_prior_only_bullish_probability_cannot_trigger_feature_evidence_stage() -> None:
+    prior_only = replace(
+        _forecast("bull"),
+        significant_move_probability=0.8,
+        conditional_bullish_probability=0.9,
+        bullish_drift_probability=0.9,
+        prior_bullish_probability=0.9,
+        feature_log_odds_delta=0.0,
+        feature_bullish_probability=0.5,
+        minimum_feature_evidence_probability=0.75,
+    )
+
+    decision = BoundaryPolicy(
+        BoundaryPolicyConfig(require_feature_evidence=True)
+    ).decide(
+        (prior_only,),
+        branches=(("A",),),
+        neutral_thresholds=(0.002,),
+    )
+
+    assert decision.branch_directions == ("flat",)
+
+
+def test_feature_evidence_stage_can_emit_both_supported_directions() -> None:
+    bullish = replace(
+        _forecast("bull"),
+        significant_move_probability=0.8,
+        feature_log_odds_delta=0.7,
+        feature_bullish_probability=0.9,
+        minimum_feature_evidence_probability=0.75,
+    )
+    bearish = replace(
+        _forecast("bear"),
+        significant_move_probability=0.8,
+        feature_log_odds_delta=-0.7,
+        feature_bullish_probability=0.1,
+        minimum_feature_evidence_probability=0.75,
+    )
+    policy = BoundaryPolicy(BoundaryPolicyConfig(require_feature_evidence=True))
+
+    bull_decision = policy.decide(
+        (bullish,), branches=(("A",),), neutral_thresholds=(0.002,)
+    )
+    bear_decision = policy.decide(
+        (bearish,), branches=(("A",),), neutral_thresholds=(0.002,)
+    )
+
+    assert bull_decision.branch_directions == ("bull",)
+    assert bear_decision.branch_directions == ("bear",)
+
+
 def test_policy_has_no_external_convection_exposure_cap() -> None:
     assert "branch_exposure_caps" not in inspect.signature(
         BoundaryPolicy.decide

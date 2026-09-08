@@ -80,6 +80,10 @@ def test_evaluation_reports_probability_and_strategy_metrics() -> None:
     assert metrics.direction_signal_accuracy == pytest.approx(1.0)
     assert metrics.direction_signal_majority_baseline == pytest.approx(0.5)
     assert metrics.direction_signal_balanced_accuracy == pytest.approx(1.0)
+    assert metrics.direction_signal_bull_count == 1
+    assert metrics.direction_signal_bear_count == 1
+    assert metrics.direction_signal_bull_precision == pytest.approx(1.0)
+    assert metrics.direction_signal_bear_precision == pytest.approx(1.0)
     assert metrics.drift_balanced_accuracy == pytest.approx(1.0)
 
 
@@ -133,3 +137,5 @@ def test_tradable_direction_metrics_exclude_flat_days_and_treat_flat_as_abstenti
     assert metrics.direction_signal_accuracy == pytest.approx(1.0)
     assert metrics.direction_signal_majority_baseline == pytest.approx(0.5)
     assert metrics.direction_signal_balanced_accuracy == pytest.approx(1.0)
+    assert metrics.direction_signal_bull_count == 1
+    assert metrics.direction_signal_bear_count == 1

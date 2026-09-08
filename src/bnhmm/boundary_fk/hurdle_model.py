@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.optimize import minimize
-from scipy.special import expit
+from scipy.special import expit, ndtr
 
 from .types import TwoBranchDailyStates, TwoBranchLabels
 
@@ -22,6 +22,7 @@ class BayesianHurdleModelConfig:
     neutral_sigma: float = 0.35
     half_life_sessions: float | None = 60.0
     feature_names: tuple[str, ...] = ("signed_path_efficiency",)
+    calibration_fraction: float = 0.20
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -38,6 +39,8 @@ class BayesianHurdleModelConfig:
             self.feature_names
         ):
             raise ValueError("hurdle feature names must be unique and non-empty")
+        if not 0.1 <= self.calibration_fraction <= 0.4:
+            raise ValueError("hurdle calibration fraction must lie in [0.1, 0.4]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +66,8 @@ class BayesianHurdlePosterior:
     fit_rows: int
     direction_fit_rows: int
     direction_label_sigma: float
+    minimum_feature_evidence_probability: float
+    calibration_rows: int
 
     def __post_init__(self) -> None:
         width = len(self.feature_names) + 1
@@ -70,6 +75,10 @@ class BayesianHurdlePosterior:
             raise ValueError("hurdle posterior row counts are invalid")
         if self.direction_fit_rows < 1 or self.direction_label_sigma <= 0.0:
             raise ValueError("hurdle direction posterior is empty")
+        if not 0.5 <= self.minimum_feature_evidence_probability <= 0.95:
+            raise ValueError("hurdle feature evidence probability is invalid")
+        if self.calibration_rows < 1:
+            raise ValueError("hurdle posterior requires causal calibration rows")
         if self.move_mean.shape != (width,) or self.direction_mean.shape != (width,):
             raise ValueError("hurdle posterior coefficients do not match features")
         if self.move_covariance.shape != (width, width) or self.direction_covariance.shape != (
@@ -167,6 +176,12 @@ class BayesianHurdleModel:
         direction_weights = weights[significant]
         direction_weights /= float(np.mean(direction_weights))
         direction_target = (target_return[significant] > 0.0).astype(np.float64)
+        evidence_probability, calibration_rows = self._calibrate_feature_evidence(
+            raw,
+            target_return,
+            volatility,
+            weights,
+        )
         direction_mean, direction_covariance = self._fit_logistic(
             direction_design,
             direction_target,
@@ -190,7 +205,76 @@ class BayesianHurdleModel:
             fit_rows=int(selected.sum()),
             direction_fit_rows=int(significant.sum()),
             direction_label_sigma=self.config.neutral_sigma,
+            minimum_feature_evidence_probability=evidence_probability,
+            calibration_rows=calibration_rows,
         )
+
+    def _calibrate_feature_evidence(
+        self,
+        raw: np.ndarray,
+        target_return: np.ndarray,
+        volatility: np.ndarray,
+        weights: np.ndarray,
+    ) -> tuple[float, int]:
+        calibration_rows = max(5, int(np.ceil(len(raw) * self.config.calibration_fraction)))
+        split = len(raw) - calibration_rows
+        prefix_significant = np.abs(target_return[:split]) > (
+            self.config.neutral_sigma * volatility[:split]
+        )
+        calibration_significant = np.abs(target_return[split:]) > (
+            self.config.neutral_sigma * volatility[split:]
+        )
+        if int(prefix_significant.sum()) < 10 or int(calibration_significant.sum()) < 4:
+            return 0.75, calibration_rows
+
+        prefix_raw = raw[:split][prefix_significant]
+        scale = _root_mean_square_scale(prefix_raw)
+        design = np.column_stack((np.ones(len(prefix_raw)), prefix_raw / scale))
+        prefix_weights = weights[:split][prefix_significant]
+        prefix_weights /= float(np.mean(prefix_weights))
+        mean, covariance = self._fit_logistic(
+            design,
+            (target_return[:split][prefix_significant] > 0.0).astype(np.float64),
+            prefix_weights,
+        )
+        calibration_design = raw[split:] / scale
+        delta_mean = calibration_design @ mean[1:]
+        feature_covariance = covariance[1:, 1:]
+        delta_variance = np.einsum(
+            "ij,jk,ik->i",
+            calibration_design,
+            feature_covariance,
+            calibration_design,
+        )
+        delta_std = np.sqrt(np.maximum(delta_variance, self.config.variance_floor))
+        feature_bullish = ndtr(delta_mean / delta_std)
+        actual_bullish = target_return[split:] > 0.0
+
+        best_threshold = 0.75
+        best_score: tuple[float, float, int] | None = None
+        for threshold in (0.51, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95):
+            predicted = np.zeros(len(feature_bullish), dtype=np.int8)
+            predicted[feature_bullish >= threshold] = 1
+            predicted[feature_bullish <= 1.0 - threshold] = -1
+            usable = calibration_significant & (predicted != 0)
+            if int(np.sum(predicted[usable] == 1)) < 1 or int(
+                np.sum(predicted[usable] == -1)
+            ) < 1:
+                continue
+            actual = actual_bullish[usable]
+            if np.all(actual) or not np.any(actual):
+                continue
+            bull_recall = float(np.mean(predicted[usable][actual] == 1))
+            bear_recall = float(np.mean(predicted[usable][~actual] == -1))
+            balanced = 0.5 * (bull_recall + bear_recall)
+            accuracy = float(
+                np.mean(predicted[usable] == np.where(actual, 1, -1))
+            )
+            score = (balanced, accuracy, int(np.sum(usable)))
+            if best_score is None or score > best_score:
+                best_score = score
+                best_threshold = threshold
+        return best_threshold, calibration_rows
 
     def _recent_weights(self, rows: int) -> np.ndarray:
         half_life = self.config.half_life_sessions

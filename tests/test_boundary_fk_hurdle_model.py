@@ -42,6 +42,8 @@ def test_hurdle_uses_neutral_sigma_for_significant_move_labels() -> None:
     assert posterior.fit_rows == int(matured.sum())
     assert posterior.direction_fit_rows == int(significant.sum())
     assert posterior.direction_label_sigma == pytest.approx(0.35)
+    assert 0.5 <= posterior.minimum_feature_evidence_probability <= 0.95
+    assert posterior.calibration_rows > 0
 
 
 def test_hurdle_fit_cannot_see_returns_after_training_cutoff() -> None:
@@ -63,6 +65,10 @@ def test_hurdle_fit_cannot_see_returns_after_training_cutoff() -> None:
 
     np.testing.assert_allclose(original.move_mean, repeated.move_mean)
     np.testing.assert_allclose(original.direction_mean, repeated.direction_mean)
+    assert (
+        original.minimum_feature_evidence_probability
+        == repeated.minimum_feature_evidence_probability
+    )
     assert original.training_cutoff == repeated.training_cutoff == cutoff
 
 
@@ -131,5 +137,7 @@ def test_fk_forecast_exposes_hurdle_probabilities_without_changing_potential() -
         forecast.conditional_bullish_probability
     )
     assert np.isfinite(forecast.feature_log_odds_delta)
+    assert 0.0 <= forecast.feature_bullish_probability <= 1.0
+    assert 0.5 <= forecast.minimum_feature_evidence_probability <= 0.95
     assert np.isfinite(forecast.prior_bullish_probability)
     assert forecast.expected_effective_potential > 0.0
