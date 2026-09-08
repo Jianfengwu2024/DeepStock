@@ -32,16 +32,21 @@ def build_member_execution_constraints(
     buy_executable = np.zeros(shape, dtype=np.bool_)
     sell_executable = np.zeros(shape, dtype=np.bool_)
     minute_sessions = panel.timestamps.astype("datetime64[D]")
+    last_traded_close = np.full(len(panel.symbols), np.nan, dtype=np.float64)
 
     for row in range(len(sessions) - 1):
         previous_rows = np.flatnonzero(minute_sessions == sessions[row])
         target_rows = np.flatnonzero(minute_sessions == sessions[row + 1])
         for column, symbol in enumerate(panel.symbols):
             previous_valid = previous_rows[panel.valid[previous_rows, column]]
-            target_valid = target_rows[panel.valid[target_rows, column]]
-            if not len(previous_valid):
+            if len(previous_valid):
+                last_traded_close[column] = float(
+                    panel.close[previous_valid[-1], column]
+                )
+            previous_close = float(last_traded_close[column])
+            if not np.isfinite(previous_close):
                 continue
-            previous_close = float(panel.close[previous_valid[-1], column])
+            target_valid = target_rows[panel.valid[target_rows, column]]
             if not len(target_valid):
                 continue
             last_close = float(panel.close[target_valid[-1], column])

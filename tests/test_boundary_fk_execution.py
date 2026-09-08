@@ -60,6 +60,64 @@ def test_limit_up_that_opens_intraday_can_be_bought_at_first_open() -> None:
     np.testing.assert_allclose(constraints.hold_returns[0, 0], 10.9 / 10.0 - 1.0)
 
 
+def test_suspended_position_is_frozen_then_marks_from_last_traded_close() -> None:
+    timestamps = np.asarray(
+        [
+            "2026-01-05T15:00",
+            "2026-01-06T15:00",
+            "2026-01-07T09:31",
+            "2026-01-07T15:00",
+        ],
+        dtype="datetime64[m]",
+    )
+    prices = np.asarray([[10.0], [10.0], [9.2], [9.2]], dtype=np.float64)
+    panel = SectorMinutePanel(
+        symbols=("600000",),
+        timestamps=timestamps,
+        open=prices.copy(),
+        close=prices.copy(),
+        volume=np.ones_like(prices),
+        valid=np.asarray([[True], [False], [True], [True]], dtype=np.bool_),
+    )
+
+    constraints = build_member_execution_constraints(panel)
+
+    assert constraints.hold_returns[0, 0] == 0.0
+    assert not constraints.buy_executable[0, 0]
+    assert not constraints.sell_executable[0, 0]
+    np.testing.assert_allclose(constraints.hold_returns[1, 0], -0.08)
+    assert constraints.buy_executable[1, 0]
+    assert constraints.sell_executable[1, 0]
+
+
+def test_held_suspended_symbol_keeps_position_at_zero_return() -> None:
+    data = walk_forward_sector_data(180)
+    row = 120
+    valid = data.member_next_valid.copy()
+    valid[row, 0] = False
+    sellable = data.member_next_sell_executable.copy()
+    sellable[row, 0] = False
+    hold_returns = data.member_next_hold_returns.copy()
+    hold_returns[row, 0] = 0.0
+    data = replace(
+        data,
+        member_next_valid=valid,
+        member_next_hold_returns=hold_returns,
+        member_next_sell_executable=sellable,
+    )
+
+    execution = BoundaryFlowPipeline._execute_portfolio(
+        data,
+        row,
+        previous={"A": 0.5},
+        target={},
+    )
+
+    assert execution.weights == {"A": 0.5}
+    assert execution.gross_return == 0.0
+    assert execution.failed_sell_orders == 1
+
+
 def test_all_day_limit_down_rejects_sale_and_keeps_position() -> None:
     data = walk_forward_sector_data(180)
     row = 120

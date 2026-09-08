@@ -130,7 +130,7 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
 
 def test_boundary_cache_uses_direction_feature_version() -> None:
     assert CACHE_FORMAT_VERSION == 3
-    assert CACHE_CONSTRUCTION_VERSION == "sector-rolling-anchor-60d-v2"
+    assert CACHE_CONSTRUCTION_VERSION == "sector-rolling-anchor-60d-v3"
 
 
 def test_boundary_cache_rejects_daily_reset_v2_manifest(tmp_path: Path) -> None:

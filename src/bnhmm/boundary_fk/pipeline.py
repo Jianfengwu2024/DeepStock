@@ -820,8 +820,6 @@ class BoundaryFlowPipeline:
             after = weights.get(symbol, 0.0)
             retained = min(before, after)
             if retained:
-                if not data.member_next_valid[row, column]:
-                    raise ValueError(f"missing next-session return for held symbol {symbol}")
                 add_contribution(
                     target_owners.get(symbol, previous_owners.get(symbol)),
                     retained * float(data.member_next_hold_returns[row, column]),

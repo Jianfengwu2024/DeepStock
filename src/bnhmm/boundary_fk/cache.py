@@ -20,7 +20,7 @@ from .types import (
 
 
 CACHE_FORMAT_VERSION = 3
-CACHE_CONSTRUCTION_VERSION = "sector-rolling-anchor-60d-v2"
+CACHE_CONSTRUCTION_VERSION = "sector-rolling-anchor-60d-v3"
 ANCHOR_PROTOCOL = "rolling-60-session-previous-close"
 SECTOR_CACHE_SLOT = 60
 
