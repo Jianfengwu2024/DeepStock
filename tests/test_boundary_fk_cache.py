@@ -141,6 +141,37 @@ def test_boundary_cache_manifest_contains_one_sector_state_variant(tmp_path: Pat
     assert all(item["status"] == "ready" for item in manifest["variants"])
 
 
+def test_sector_cache_manifest_discards_legacy_window_variants(tmp_path: Path) -> None:
+    cache = BoundaryDataCache(tmp_path / "cache")
+    dataset_root = cache.root / "semiconductor"
+    dataset_root.mkdir(parents=True)
+    (dataset_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format_version": 2,
+                "dataset_id": "semiconductor",
+                "variants": [
+                    {
+                        "lookback_sessions": 10,
+                        "status": "ready",
+                        "file": "lookback-10.npz",
+                        "construction_version": "legacy-branch-cache",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cache.save(_key(tmp_path, SECTOR_CACHE_SLOT), _walk_forward_data(180))
+
+    manifest = cache.status("semiconductor")
+    assert [item["lookback_sessions"] for item in manifest["variants"]] == [
+        SECTOR_CACHE_SLOT
+    ]
+    assert manifest["variants"][0]["construction_version"] == CACHE_CONSTRUCTION_VERSION
+
+
 def test_precompute_builds_one_whole_sector_state_without_topology(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

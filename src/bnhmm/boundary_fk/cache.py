@@ -267,7 +267,8 @@ class BoundaryDataCache:
         variants = [
             item
             for item in current.get("variants", [])
-            if item.get("lookback_sessions") != key.lookback_sessions
+            if item.get("construction_version") == key.construction_version
+            and item.get("lookback_sessions") != key.lookback_sessions
         ]
         variants.append(
             {
