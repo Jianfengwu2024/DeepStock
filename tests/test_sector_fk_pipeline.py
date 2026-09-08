@@ -161,6 +161,15 @@ def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
         assert model["promotion_eligible"] is expected
         assert model["monthly_direction_accuracy"]
 
+    markdown = (tmp_path / "path-efficiency-fk-report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "预测多" in markdown
+    assert "预测空" in markdown
+    assert "失败原因" in markdown
+    assert "SectorFK-FeatureEvidence" in markdown
+    assert "SectorFK-Regime` 已作为实验否决" in markdown
+
 
 def test_sector_direction_gate_rejects_one_sided_predictions(tmp_path) -> None:
     result = BoundaryFlowPipeline(

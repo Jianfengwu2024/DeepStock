@@ -1078,11 +1078,25 @@ class BoundaryFlowPipeline:
     @staticmethod
     def _write_sector_report(path: Path, report: dict[str, object]) -> None:
         baselines = report["baselines"]
+        failure_labels = {
+            "fewer than 30 tradable bull/bear signals": "多空信号少于 30 个",
+            "fewer than 15 predicted signals on each bull/bear side": (
+                "预测多或预测空少于 15 个"
+            ),
+            "tradable direction accuracy did not beat its matched majority baseline": (
+                "命中率未超过同样本多数方向"
+            ),
+            "tradable bull/bear balanced accuracy did not beat 50 percent": (
+                "多空平衡正确率未超过 50%"
+            ),
+        }
         lines = [
             "# 板块方向 FK 样本外报告",
             "",
             "本实验只预测下一交易日板块方向，不使用动态支流。",
             "真实平盘日不评分，模型看平视为弃权，只通过覆盖率体现。",
+            "预测多和预测空必须各不少于 15 个，防止单边押注制造虚假的高准确率。",
+            "当前固定默认模型是 `SectorFK-FeatureEvidence`；`SectorFK-Regime` 已作为实验否决，不参与默认选择。",
             "",
             "## 全覆盖方向参考",
             "",
@@ -1091,17 +1105,23 @@ class BoundaryFlowPipeline:
             "",
             "## 贝叶斯漂移模型",
             "",
-            "| 模型 | 多空信号数 | 多空命中率 | 同样本多数基线 | 多空平衡正确率 | 方向覆盖率 |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| 模型 | 多空信号数 | 预测多 | 预测空 | 多空命中率 | 同样本多数基线 | 多空平衡正确率 | 方向覆盖率 | 失败原因 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
         for item in report["models"]:
             metrics = item["metrics"]
+            raw_failure_reason = str(item.get("failure_reason") or "")
+            failure_reason = failure_labels.get(
+                raw_failure_reason, raw_failure_reason or "—"
+            )
             lines.append(
                 f"| {item['model_name']} | {metrics['direction_signal_count']} | "
+                f"{metrics['direction_signal_bull_count']} | "
+                f"{metrics['direction_signal_bear_count']} | "
                 f"{metrics['direction_signal_accuracy']:.2%} | "
                 f"{metrics['direction_signal_majority_baseline']:.2%} | "
                 f"{metrics['direction_signal_balanced_accuracy']:.2%} | "
-                f"{metrics['direction_signal_coverage']:.2%} |"
+                f"{metrics['direction_signal_coverage']:.2%} | {failure_reason} |"
             )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

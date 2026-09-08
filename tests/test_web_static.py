@@ -93,8 +93,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.28.2', html)
-        self.assertIn('/static/styles.css?v=0.28.2', html)
+        self.assertIn('/static/app.js?v=0.28.3', html)
+        self.assertIn('/static/styles.css?v=0.28.3', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
         self.assertIn('name="boundary_maximum_drawdown"', html)
@@ -136,8 +136,18 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(f'id="{identifier}"', html)
         self.assertIn("renderBoundaryFlowResult", script)
         self.assertIn("function selectBoundaryStages(stages)", script)
-        self.assertIn('item.model_name === "SectorFK-PathOnly"', script)
+        self.assertIn('item.model_name === "SectorFK-FeatureEvidence"', script)
+        self.assertIn('item.model_name === "SectorFK-LabelAligned"', script)
         self.assertIn("function boundaryModelLabel(modelName)", script)
+        for model_name in (
+            "SectorFK-LabelAligned",
+            "SectorFK-BayesianHurdle",
+            "SectorFK-FeatureEvidence",
+            "SectorFK-Regime",
+        ):
+            self.assertIn(model_name, script)
+        self.assertIn("特征证据门控（当前默认）", script)
+        self.assertIn("延续 / 反转状态（实验已否决）", script)
         self.assertIn('document.querySelector("#boundary-return-legend").innerHTML', script)
         expected_tabs = (
             ("evaluation", "策略评估"),
@@ -189,9 +199,17 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("metrics.direction_signal_accuracy", script)
         self.assertIn("metrics.direction_signal_majority_baseline", script)
         self.assertIn("metrics.direction_signal_balanced_accuracy", script)
+        self.assertIn("metrics.direction_signal_bull_count", script)
+        self.assertIn("metrics.direction_signal_bear_count", script)
+        self.assertIn("预测多", html)
+        self.assertIn("预测空", html)
         self.assertIn("同样本多空多数基线", script)
         self.assertIn("真实平盘日不评分", script)
         self.assertIn("至少 30 个多空信号", script)
+        self.assertIn("显著波动后验", script)
+        self.assertIn("条件看多后验", script)
+        self.assertIn("训练先验看多率", script)
+        self.assertIn("特征增量证据", script)
         self.assertNotIn('boundaryMetric("三状态平衡正确率"', script)
         self.assertIn('"boundary-flow-fk"', script)
         self.assertIn("路径效率 FK", html)
@@ -210,7 +228,7 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("returnDelta > 0", script)
         self.assertIn("未通过改进标准", script)
         self.assertIn("多空交易结论", script)
-        self.assertIn("纯路径效率多空信号未超过同样本基线", script)
+        self.assertIn("特征增量证据尚未形成稳定优势", script)
         self.assertIn("paintSectorDirectionComparison", script)
         self.assertIn("整板块单一日状态", script)
         self.assertNotIn("60 日同步聚类、每 5 个交易日冻结", script)

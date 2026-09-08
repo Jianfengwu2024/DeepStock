@@ -1092,15 +1092,19 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
 
 function selectBoundaryStages(stages) {
   const completed = stages.filter(item => item?.status === "completed" && item?.model_name);
-  const strategy = completed.find(item => item.model_name === "SectorFK-PathOnly")
+  const strategy = completed.find(item => item.model_name === "SectorFK-FeatureEvidence")
     || completed[0] || stages[0] || {};
-  const baseline = completed.find(item => item.model_name === "SectorFK-PathFull")
+  const baseline = completed.find(item => item.model_name === "SectorFK-LabelAligned")
     || completed.find(item => item.model_name !== strategy.model_name) || {};
   return { strategy, baseline };
 }
 
 function boundaryModelLabel(modelName) {
   const name = String(modelName || "");
+  if (name.includes("SectorFK-LabelAligned")) return "标签口径对齐（基础漂移）";
+  if (name.includes("SectorFK-BayesianHurdle")) return "两阶段贝叶斯（显著波动 + 多空）";
+  if (name.includes("SectorFK-FeatureEvidence")) return "特征证据门控（当前默认）";
+  if (name.includes("SectorFK-Regime")) return "延续 / 反转状态（实验已否决）";
   if (name.includes("SectorFK-PathFull")) return "路径、同步率与短期记忆";
   if (name.includes("SectorFK-PathMemory")) return "路径效率与短期记忆";
   if (name.includes("SectorFK-PathSync")) return "路径效率与同步率";
@@ -1112,6 +1116,16 @@ function boundaryModelLabel(modelName) {
   return name || "未命名阶段";
 }
 
+function boundaryFailureReason(reason) {
+  const labels = {
+    "fewer than 30 tradable bull/bear signals": "多空信号少于 30 个",
+    "fewer than 15 predicted signals on each bull/bear side": "预测多或预测空少于 15 个",
+    "tradable direction accuracy did not beat its matched majority baseline": "命中率未超过同样本多数方向",
+    "tradable bull/bear balanced accuracy did not beat 50 percent": "多空平衡正确率未超过 50%",
+  };
+  return labels[String(reason || "")] || String(reason || "");
+}
+
 function paintSectorDirectionComparison(report) {
   const table = document.querySelector("#boundary-direction-comparison");
   if (!table) return;
@@ -1119,10 +1133,13 @@ function paintSectorDirectionComparison(report) {
   const baselineRows = [
     ["昨日方向基线", baselines.previous_day_direction],
     ["当日路径效率方向", baselines.path_efficiency_direction],
-  ].map(([label, accuracy]) => `<tr><td>${label}</td><td>${formatPercent(accuracy)}</td><td>—</td><td>—</td><td>100.00%</td><td>—</td><td>参照</td></tr>`);
+  ].map(([label, accuracy]) => `<tr><td>${label}</td><td>${formatPercent(accuracy)}</td><td>—</td><td>—</td><td>100.00%</td><td>—</td><td>—</td><td>—</td><td>参照</td></tr>`);
   const modelRows = (report?.models || []).map(item => {
     const metrics = item.metrics || {};
-    return `<tr><td>${escapeHtml(boundaryModelLabel(item.model_name))}</td><td>${formatPercent(metrics.direction_signal_accuracy)}</td><td>${formatPercent(metrics.direction_signal_majority_baseline)}</td><td>${formatPercent(metrics.direction_signal_balanced_accuracy)}</td><td>${formatPercent(metrics.direction_signal_coverage)}</td><td>${formatInteger(metrics.direction_signal_count)}</td><td>${item.passed ? "通过" : "未通过"}</td></tr>`;
+    const verdict = item.model_name === "SectorFK-Regime"
+      ? "实验否决"
+      : item.passed ? "通过" : "未通过";
+    return `<tr><td>${escapeHtml(boundaryModelLabel(item.model_name))}</td><td>${formatPercent(metrics.direction_signal_accuracy)}</td><td>${formatPercent(metrics.direction_signal_majority_baseline)}</td><td>${formatPercent(metrics.direction_signal_balanced_accuracy)}</td><td>${formatPercent(metrics.direction_signal_coverage)}</td><td>${formatInteger(metrics.direction_signal_count)}</td><td>${formatInteger(metrics.direction_signal_bull_count)}</td><td>${formatInteger(metrics.direction_signal_bear_count)}</td><td title="${escapeHtml(boundaryFailureReason(item.failure_reason))}">${verdict}</td></tr>`;
   });
   table.innerHTML = [...baselineRows, ...modelRows].join("");
 }
@@ -1149,12 +1166,14 @@ function paintBoundaryFlowResult(job, payload) {
 
   const passed = Boolean(stage.passed);
   document.querySelector("#boundary-evaluation-summary").innerHTML = `
-    <span>多空交易结论</span><strong>${passed ? "纯路径效率多空信号通过交易门槛" : "纯路径效率多空信号未超过同样本基线"}</strong>
-    <p>真实平盘日不评分，模型看平视为弃权。至少 30 个多空信号，且命中率超过同一批信号的多空多数类基线、平衡正确率高于 50%，才算具有交易方向信息。</p>`;
+    <span>多空交易结论</span><strong>${passed ? "特征增量证据通过交易门槛" : "特征增量证据尚未形成稳定优势"}</strong>
+    <p>真实平盘日不评分，模型看平视为弃权。至少 30 个多空信号，预测多和预测空各不少于 15 个，同时超过同样本多数方向，才算具有交易方向信息。</p>`;
   document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${passed ? "positive" : "caution"}`;
   document.querySelector("#boundary-evaluation-metrics").innerHTML = [
     boundaryMetric("真实多空交易日", formatInteger(metrics.directional_observations), "真实平盘日已剔除"),
     boundaryMetric("实际多空信号", formatInteger(metrics.direction_signal_count), "模型看平不计为预测正确"),
+    boundaryMetric("预测多", formatInteger(metrics.direction_signal_bull_count), "防止只靠单边看多取得表面高准确率"),
+    boundaryMetric("预测空", formatInteger(metrics.direction_signal_bear_count), "多、空两侧都必须至少 15 个"),
     boundaryMetric("多空信号覆盖率", formatPercent(metrics.direction_signal_coverage), "多空信号数 ÷ 真实多空交易日"),
     boundaryMetric("多空命中率", formatPercent(metrics.direction_signal_accuracy), "只统计实际发出的空或多信号"),
     boundaryMetric("同样本多空多数基线", formatPercent(metrics.direction_signal_majority_baseline), "在完全相同的信号日期只猜多数方向"),
@@ -1216,6 +1235,10 @@ function paintBoundaryFlowResult(job, payload) {
 
   const latestPosterior = [...(posterior || [])].reverse().find(item => item.model_name === potentialModel) || posterior?.at(-1) || {};
   document.querySelector("#boundary-model-quality").innerHTML = [
+    boundaryMetric("显著波动后验", formatPercent(sector?.significant_move_probability), "下一日涨跌超过平盘阈值的概率"),
+    boundaryMetric("条件看多后验", formatPercent(sector?.conditional_bullish_probability), "已发生显著波动时，看多的概率"),
+    boundaryMetric("训练先验看多率", formatPercent(sector?.prior_bullish_probability), "训练期显著涨跌样本中的看多比例"),
+    boundaryMetric("特征增量证据", formatNumber(sector?.feature_log_odds_delta, 3), `去掉截距先验后的对数胜算增量 · 后验 ${formatPercent(sector?.feature_bullish_probability)}`),
     boundaryMetric("最新 β0", formatNumber(latestPosterior.potential_mean?.[0], 4), "板块背景外势"),
     boundaryMetric("概率整体误差", formatNumber(metrics.brier_score, 4), "越小越好"),
     boundaryMetric("概率校准偏差", formatPercent(metrics.ece), "预测概率与实际频率的差"),
