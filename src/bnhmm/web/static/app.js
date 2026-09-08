@@ -1117,13 +1117,12 @@ function paintSectorDirectionComparison(report) {
   if (!table) return;
   const baselines = report?.baselines || {};
   const baselineRows = [
-    ["多数方向基线", baselines.majority_direction],
     ["昨日方向基线", baselines.previous_day_direction],
     ["当日路径效率方向", baselines.path_efficiency_direction],
-  ].map(([label, accuracy]) => `<tr><td>${label}</td><td>${formatPercent(accuracy)}</td><td>—</td><td>100.00%</td><td>参照</td></tr>`);
+  ].map(([label, accuracy]) => `<tr><td>${label}</td><td>${formatPercent(accuracy)}</td><td>—</td><td>—</td><td>100.00%</td><td>—</td><td>参照</td></tr>`);
   const modelRows = (report?.models || []).map(item => {
     const metrics = item.metrics || {};
-    return `<tr><td>${escapeHtml(boundaryModelLabel(item.model_name))}</td><td>${formatPercent(metrics.drift_direction_accuracy)}</td><td>${formatPercent(metrics.drift_balanced_accuracy)}</td><td>${formatPercent(metrics.direction_signal_coverage)}</td><td>${item.passed ? "通过" : "未通过"}</td></tr>`;
+    return `<tr><td>${escapeHtml(boundaryModelLabel(item.model_name))}</td><td>${formatPercent(metrics.direction_signal_accuracy)}</td><td>${formatPercent(metrics.direction_signal_majority_baseline)}</td><td>${formatPercent(metrics.direction_signal_balanced_accuracy)}</td><td>${formatPercent(metrics.direction_signal_coverage)}</td><td>${formatInteger(metrics.direction_signal_count)}</td><td>${item.passed ? "通过" : "未通过"}</td></tr>`;
   });
   table.innerHTML = [...baselineRows, ...modelRows].join("");
 }
@@ -1148,20 +1147,18 @@ function paintBoundaryFlowResult(job, payload) {
   document.querySelector("#boundary-flow-result-status").textContent =
     `${formatInteger(predictions.length)} 个样本外交易日 · ${strategyLabel}`;
 
-  const majorityDirection = directionReport?.baselines?.majority_direction;
   const passed = Boolean(stage.passed);
   document.querySelector("#boundary-evaluation-summary").innerHTML = `
-    <span>方向预测结论</span><strong>${passed ? "纯路径效率通过方向门槛" : "纯路径效率尚未超过多数方向基线"}</strong>
-    <p>固定使用预先声明的纯路径效率模型，不根据本次样本外成绩挑模型。通过要求是方向正确率超过多数方向，同时涨跌平衡正确率高于 50%。</p>`;
+    <span>多空交易结论</span><strong>${passed ? "纯路径效率多空信号通过交易门槛" : "纯路径效率多空信号未超过同样本基线"}</strong>
+    <p>真实平盘日不评分，模型看平视为弃权。至少 30 个多空信号，且命中率超过同一批信号的多空多数类基线、平衡正确率高于 50%，才算具有交易方向信息。</p>`;
   document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${passed ? "positive" : "caution"}`;
   document.querySelector("#boundary-evaluation-metrics").innerHTML = [
-    boundaryMetric("多数方向基线", formatPercent(majorityDirection), "只预测样本期出现更多的方向"),
-    boundaryMetric("方向判断正确率", formatPercent(metrics.drift_direction_accuracy), "上涨或下跌方向"),
-    boundaryMetric("涨跌平衡正确率", formatPercent(metrics.drift_balanced_accuracy), "分别计算上涨和下跌召回率后取平均"),
-    boundaryMetric("方向信号覆盖率", formatPercent(metrics.direction_signal_coverage), "输出看多或看空的比例"),
-    boundaryMetric("有效信号命中率", formatPercent(metrics.direction_signal_accuracy), "只统计实际输出的空或多信号"),
-    boundaryMetric("三状态平衡正确率", formatPercent(metrics.balanced_accuracy), "空、平、多分别计算"),
-    boundaryMetric("漂移排序相关", formatNumber(metrics.drift_rank_ic, 4), "预测漂移与下一日收益的排序关系"),
+    boundaryMetric("真实多空交易日", formatInteger(metrics.directional_observations), "真实平盘日已剔除"),
+    boundaryMetric("实际多空信号", formatInteger(metrics.direction_signal_count), "模型看平不计为预测正确"),
+    boundaryMetric("多空信号覆盖率", formatPercent(metrics.direction_signal_coverage), "多空信号数 ÷ 真实多空交易日"),
+    boundaryMetric("多空命中率", formatPercent(metrics.direction_signal_accuracy), "只统计实际发出的空或多信号"),
+    boundaryMetric("同样本多空多数基线", formatPercent(metrics.direction_signal_majority_baseline), "在完全相同的信号日期只猜多数方向"),
+    boundaryMetric("多空平衡正确率", formatPercent(metrics.direction_signal_balanced_accuracy), "看多与看空召回率取平均"),
   ].join("");
   paintSectorDirectionComparison(directionReport);
 
@@ -1222,7 +1219,7 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("最新 β0", formatNumber(latestPosterior.potential_mean?.[0], 4), "板块背景外势"),
     boundaryMetric("概率整体误差", formatNumber(metrics.brier_score, 4), "越小越好"),
     boundaryMetric("概率校准偏差", formatPercent(metrics.ece), "预测概率与实际频率的差"),
-    boundaryMetric("三状态均衡正确率", formatPercent(metrics.balanced_accuracy), "避免多数状态掩盖结果"),
+    boundaryMetric("多空平衡正确率", formatPercent(metrics.direction_signal_balanced_accuracy), "平盘日不参与"),
     boundaryMetric("训练成熟样本", formatInteger(stage.minimum_fit_rows), "板块后验估计使用的历史交易日"),
   ].join("");
 

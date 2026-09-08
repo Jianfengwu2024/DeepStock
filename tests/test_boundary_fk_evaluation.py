@@ -74,8 +74,12 @@ def test_evaluation_reports_probability_and_strategy_metrics() -> None:
     assert metrics.maximum_drawdown == pytest.approx(0.012)
     assert 0.0 <= metrics.ece <= 1.0
     assert metrics.crps >= 0.0
-    assert metrics.direction_signal_coverage == pytest.approx(2 / 3)
+    assert metrics.directional_observations == 2
+    assert metrics.direction_signal_count == 2
+    assert metrics.direction_signal_coverage == pytest.approx(1.0)
     assert metrics.direction_signal_accuracy == pytest.approx(1.0)
+    assert metrics.direction_signal_majority_baseline == pytest.approx(0.5)
+    assert metrics.direction_signal_balanced_accuracy == pytest.approx(1.0)
     assert metrics.drift_balanced_accuracy == pytest.approx(1.0)
 
 
@@ -110,3 +114,22 @@ def test_zero_drift_is_not_counted_as_a_correct_bearish_direction() -> None:
 
     assert metrics.drift_direction_accuracy == pytest.approx(0.0)
     assert metrics.drift_balanced_accuracy == pytest.approx(0.0)
+
+
+def test_tradable_direction_metrics_exclude_flat_days_and_treat_flat_as_abstention() -> None:
+    observations = (
+        _observation(1, (0.05, 0.10, 0.85), 0.02, True, 0.02),
+        _observation(2, (0.85, 0.10, 0.05), -0.02, True, -0.02),
+        _observation(3, (0.05, 0.10, 0.85), 0.001, True, 0.001),
+        _observation(4, (0.10, 0.80, 0.10), 0.02, False, 0.0),
+    )
+    observations = tuple(replace(item, neutral_threshold=0.005) for item in observations)
+
+    metrics = evaluate_boundary_forecasts(observations)
+
+    assert metrics.directional_observations == 3
+    assert metrics.direction_signal_count == 2
+    assert metrics.direction_signal_coverage == pytest.approx(2 / 3)
+    assert metrics.direction_signal_accuracy == pytest.approx(1.0)
+    assert metrics.direction_signal_majority_baseline == pytest.approx(0.5)
+    assert metrics.direction_signal_balanced_accuracy == pytest.approx(1.0)

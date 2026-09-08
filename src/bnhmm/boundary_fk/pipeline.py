@@ -56,17 +56,28 @@ SECTOR_MODEL_FEATURES = {
 }
 SECTOR_MODEL_NAMES = tuple(SECTOR_MODEL_FEATURES)
 SECTOR_PRIMARY_MODEL = "SectorFK-PathOnly"
+MINIMUM_TRADABLE_DIRECTION_SIGNALS = 30
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
 
 
 def _passes_sector_direction_gate(
-    metrics: BoundaryEvaluationMetrics, majority_direction: float
+    metrics: BoundaryEvaluationMetrics,
 ) -> bool:
     return (
-        metrics.drift_direction_accuracy > majority_direction
-        and metrics.drift_balanced_accuracy > 0.5
+        metrics.direction_signal_count >= MINIMUM_TRADABLE_DIRECTION_SIGNALS
+        and metrics.direction_signal_accuracy
+        > metrics.direction_signal_majority_baseline
+        and metrics.direction_signal_balanced_accuracy > 0.5
     )
+
+
+def _sector_direction_failure_reason(metrics: BoundaryEvaluationMetrics) -> str:
+    if metrics.direction_signal_count < MINIMUM_TRADABLE_DIRECTION_SIGNALS:
+        return "fewer than 30 tradable bull/bear signals"
+    if metrics.direction_signal_accuracy <= metrics.direction_signal_majority_baseline:
+        return "tradable direction accuracy did not beat its matched majority baseline"
+    return "tradable bull/bear balanced accuracy did not beat 50 percent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -736,20 +747,13 @@ class BoundaryFlowPipeline:
             )
             for model_name in SECTOR_MODEL_NAMES
         }
-        reference_actual = np.asarray(
-            [item.actual_returns[0] for item in observations_by_model[SECTOR_PRIMARY_MODEL]]
-        )
-        positive_rate = float(np.mean(reference_actual > 0.0))
-        majority_direction = max(positive_rate, 1.0 - positive_rate)
         stages = tuple(
             BoundaryStageResult(
                 model_name=model_name,
                 status="completed",
-                passed=_passes_sector_direction_gate(
-                    metrics_by_model[model_name], majority_direction
-                ),
+                passed=_passes_sector_direction_gate(metrics_by_model[model_name]),
                 promotion_eligible=_passes_sector_direction_gate(
-                    metrics_by_model[model_name], majority_direction
+                    metrics_by_model[model_name]
                 ),
                 test_months=test_months,
                 drift_feature_names=SECTOR_MODEL_FEATURES[model_name],
@@ -757,10 +761,8 @@ class BoundaryFlowPipeline:
                 metrics=metrics_by_model[model_name],
                 failure_reason=(
                     ""
-                    if _passes_sector_direction_gate(
-                        metrics_by_model[model_name], majority_direction
-                    )
-                    else "did not beat the majority direction with balanced skill"
+                    if _passes_sector_direction_gate(metrics_by_model[model_name])
+                    else _sector_direction_failure_reason(metrics_by_model[model_name])
                 ),
             )
             for model_name in SECTOR_MODEL_NAMES
@@ -874,16 +876,24 @@ class BoundaryFlowPipeline:
             for row, session in enumerate(data.states.sessions)
         }
         actual = np.asarray([item.actual_returns[0] for item in reference])
+        neutral_thresholds = np.asarray(
+            [item.neutral_thresholds[0] for item in reference]
+        )
+        directional = np.abs(actual) > neutral_thresholds
         rows = np.asarray(
             [row_by_session[item.signal_time.astype("datetime64[D]")] for item in reference]
         )
 
         def accuracy(predicted: np.ndarray) -> float:
-            return float(np.mean(np.sign(predicted) == np.sign(actual)))
+            if not np.any(directional):
+                return 0.0
+            return float(
+                np.mean(
+                    np.sign(predicted[directional]) == np.sign(actual[directional])
+                )
+            )
 
-        positive = float(np.mean(actual > 0.0))
         baselines = {
-            "majority_direction": max(positive, 1.0 - positive),
             "previous_day_direction": accuracy(
                 data.states.feature("return_1d")[rows, 0]
             ),
@@ -900,18 +910,24 @@ class BoundaryFlowPipeline:
             monthly = []
             for month in np.unique(months):
                 selected = np.flatnonzero(months == month)
-                month_actual = np.asarray(
-                    [observations[index].actual_returns[0] for index in selected]
-                )
-                month_drift = np.asarray(
-                    [observations[index].forecasts[0].expected_drift for index in selected]
+                month_metrics = evaluate_two_branch_forecasts(
+                    tuple(observations[index] for index in selected)
                 )
                 monthly.append(
                     {
                         "month": str(month),
                         "observations": len(selected),
-                        "accuracy": float(
-                            np.mean(np.sign(month_drift) == np.sign(month_actual))
+                        "directional_observations": (
+                            month_metrics.directional_observations
+                        ),
+                        "signal_count": month_metrics.direction_signal_count,
+                        "coverage": month_metrics.direction_signal_coverage,
+                        "accuracy": month_metrics.direction_signal_accuracy,
+                        "majority_baseline": (
+                            month_metrics.direction_signal_majority_baseline
+                        ),
+                        "balanced_accuracy": (
+                            month_metrics.direction_signal_balanced_accuracy
                         ),
                     }
                 )
@@ -932,23 +948,26 @@ class BoundaryFlowPipeline:
             "# 板块方向 FK 样本外报告",
             "",
             "本实验只预测下一交易日板块方向，不使用动态支流。",
+            "真实平盘日不评分，模型看平视为弃权，只通过覆盖率体现。",
             "",
-            "## 基线",
+            "## 全覆盖方向参考",
             "",
-            f"- 多数方向：{float(baselines['majority_direction']):.2%}",
             f"- 昨日方向：{float(baselines['previous_day_direction']):.2%}",
             f"- 当日路径效率方向：{float(baselines['path_efficiency_direction']):.2%}",
             "",
             "## 贝叶斯漂移模型",
             "",
-            "| 模型 | 漂移方向正确率 | 平衡准确率 | 方向覆盖率 |",
-            "|---|---:|---:|---:|",
+            "| 模型 | 多空信号数 | 多空命中率 | 同样本多数基线 | 多空平衡正确率 | 方向覆盖率 |",
+            "|---|---:|---:|---:|---:|---:|",
         ]
         for item in report["models"]:
             metrics = item["metrics"]
             lines.append(
-                f"| {item['model_name']} | {metrics['drift_direction_accuracy']:.2%} | "
-                f"{metrics['balanced_accuracy']:.2%} | {metrics['direction_signal_coverage']:.2%} |"
+                f"| {item['model_name']} | {metrics['direction_signal_count']} | "
+                f"{metrics['direction_signal_accuracy']:.2%} | "
+                f"{metrics['direction_signal_majority_baseline']:.2%} | "
+                f"{metrics['direction_signal_balanced_accuracy']:.2%} | "
+                f"{metrics['direction_signal_coverage']:.2%} |"
             )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

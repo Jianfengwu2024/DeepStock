@@ -89,8 +89,12 @@ class BoundaryEvaluationMetrics:
     drift_rank_ic: float
     drift_direction_accuracy: float
     drift_balanced_accuracy: float
+    directional_observations: int
+    direction_signal_count: int
     direction_signal_coverage: float = 0.0
     direction_signal_accuracy: float = 0.0
+    direction_signal_majority_baseline: float = 0.5
+    direction_signal_balanced_accuracy: float = 0.0
     failed_buy_orders: int = 0
     failed_sell_orders: int = 0
 
@@ -156,7 +160,7 @@ def evaluate_boundary_forecasts(
     expected_drift = np.asarray(
         [item.forecast.expected_drift for item in observations], dtype=np.float64
     )
-    direction_signal = np.abs(expected_drift) > 1e-12
+    tradable = _tradable_direction_statistics(actual_classes, predicted_classes)
 
     return BoundaryEvaluationMetrics(
         observations=len(observations),
@@ -185,17 +189,12 @@ def evaluate_boundary_forecasts(
         drift_balanced_accuracy=_binary_balanced_direction_accuracy(
             actual_returns, expected_drift
         ),
-        direction_signal_coverage=float(np.mean(direction_signal)),
-        direction_signal_accuracy=(
-            float(
-                np.mean(
-                    np.sign(expected_drift[direction_signal])
-                    == np.sign(actual_returns[direction_signal])
-                )
-            )
-            if np.any(direction_signal)
-            else 0.0
-        ),
+        directional_observations=tradable.directional_observations,
+        direction_signal_count=tradable.signal_count,
+        direction_signal_coverage=tradable.coverage,
+        direction_signal_accuracy=tradable.accuracy,
+        direction_signal_majority_baseline=tradable.majority_baseline,
+        direction_signal_balanced_accuracy=tradable.balanced_accuracy,
     )
 
 
@@ -279,7 +278,7 @@ def evaluate_two_branch_forecasts(
         [forecast.expected_drift for item in observations for forecast in item.forecasts],
         dtype=np.float64,
     )
-    direction_signal = predicted_classes != 1
+    tradable = _tradable_direction_statistics(actual_classes, predicted_classes)
 
     return BoundaryEvaluationMetrics(
         observations=len(observations),
@@ -308,12 +307,12 @@ def evaluate_two_branch_forecasts(
         drift_balanced_accuracy=_binary_balanced_direction_accuracy(
             actual_returns, expected_drift
         ),
-        direction_signal_coverage=float(np.mean(direction_signal)),
-        direction_signal_accuracy=(
-            float(np.mean(predicted_classes[direction_signal] == actual_classes[direction_signal]))
-            if np.any(direction_signal)
-            else 0.0
-        ),
+        directional_observations=tradable.directional_observations,
+        direction_signal_count=tradable.signal_count,
+        direction_signal_coverage=tradable.coverage,
+        direction_signal_accuracy=tradable.accuracy,
+        direction_signal_majority_baseline=tradable.majority_baseline,
+        direction_signal_balanced_accuracy=tradable.balanced_accuracy,
         failed_buy_orders=int(sum(item.failed_buy_orders for item in observations)),
         failed_sell_orders=int(sum(item.failed_sell_orders for item in observations)),
     )
@@ -423,6 +422,60 @@ def _normal_quantile(probability: float) -> float:
 def _balanced_accuracy(actual: np.ndarray, predicted: np.ndarray) -> float:
     recalls = [float(np.mean(predicted[actual == label] == label)) for label in np.unique(actual)]
     return float(np.mean(recalls))
+
+
+@dataclass(frozen=True, slots=True)
+class _TradableDirectionStatistics:
+    directional_observations: int
+    signal_count: int
+    coverage: float
+    accuracy: float
+    majority_baseline: float
+    balanced_accuracy: float
+
+
+def _tradable_direction_statistics(
+    actual_classes: np.ndarray, predicted_classes: np.ndarray
+) -> _TradableDirectionStatistics:
+    actual = np.asarray(actual_classes, dtype=np.int64)
+    predicted = np.asarray(predicted_classes, dtype=np.int64)
+    directional = actual != 1
+    directional_observations = int(np.sum(directional))
+    signaled = directional & (predicted != 1)
+    signal_count = int(np.sum(signaled))
+    coverage = (
+        float(signal_count / directional_observations)
+        if directional_observations
+        else 0.0
+    )
+    if not signal_count:
+        return _TradableDirectionStatistics(
+            directional_observations, 0, coverage, 0.0, 0.5, 0.0
+        )
+
+    actual_signals = actual[signaled]
+    predicted_signals = predicted[signaled]
+    accuracy = float(np.mean(predicted_signals == actual_signals))
+    bullish_rate = float(np.mean(actual_signals == 2))
+    majority_baseline = max(bullish_rate, 1.0 - bullish_rate)
+    if np.all(actual_signals == 2) or np.all(actual_signals == 0):
+        balanced_accuracy = 0.5
+    else:
+        bear_recall = float(
+            np.mean(predicted_signals[actual_signals == 0] == 0)
+        )
+        bull_recall = float(
+            np.mean(predicted_signals[actual_signals == 2] == 2)
+        )
+        balanced_accuracy = 0.5 * (bear_recall + bull_recall)
+    return _TradableDirectionStatistics(
+        directional_observations,
+        signal_count,
+        coverage,
+        accuracy,
+        majority_baseline,
+        balanced_accuracy,
+    )
 
 
 def _binary_balanced_direction_accuracy(

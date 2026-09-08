@@ -104,19 +104,19 @@ def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
 
     report = json.loads((tmp_path / "sector-direction-evaluation.json").read_text())
     assert set(report["baselines"]) == {
-        "majority_direction",
         "previous_day_direction",
         "path_efficiency_direction",
     }
     assert len(report["models"]) == 4
     assert report["preferred_model"] == "SectorFK-PathOnly"
     assert report["selection_rule"] == "fixed_predeclared_baseline"
-    majority = report["baselines"]["majority_direction"]
     for model in report["models"]:
         metrics = model["metrics"]
         expected = (
-            metrics["drift_direction_accuracy"] > majority
-            and metrics["drift_balanced_accuracy"] > 0.5
+            metrics["direction_signal_count"] >= 30
+            and metrics["direction_signal_accuracy"]
+            > metrics["direction_signal_majority_baseline"]
+            and metrics["direction_signal_balanced_accuracy"] > 0.5
         )
         assert model["passed"] is expected
         assert model["promotion_eligible"] is expected
