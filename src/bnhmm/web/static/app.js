@@ -969,6 +969,7 @@ function renderBoundaryFlowResult(job) {
   const posteriorUrl = job.artifacts?.["boundary-model-posterior.json"];
   const residualUrl = job.artifacts?.["boundary-residual-analysis.json"];
   const potentialUrl = job.artifacts?.["convection-potential-evaluation.json"];
+  const directionReportUrl = job.artifacts?.["sector-direction-evaluation.json"];
   const downloads = {
     "path-efficiency-fk-report.md": "中文报告",
     "path-efficiency-convection-potential-report.md": "一日反向流量外势报告",
@@ -1018,13 +1019,15 @@ function renderBoundaryFlowResult(job) {
     posteriorUrl ? api(posteriorUrl) : Promise.resolve([]),
     residualUrl ? api(residualUrl) : Promise.resolve({}),
     potentialUrl ? api(potentialUrl) : Promise.resolve({}),
-  ]).then(([stages, predictions, posterior, residual, potential]) => {
+    directionReportUrl ? api(directionReportUrl) : Promise.resolve({}),
+  ]).then(([stages, predictions, posterior, residual, potential, directionReport]) => {
     const payload = {
       stages: Array.isArray(stages) ? stages : [],
       predictions: Array.isArray(predictions) ? predictions : [],
       posterior: Array.isArray(posterior) ? posterior : [],
       residual: residual || {},
       potential: potential || {},
+      directionReport: directionReport || {},
     };
     state.boundaryResultCache.set(job.id, payload);
     if (state.selectedId === job.id) paintBoundaryFlowResult(job, payload);
@@ -1089,8 +1092,10 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
 
 function selectBoundaryStages(stages) {
   const completed = stages.filter(item => item?.status === "completed" && item?.model_name);
-  const strategy = completed.at(-1) || stages.at(-1) || {};
-  const baseline = completed.find(item => item.model_name !== strategy.model_name) || {};
+  const strategy = completed.find(item => item.model_name === "SectorFK-PathOnly")
+    || completed[0] || stages[0] || {};
+  const baseline = completed.find(item => item.model_name === "SectorFK-PathFull")
+    || completed.find(item => item.model_name !== strategy.model_name) || {};
   return { strategy, baseline };
 }
 
@@ -1107,8 +1112,24 @@ function boundaryModelLabel(modelName) {
   return name || "未命名阶段";
 }
 
+function paintSectorDirectionComparison(report) {
+  const table = document.querySelector("#boundary-direction-comparison");
+  if (!table) return;
+  const baselines = report?.baselines || {};
+  const baselineRows = [
+    ["多数方向基线", baselines.majority_direction],
+    ["昨日方向基线", baselines.previous_day_direction],
+    ["当日路径效率方向", baselines.path_efficiency_direction],
+  ].map(([label, accuracy]) => `<tr><td>${label}</td><td>${formatPercent(accuracy)}</td><td>—</td><td>100.00%</td><td>参照</td></tr>`);
+  const modelRows = (report?.models || []).map(item => {
+    const metrics = item.metrics || {};
+    return `<tr><td>${escapeHtml(boundaryModelLabel(item.model_name))}</td><td>${formatPercent(metrics.drift_direction_accuracy)}</td><td>${formatPercent(metrics.drift_balanced_accuracy)}</td><td>${formatPercent(metrics.direction_signal_coverage)}</td><td>${item.passed ? "通过" : "未通过"}</td></tr>`;
+  });
+  table.innerHTML = [...baselineRows, ...modelRows].join("");
+}
+
 function paintBoundaryFlowResult(job, payload) {
-  const { stages, predictions: allPredictions, posterior, residual, potential } = payload;
+  const { stages, predictions: allPredictions, posterior, residual, potential, directionReport } = payload;
   const selectedStages = selectBoundaryStages(stages);
   const stage = selectedStages.strategy;
   const baselineStage = selectedStages.baseline;
@@ -1127,26 +1148,22 @@ function paintBoundaryFlowResult(job, payload) {
   document.querySelector("#boundary-flow-result-status").textContent =
     `${formatInteger(predictions.length)} 个样本外交易日 · ${strategyLabel}`;
 
-  const verdict = boundaryImprovementVerdict(metrics, baselineMetrics);
+  const majorityDirection = directionReport?.baselines?.majority_direction;
+  const passed = Boolean(stage.passed);
   document.querySelector("#boundary-evaluation-summary").innerHTML = `
-    <span>本次结论</span><strong>${verdict.title}</strong>
-    <p>基于 ${formatInteger(metrics.observations)} 个真实样本外交易日。相对基线收益 ${formatPercent(verdict.returnDelta)}，回撤改善 ${formatPercent(verdict.drawdownImprovement)}；${verdict.passed ? "通过" : "未通过"}改进标准。</p>`;
-  document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${verdict.level}`;
+    <span>方向预测结论</span><strong>${passed ? "纯路径效率通过方向门槛" : "纯路径效率尚未超过多数方向基线"}</strong>
+    <p>固定使用预先声明的纯路径效率模型，不根据本次样本外成绩挑模型。通过要求是方向正确率超过多数方向，同时涨跌平衡正确率高于 50%。</p>`;
+  document.querySelector("#boundary-evaluation-summary").className = `boundary-evaluation-summary ${passed ? "positive" : "caution"}`;
   document.querySelector("#boundary-evaluation-metrics").innerHTML = [
-    boundaryMetric("基线成本后收益", formatPercent(baselineMetrics.net_total_return), baselineLabel),
-    boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return), "扣除换手成本"),
-    boundaryMetric("平均一日有效势", formatNumber(potential?.mean_effective_potential, 4), "V = softplus(β0 + β1·C1)"),
-    boundaryMetric("平均趋势存活率", formatPercent(potential?.mean_trend_survival_probability), "FK 对板块漂移的保留比例"),
-    boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown), "历史高点后的最大跌幅"),
+    boundaryMetric("多数方向基线", formatPercent(majorityDirection), "只预测样本期出现更多的方向"),
     boundaryMetric("方向判断正确率", formatPercent(metrics.drift_direction_accuracy), "上涨或下跌方向"),
+    boundaryMetric("涨跌平衡正确率", formatPercent(metrics.drift_balanced_accuracy), "分别计算上涨和下跌召回率后取平均"),
     boundaryMetric("方向信号覆盖率", formatPercent(metrics.direction_signal_coverage), "输出看多或看空的比例"),
-    boundaryMetric("有效方向命中率", formatPercent(metrics.direction_signal_accuracy), "只统计实际输出的方向信号"),
-    boundaryMetric("平均实际仓位", formatPercent(metrics.average_exposure), "整个测试期平均"),
-    boundaryMetric("涨停未买入", formatInteger(metrics.failed_buy_orders), "全天未打开涨停板"),
-    boundaryMetric("跌停未卖出", formatInteger(metrics.failed_sell_orders), "全天未打开跌停板"),
-    boundaryMetric("板块止损触发", formatInteger(trailingStopEvents), "持仓权益从峰值回撤超过设定值"),
-    boundaryMetric("止损清仓日", formatInteger(trailingStopExitDays), "跌停未卖出时会持续清仓"),
+    boundaryMetric("有效信号命中率", formatPercent(metrics.direction_signal_accuracy), "只统计实际输出的空或多信号"),
+    boundaryMetric("三状态平衡正确率", formatPercent(metrics.balanced_accuracy), "空、平、多分别计算"),
+    boundaryMetric("漂移排序相关", formatNumber(metrics.drift_rank_ic, 4), "预测漂移与下一日收益的排序关系"),
   ].join("");
+  paintSectorDirectionComparison(directionReport);
 
   if (!latest) {
     document.querySelector("#boundary-probabilities").innerHTML = '<p class="boundary-empty">没有样本外预测。</p>';

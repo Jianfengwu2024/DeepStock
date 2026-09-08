@@ -55,8 +55,18 @@ SECTOR_MODEL_FEATURES = {
     ),
 }
 SECTOR_MODEL_NAMES = tuple(SECTOR_MODEL_FEATURES)
+SECTOR_PRIMARY_MODEL = "SectorFK-PathOnly"
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
+
+
+def _passes_sector_direction_gate(
+    metrics: BoundaryEvaluationMetrics, majority_direction: float
+) -> bool:
+    return (
+        metrics.drift_direction_accuracy > majority_direction
+        and metrics.drift_balanced_accuracy > 0.5
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -720,16 +730,37 @@ class BoundaryFlowPipeline:
         test_months = tuple(
             str(test_start.astype("datetime64[M]")) for _, test_start, _, _ in folds
         )
+        metrics_by_model = {
+            model_name: evaluate_two_branch_forecasts(
+                tuple(observations_by_model[model_name]), evaluation_config
+            )
+            for model_name in SECTOR_MODEL_NAMES
+        }
+        reference_actual = np.asarray(
+            [item.actual_returns[0] for item in observations_by_model[SECTOR_PRIMARY_MODEL]]
+        )
+        positive_rate = float(np.mean(reference_actual > 0.0))
+        majority_direction = max(positive_rate, 1.0 - positive_rate)
         stages = tuple(
             BoundaryStageResult(
                 model_name=model_name,
                 status="completed",
-                passed=True,
+                passed=_passes_sector_direction_gate(
+                    metrics_by_model[model_name], majority_direction
+                ),
+                promotion_eligible=_passes_sector_direction_gate(
+                    metrics_by_model[model_name], majority_direction
+                ),
                 test_months=test_months,
                 drift_feature_names=SECTOR_MODEL_FEATURES[model_name],
                 minimum_fit_rows=min(fit_rows[model_name]),
-                metrics=evaluate_two_branch_forecasts(
-                    tuple(observations_by_model[model_name]), evaluation_config
+                metrics=metrics_by_model[model_name],
+                failure_reason=(
+                    ""
+                    if _passes_sector_direction_gate(
+                        metrics_by_model[model_name], majority_direction
+                    )
+                    else "did not beat the majority direction with balanced skill"
                 ),
             )
             for model_name in SECTOR_MODEL_NAMES
@@ -837,7 +868,7 @@ class BoundaryFlowPipeline:
         observations_by_model: dict[str, list[TwoBranchForecastObservation]],
         models: list[dict[str, object]],
     ) -> dict[str, object]:
-        reference = observations_by_model[SECTOR_MODEL_NAMES[0]]
+        reference = observations_by_model[SECTOR_PRIMARY_MODEL]
         row_by_session = {
             session.astype("datetime64[D]"): row
             for row, session in enumerate(data.states.sessions)
@@ -860,11 +891,38 @@ class BoundaryFlowPipeline:
                 data.states.feature("signed_path_efficiency")[rows, 0]
             ),
         }
+        enriched_models = []
+        for item in models:
+            observations = observations_by_model[str(item["model_name"])]
+            months = np.asarray(
+                [entry.target_time.astype("datetime64[M]") for entry in observations]
+            )
+            monthly = []
+            for month in np.unique(months):
+                selected = np.flatnonzero(months == month)
+                month_actual = np.asarray(
+                    [observations[index].actual_returns[0] for index in selected]
+                )
+                month_drift = np.asarray(
+                    [observations[index].forecasts[0].expected_drift for index in selected]
+                )
+                monthly.append(
+                    {
+                        "month": str(month),
+                        "observations": len(selected),
+                        "accuracy": float(
+                            np.mean(np.sign(month_drift) == np.sign(month_actual))
+                        ),
+                    }
+                )
+            enriched_models.append({**item, "monthly_direction_accuracy": monthly})
         return {
             "scope": "whole_sector",
             "observations": len(reference),
             "baselines": baselines,
-            "models": models,
+            "preferred_model": SECTOR_PRIMARY_MODEL,
+            "selection_rule": "fixed_predeclared_baseline",
+            "models": enriched_models,
         }
 
     @staticmethod

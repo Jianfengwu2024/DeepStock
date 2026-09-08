@@ -237,6 +237,33 @@ class WebSectorFlowConfigTests(unittest.TestCase):
         )
         self.assertIn("convection-potential-evaluation.json", payload["artifacts"])
 
+    def test_job_payload_exposes_sector_direction_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = JobManager(directory, Path.cwd())
+            output = Path(directory, "sector-direction")
+            output.mkdir()
+            (output / "sector-direction-evaluation.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            record = JobRecord(
+                id="sector-direction",
+                status="completed",
+                created_at=datetime.now(timezone.utc),
+                output_dir=str(output),
+                request=WalkForwardJobRequest(
+                    strategy="boundary-flow-fk",
+                    training_scope="sector-pooled",
+                    dataset_id="semiconductor",
+                ),
+            )
+            with manager._lock:
+                manager._jobs[record.id] = record
+
+            payload = _job_payload(manager, record, detail=False)
+            manager.close()
+
+        self.assertIn("sector-direction-evaluation.json", payload["artifacts"])
+
 
 if __name__ == "__main__":
     unittest.main()

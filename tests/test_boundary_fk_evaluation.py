@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -74,6 +76,7 @@ def test_evaluation_reports_probability_and_strategy_metrics() -> None:
     assert metrics.crps >= 0.0
     assert metrics.direction_signal_coverage == pytest.approx(2 / 3)
     assert metrics.direction_signal_accuracy == pytest.approx(1.0)
+    assert metrics.drift_balanced_accuracy == pytest.approx(1.0)
 
 
 def test_evaluation_rejects_noncausal_prediction_trace() -> None:
@@ -93,3 +96,17 @@ def test_evaluation_rejects_noncausal_prediction_trace() -> None:
 
     with pytest.raises(ValueError, match="training_cutoff"):
         evaluate_boundary_forecasts((invalid,))
+
+
+def test_zero_drift_is_not_counted_as_a_correct_bearish_direction() -> None:
+    bullish = _observation(1, (0.2, 0.6, 0.2), 0.01, False, 0.0)
+    bearish = _observation(2, (0.2, 0.6, 0.2), -0.01, False, 0.0)
+    observations = tuple(
+        replace(item, forecast=_forecast((0.2, 0.6, 0.2), 0.0))
+        for item in (bullish, bearish)
+    )
+
+    metrics = evaluate_boundary_forecasts(observations)
+
+    assert metrics.drift_direction_accuracy == pytest.approx(0.0)
+    assert metrics.drift_balanced_accuracy == pytest.approx(0.0)

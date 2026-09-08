@@ -109,3 +109,15 @@ def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
         "path_efficiency_direction",
     }
     assert len(report["models"]) == 4
+    assert report["preferred_model"] == "SectorFK-PathOnly"
+    assert report["selection_rule"] == "fixed_predeclared_baseline"
+    majority = report["baselines"]["majority_direction"]
+    for model in report["models"]:
+        metrics = model["metrics"]
+        expected = (
+            metrics["drift_direction_accuracy"] > majority
+            and metrics["drift_balanced_accuracy"] > 0.5
+        )
+        assert model["passed"] is expected
+        assert model["promotion_eligible"] is expected
+        assert model["monthly_direction_accuracy"]

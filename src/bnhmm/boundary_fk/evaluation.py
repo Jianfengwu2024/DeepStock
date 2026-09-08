@@ -88,6 +88,7 @@ class BoundaryEvaluationMetrics:
     direction_counts: tuple[int, int, int]
     drift_rank_ic: float
     drift_direction_accuracy: float
+    drift_balanced_accuracy: float
     direction_signal_coverage: float = 0.0
     direction_signal_accuracy: float = 0.0
     failed_buy_orders: int = 0
@@ -180,6 +181,9 @@ def evaluate_boundary_forecasts(
         drift_rank_ic=_rank_correlation(expected_drift, actual_returns),
         drift_direction_accuracy=float(
             np.mean(np.sign(expected_drift) == np.sign(actual_returns))
+        ),
+        drift_balanced_accuracy=_binary_balanced_direction_accuracy(
+            actual_returns, expected_drift
         ),
         direction_signal_coverage=float(np.mean(direction_signal)),
         direction_signal_accuracy=(
@@ -301,6 +305,9 @@ def evaluate_two_branch_forecasts(
         drift_direction_accuracy=float(
             np.mean(np.sign(expected_drift) == np.sign(actual_returns))
         ),
+        drift_balanced_accuracy=_binary_balanced_direction_accuracy(
+            actual_returns, expected_drift
+        ),
         direction_signal_coverage=float(np.mean(direction_signal)),
         direction_signal_accuracy=(
             float(np.mean(predicted_classes[direction_signal] == actual_classes[direction_signal]))
@@ -416,6 +423,23 @@ def _normal_quantile(probability: float) -> float:
 def _balanced_accuracy(actual: np.ndarray, predicted: np.ndarray) -> float:
     recalls = [float(np.mean(predicted[actual == label] == label)) for label in np.unique(actual)]
     return float(np.mean(recalls))
+
+
+def _binary_balanced_direction_accuracy(
+    actual_returns: np.ndarray, predicted_drift: np.ndarray
+) -> float:
+    actual = np.asarray(actual_returns, dtype=np.float64)
+    predicted = np.asarray(predicted_drift, dtype=np.float64)
+    usable = np.isfinite(actual) & np.isfinite(predicted) & (actual != 0.0)
+    if not np.any(usable):
+        return 0.0
+    actual_positive = actual[usable] > 0.0
+    predicted_sign = np.sign(predicted[usable])
+    if np.all(actual_positive) or not np.any(actual_positive):
+        return 0.5
+    positive_recall = float(np.mean(predicted_sign[actual_positive] == 1.0))
+    negative_recall = float(np.mean(predicted_sign[~actual_positive] == -1.0))
+    return 0.5 * (positive_recall + negative_recall)
 
 
 def _macro_f1(actual: np.ndarray, predicted: np.ndarray) -> float:
