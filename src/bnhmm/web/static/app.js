@@ -101,8 +101,6 @@ function applyDataset() {
   const end = (dataset.data_end || dataset.end || "").slice(0, 10);
   $('[name="database_path"]').value = dataset.database_path;
   $('[name="symbols"]').value = dataset.symbols.join(",");
-  if (start) $('[name="start"]').value = start;
-  if (end) $('[name="end"]').value = end;
   $("#dataset-summary").textContent = dataset.symbols.length + " 只股票 · " +
     start + " 至 " + end;
   checkBoundaryData();

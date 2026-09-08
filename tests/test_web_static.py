@@ -104,8 +104,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.29.1', html)
-        self.assertIn('/static/styles.css?v=0.29.1', html)
+        self.assertIn('/static/app.js?v=0.29.2', html)
+        self.assertIn('/static/styles.css?v=0.29.2', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('id="boundary-data-build"', html)
         self.assertIn('id="boundary-data-status"', html)
@@ -142,6 +142,12 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn('if (kind === "boundary-flow-fk") applyDataset();', script)
         self.assertIn('start: $(\'[name="start"]\').value,', script)
         self.assertIn('end: $(\'[name="end"]\').value,', script)
+
+    def test_fk_dataset_switch_preserves_the_selected_test_period(self) -> None:
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertNotIn('if (start) $(\'[name="start"]\').value = start;', script)
+        self.assertNotIn('if (end) $(\'[name="end"]\').value = end;', script)
 
     def test_fk_policy_is_described_without_obsolete_strategy_variants(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
