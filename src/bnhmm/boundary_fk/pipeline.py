@@ -95,7 +95,6 @@ class BoundaryFlowPipelineConfig:
     minimum_survival_probability: float = 0.35
     relative_strength_lookback_sessions: int = 20
     drift_feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
-    direction_label_sigma: float = 0.1
     maximum_drawdown: float = 0.05
 
     def __post_init__(self) -> None:
@@ -121,10 +120,12 @@ class BoundaryFlowPipelineConfig:
             and self.drift_half_life_sessions <= 0.0
         ):
             raise ValueError("drift half-life must be positive when provided")
-        if not 0.0 <= self.direction_label_sigma <= 5.0:
-            raise ValueError("direction label sigma must lie in [0, 5]")
         if not 0.0 < self.maximum_drawdown < 1.0:
             raise ValueError("maximum drawdown must lie in (0, 1)")
+
+    @property
+    def direction_label_sigma(self) -> float:
+        return self.neutral_sigma
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,7 +247,6 @@ class BoundaryFlowPipeline:
                         drift_half_life_sessions=self.config.drift_half_life_sessions,
                         potential_mode="beta0_c1",
                         drift_feature_names=self.config.drift_feature_names,
-                        direction_label_sigma=self.config.direction_label_sigma,
                     )
                 )
                 try:
@@ -598,7 +598,6 @@ class BoundaryFlowPipeline:
                         drift_half_life_sessions=self.config.drift_half_life_sessions,
                         potential_mode="beta0_c1",
                         drift_feature_names=feature_names,
-                        direction_label_sigma=self.config.direction_label_sigma,
                     )
                 ).fit(
                     data.states,

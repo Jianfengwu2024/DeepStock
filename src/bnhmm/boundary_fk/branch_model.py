@@ -34,7 +34,6 @@ class BayesianBranchModelConfig:
     drift_half_life_sessions: float | None = 60.0
     potential_mode: str = "beta0_c1"
     drift_feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
-    direction_label_sigma: float = 0.1
 
     def __post_init__(self) -> None:
         if self.prior_precision <= 0.0 or self.variance_floor <= 0.0:
@@ -50,8 +49,6 @@ class BayesianBranchModelConfig:
             raise ValueError("drift half-life must be positive when provided")
         if self.potential_mode not in {"beta0_only", "c1_only", "beta0_c1"}:
             raise ValueError("unknown convection potential mode")
-        if not 0.0 <= self.direction_label_sigma <= 5.0:
-            raise ValueError("direction label sigma must lie in [0, 5]")
         if (
             not self.drift_feature_names
             or self.drift_feature_names[0] != "signed_path_efficiency"
@@ -59,6 +56,10 @@ class BayesianBranchModelConfig:
             or not set(self.drift_feature_names).issubset(CAUSAL_DRIFT_FEATURE_NAMES)
         ):
             raise ValueError("direction drift features must use the causal feature set")
+
+    @property
+    def direction_label_sigma(self) -> float:
+        return self.neutral_sigma
 
 
 @dataclass(frozen=True, slots=True)

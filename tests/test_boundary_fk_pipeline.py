@@ -17,6 +17,12 @@ from bnhmm.boundary_fk.types import (
 from test_two_branch_fk_model import _dataset
 
 
+def test_pipeline_direction_training_threshold_follows_neutral_sigma() -> None:
+    config = BoundaryFlowPipelineConfig(neutral_sigma=0.62)
+
+    assert config.direction_label_sigma == 0.62
+
+
 def _walk_forward_data(rows: int = 180) -> TwoBranchDataset:
     states, labels = _dataset(rows)
     symbols = ("A", "B", "C", "D")
@@ -311,7 +317,7 @@ def test_walk_forward_skips_folds_without_enough_direction_labels() -> None:
             minimum_train_sessions=60,
             max_folds=1,
             fk_paths=1000,
-            direction_label_sigma=0.1,
+            neutral_sigma=0.1,
         )
     )
 
@@ -383,7 +389,7 @@ def test_pipeline_portfolio_return_comes_from_selected_constituents(tmp_path) ->
                 minimum_direction_probability=0.5,
                 minimum_signal_to_noise=0.0,
                 minimum_survival_probability=0.0,
-                direction_label_sigma=0.0,
+                neutral_sigma=1e-12,
             )
     ).run(data, tmp_path)
     predictions = json.loads(

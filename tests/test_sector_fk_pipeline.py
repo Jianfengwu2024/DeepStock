@@ -67,7 +67,7 @@ def test_pipeline_predicts_one_sector_without_branch_memberships(tmp_path) -> No
             minimum_train_sessions=30,
             max_folds=1,
             fk_paths=1000,
-            direction_label_sigma=0.0,
+            neutral_sigma=1e-12,
             minimum_direction_probability=0.51,
             minimum_signal_to_noise=0.0,
             minimum_survival_probability=0.0,
@@ -96,7 +96,7 @@ def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
             minimum_train_sessions=30,
             max_folds=1,
             fk_paths=1000,
-            direction_label_sigma=0.0,
+            neutral_sigma=1e-12,
             minimum_signal_to_noise=0.0,
             minimum_survival_probability=0.0,
         )

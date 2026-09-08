@@ -20,6 +20,12 @@ from bnhmm.boundary_fk.feynman_kac import (
 from bnhmm.boundary_fk.types import TwoBranchDailyStates, TwoBranchLabels
 
 
+def test_direction_training_threshold_follows_neutral_sigma() -> None:
+    config = BayesianBranchModelConfig(neutral_sigma=0.62)
+
+    assert config.direction_label_sigma == pytest.approx(0.62)
+
+
 def _dataset(rows: int = 80) -> tuple[TwoBranchDailyStates, TwoBranchLabels]:
     rng = np.random.default_rng(17)
     sessions = np.busday_offset(np.datetime64("2024-01-02"), np.arange(rows))
@@ -203,7 +209,7 @@ def test_direction_model_learns_a_prior_shrunk_positive_drift_baseline() -> None
                 minimum_rows=30,
                 prior_precision=2.0,
                 drift_half_life_sessions=None,
-                direction_label_sigma=0.0,
+                neutral_sigma=1e-12,
             )
         ),
         neutral_states,
@@ -217,7 +223,7 @@ def test_direction_model_learns_a_prior_shrunk_positive_drift_baseline() -> None
                 minimum_rows=30,
                 prior_precision=200.0,
                 drift_half_life_sessions=None,
-                direction_label_sigma=0.0,
+                neutral_sigma=1e-12,
             )
         ),
         neutral_states,
@@ -247,7 +253,7 @@ def test_balanced_direction_labels_keep_the_drift_baseline_near_zero() -> None:
                 minimum_rows=30,
                 prior_precision=2.0,
                 drift_half_life_sessions=None,
-                direction_label_sigma=0.0,
+                neutral_sigma=1e-12,
             )
         ),
         neutral_states,
@@ -286,7 +292,7 @@ def test_direction_model_excludes_ambiguous_training_returns() -> None:
                 minimum_rows=15,
                 drift_half_life_sessions=None,
                 drift_feature_names=features,
-                direction_label_sigma=0.0,
+                neutral_sigma=1e-12,
             )
         ),
         states,
@@ -300,7 +306,7 @@ def test_direction_model_excludes_ambiguous_training_returns() -> None:
                 minimum_rows=15,
                 drift_half_life_sessions=None,
                 drift_feature_names=features,
-                direction_label_sigma=0.1,
+                neutral_sigma=0.1,
             )
         ),
         states,
