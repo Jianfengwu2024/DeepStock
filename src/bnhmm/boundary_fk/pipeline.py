@@ -22,6 +22,11 @@ from .evaluation import (
     evaluate_two_branch_forecasts,
 )
 from .feynman_kac import BoundaryFeynmanKacConfig, BranchFeynmanKacForecaster
+from .hurdle_model import (
+    BayesianHurdleModel,
+    BayesianHurdleModelConfig,
+    BayesianHurdlePosterior,
+)
 from .policy import (
     BoundaryPolicy,
     BoundaryPolicyConfig,
@@ -37,25 +42,12 @@ BOUNDARY_MODEL_NAMES = (
                 "PathEfficiencyFK-60D-StrongestHalf",
 )
 SECTOR_MODEL_FEATURES = {
-    "SectorFK-PathOnly": ("signed_path_efficiency",),
-    "SectorFK-PathSync": (
-        "signed_path_efficiency",
-        "signed_member_synchronization",
-    ),
-    "SectorFK-PathMemory": (
-        "signed_path_efficiency",
-        "path_efficiency_delta_1d",
-        "path_direction_consistency_3d",
-    ),
-    "SectorFK-PathFull": (
-        "signed_path_efficiency",
-        "path_efficiency_delta_1d",
-        "path_direction_consistency_3d",
-        "signed_member_synchronization",
-    ),
+    "SectorFK-LabelAligned": ("signed_path_efficiency",),
+    "SectorFK-BayesianHurdle": ("signed_path_efficiency",),
 }
 SECTOR_MODEL_NAMES = tuple(SECTOR_MODEL_FEATURES)
-SECTOR_PRIMARY_MODEL = "SectorFK-PathOnly"
+SECTOR_HURDLE_MODELS = frozenset({"SectorFK-BayesianHurdle"})
+SECTOR_PRIMARY_MODEL = "SectorFK-BayesianHurdle"
 MINIMUM_TRADABLE_DIRECTION_SIGNALS = 30
 PRIMARY_POLICY_NAME = "path_efficiency_fk"
 BoundaryWalkForwardData = TwoBranchDataset
@@ -91,6 +83,7 @@ class BoundaryFlowPipelineConfig:
     transaction_cost_bps: float = 5.0
     drift_half_life_sessions: float | None = 60.0
     minimum_direction_probability: float = 0.51
+    minimum_significant_move_probability: float = 0.50
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
     relative_strength_lookback_sessions: int = 20
@@ -112,6 +105,9 @@ class BoundaryFlowPipelineConfig:
             raise ValueError("relative strength lookback must lie in [2, 252]")
         BoundaryPolicyConfig(
             minimum_direction_probability=self.minimum_direction_probability,
+            minimum_significant_move_probability=(
+                self.minimum_significant_move_probability
+            ),
             minimum_signal_to_noise=self.minimum_signal_to_noise,
             minimum_survival_probability=self.minimum_survival_probability,
         )
@@ -226,6 +222,9 @@ class BoundaryFlowPipeline:
         policy = BoundaryPolicy(
             BoundaryPolicyConfig(
                 minimum_direction_probability=self.config.minimum_direction_probability,
+                minimum_significant_move_probability=(
+                    self.config.minimum_significant_move_probability
+                ),
                 minimum_signal_to_noise=self.config.minimum_signal_to_noise,
                 minimum_survival_probability=self.config.minimum_survival_probability,
             )
@@ -579,6 +578,9 @@ class BoundaryFlowPipeline:
         policy = BoundaryPolicy(
             BoundaryPolicyConfig(
                 minimum_direction_probability=self.config.minimum_direction_probability,
+                minimum_significant_move_probability=(
+                    self.config.minimum_significant_move_probability
+                ),
                 minimum_signal_to_noise=self.config.minimum_signal_to_noise,
                 minimum_survival_probability=self.config.minimum_survival_probability,
             )
@@ -590,6 +592,7 @@ class BoundaryFlowPipeline:
         for fold_index, test_start, _, test_rows in folds:
             cutoff = test_start - np.timedelta64(1, "ns")
             posteriors: dict[str, BayesianBranchPosterior] = {}
+            hurdle_posteriors: dict[str, BayesianHurdlePosterior] = {}
             for model_name, feature_names in SECTOR_MODEL_FEATURES.items():
                 posterior = BayesianBranchModel(
                     BayesianBranchModelConfig(
@@ -608,10 +611,31 @@ class BoundaryFlowPipeline:
                     training_cutoff=cutoff,
                 )
                 posteriors[model_name] = posterior
+                hurdle_posterior = None
+                if model_name in SECTOR_HURDLE_MODELS:
+                    hurdle_posterior = BayesianHurdleModel(
+                        BayesianHurdleModelConfig(
+                            minimum_rows=self.config.minimum_train_sessions,
+                            minimum_direction_rows=self.config.minimum_train_sessions,
+                            neutral_sigma=self.config.neutral_sigma,
+                            half_life_sessions=self.config.drift_half_life_sessions,
+                            feature_names=feature_names,
+                        )
+                    ).fit(
+                        data.states,
+                        data.labels,
+                        branch=0,
+                        training_cutoff=cutoff,
+                    )
+                    hurdle_posteriors[model_name] = hurdle_posterior
                 fit_rows[model_name].append(posterior.fit_rows)
-                posterior_payloads.append(
-                    {
+                posterior_payload = {
                         "model_name": model_name,
+                        "model_type": (
+                            "bayesian_hurdle"
+                            if hurdle_posterior is not None
+                            else "bayesian_direction_logit"
+                        ),
                         "scope": "whole_sector",
                         "fold": fold_index,
                         "training_cutoff": str(cutoff),
@@ -621,10 +645,26 @@ class BoundaryFlowPipeline:
                         "drift_covariance": posterior.drift_covariance.tolist(),
                         "drift_return_scale": posterior.drift_return_scale,
                         "direction_fit_rows": posterior.direction_fit_rows,
+                        "direction_label_sigma": self.config.neutral_sigma,
                         "potential_mean": posterior.potential_mean.tolist(),
                         "potential_mode": posterior.potential_mode,
                     }
-                )
+                if hurdle_posterior is not None:
+                    posterior_payload.update(
+                        {
+                            "move_mean": hurdle_posterior.move_mean.tolist(),
+                            "move_covariance": hurdle_posterior.move_covariance.tolist(),
+                            "direction_mean": hurdle_posterior.direction_mean.tolist(),
+                            "direction_covariance": (
+                                hurdle_posterior.direction_covariance.tolist()
+                            ),
+                            "hurdle_fit_rows": hurdle_posterior.fit_rows,
+                            "hurdle_direction_fit_rows": (
+                                hurdle_posterior.direction_fit_rows
+                            ),
+                        }
+                    )
+                posterior_payloads.append(posterior_payload)
 
             for row in test_rows:
                 if not data.labels.valid[row, 0] or not potential_valid[row]:
@@ -655,6 +695,7 @@ class BoundaryFlowPipeline:
                         int(row),
                         potential_features=potential_values[row],
                         neutral_threshold=threshold,
+                        hurdle_posterior=hurdle_posteriors.get(model_name),
                     )
                     decision = policy.decide(
                         (forecast,),
@@ -829,6 +870,14 @@ class BoundaryFlowPipeline:
                 "survival_confidence": forecast.trend_survival_probability,
                 "bullish_drift_probability": forecast.bullish_drift_probability,
                 "drift_signal_to_noise": forecast.drift_signal_to_noise,
+                "significant_move_probability": (
+                    forecast.significant_move_probability
+                ),
+                "conditional_bullish_probability": (
+                    forecast.conditional_bullish_probability
+                ),
+                "prior_bullish_probability": forecast.prior_bullish_probability,
+                "feature_log_odds_delta": forecast.feature_log_odds_delta,
                 "expected_diffusion_variance": forecast.expected_diffusion_variance,
                 "actual_return": observation.actual_returns[0],
                 "neutral_threshold": observation.neutral_thresholds[0],

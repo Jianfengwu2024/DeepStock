@@ -11,12 +11,15 @@ from .feynman_kac import BoundaryFeynmanKacForecast
 @dataclass(frozen=True, slots=True)
 class BoundaryPolicyConfig:
     minimum_direction_probability: float = 0.51
+    minimum_significant_move_probability: float = 0.50
     minimum_signal_to_noise: float = 0.10
     minimum_survival_probability: float = 0.35
 
     def __post_init__(self) -> None:
         if not 0.5 <= self.minimum_direction_probability <= 1.0:
             raise ValueError("direction probability must lie in [0.5, 1]")
+        if not 0.0 <= self.minimum_significant_move_probability <= 1.0:
+            raise ValueError("significant move probability must lie in [0, 1]")
         if self.minimum_signal_to_noise < 0.0:
             raise ValueError("signal-to-noise gate must be non-negative")
         if not 0.0 <= self.minimum_survival_probability <= 1.0:
@@ -136,7 +139,9 @@ class BoundaryPolicy:
         if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
             raise ValueError("neutral threshold must be finite and non-negative")
         if (
-            forecast.drift_signal_to_noise < self.config.minimum_signal_to_noise
+            forecast.significant_move_probability
+            < self.config.minimum_significant_move_probability
+            or forecast.drift_signal_to_noise < self.config.minimum_signal_to_noise
             or forecast.trend_survival_probability
             < self.config.minimum_survival_probability
         ):

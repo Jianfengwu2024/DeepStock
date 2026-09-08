@@ -75,10 +75,8 @@ def test_pipeline_predicts_one_sector_without_branch_memberships(tmp_path) -> No
     ).run(_direct_dataset(), tmp_path)
 
     assert result.model_names == (
-        "SectorFK-PathOnly",
-        "SectorFK-PathSync",
-        "SectorFK-PathMemory",
-        "SectorFK-PathFull",
+        "SectorFK-LabelAligned",
+        "SectorFK-BayesianHurdle",
     )
     assert all(stage.metrics and stage.metrics.observations > 0 for stage in result.stages)
     predictions = json.loads((tmp_path / "feynman-kac-predictions.json").read_text())
@@ -88,6 +86,27 @@ def test_pipeline_predicts_one_sector_without_branch_memberships(tmp_path) -> No
     opened = [item for item in predictions if item["selected_symbols"]]
     assert opened
     assert all(len(item["selected_symbols"]) == 2 for item in opened)
+    hurdle_predictions = [
+        item
+        for item in predictions
+        if item["model_version"] == "SectorFK-BayesianHurdle"
+    ]
+    assert hurdle_predictions
+    assert {
+        "significant_move_probability",
+        "conditional_bullish_probability",
+        "prior_bullish_probability",
+        "feature_log_odds_delta",
+    }.issubset(hurdle_predictions[0]["sector"])
+    posteriors = json.loads(
+        (tmp_path / "boundary-model-posterior.json").read_text()
+    )
+    hurdle_posteriors = [
+        item for item in posteriors if item["model_name"] == "SectorFK-BayesianHurdle"
+    ]
+    assert hurdle_posteriors
+    assert hurdle_posteriors[0]["model_type"] == "bayesian_hurdle"
+    assert hurdle_posteriors[0]["direction_label_sigma"] == 1e-12
 
 
 def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
@@ -107,8 +126,8 @@ def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
         "previous_day_direction",
         "path_efficiency_direction",
     }
-    assert len(report["models"]) == 4
-    assert report["preferred_model"] == "SectorFK-PathOnly"
+    assert len(report["models"]) == 2
+    assert report["preferred_model"] == "SectorFK-BayesianHurdle"
     assert report["selection_rule"] == "fixed_predeclared_baseline"
     for model in report["models"]:
         metrics = model["metrics"]

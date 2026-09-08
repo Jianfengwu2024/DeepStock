@@ -232,6 +232,26 @@ def test_weak_survival_confidence_abstains_even_with_positive_drift() -> None:
     assert decision.branch_directions == ("flat", "flat")
 
 
+def test_hurdle_abstains_when_a_significant_move_is_not_probable() -> None:
+    weak_move = replace(
+        _forecast("bull"),
+        significant_move_probability=0.49,
+        conditional_bullish_probability=0.9,
+        bullish_drift_probability=0.9,
+    )
+
+    decision = BoundaryPolicy(
+        BoundaryPolicyConfig(minimum_significant_move_probability=0.5)
+    ).decide(
+        (weak_move,),
+        branches=(("A", "B"),),
+        neutral_thresholds=(0.002,),
+    )
+
+    assert decision.branch_directions == ("flat",)
+    assert not decision.open_position
+
+
 def test_policy_has_no_external_convection_exposure_cap() -> None:
     assert "branch_exposure_caps" not in inspect.signature(
         BoundaryPolicy.decide

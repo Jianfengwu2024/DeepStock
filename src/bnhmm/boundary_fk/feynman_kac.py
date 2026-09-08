@@ -9,6 +9,7 @@ from scipy.special import expit, ndtr
 
 from .bayesian_state import BayesianBoundaryPosterior, BoundaryStateLabels
 from .branch_model import BayesianBranchPosterior, BayesianConvectionDriftPosterior
+from .hurdle_model import BayesianHurdlePosterior
 from .types import BoundaryDailyStates
 from .types import TwoBranchDailyStates
 
@@ -45,6 +46,10 @@ class BoundaryFeynmanKacForecast:
     drift_signal_to_noise: float = 0.0
     expected_base_drift: float = 0.0
     expected_convection_drift_correction: float = 0.0
+    significant_move_probability: float = 1.0
+    conditional_bullish_probability: float = 0.5
+    prior_bullish_probability: float = 0.5
+    feature_log_odds_delta: float = 0.0
 
 
 class BoundaryFeynmanKacForecaster:
@@ -148,6 +153,7 @@ class BranchFeynmanKacForecaster:
         potential_features: np.ndarray | None = None,
         convection_drift_posterior: BayesianConvectionDriftPosterior | None = None,
         convection_drift_features: np.ndarray | None = None,
+        hurdle_posterior: BayesianHurdlePosterior | None = None,
         neutral_threshold: float,
     ) -> BoundaryFeynmanKacForecast:
         if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
@@ -166,7 +172,48 @@ class BranchFeynmanKacForecaster:
             self.config.paths,
         )
         drift_linear = drift_coefficients @ posterior.drift_design(states, resolved_row)
-        if posterior.drift_model == "bayesian_direction_logit":
+        hurdle_move_probability: np.ndarray | None = None
+        hurdle_direction_probability: np.ndarray | None = None
+        prior_bullish_probability = 0.5
+        feature_log_odds_delta = 0.0
+        if hurdle_posterior is not None:
+            if hurdle_posterior.branch != posterior.branch:
+                raise ValueError("hurdle and FK branch posteriors must align")
+            hurdle_rng = np.random.default_rng(self.config.seed + 2_000_003)
+            move_coefficients = _antithetic_multivariate_normal(
+                hurdle_rng,
+                hurdle_posterior.move_mean,
+                hurdle_posterior.move_covariance,
+                self.config.paths,
+            )
+            direction_coefficients = _antithetic_multivariate_normal(
+                hurdle_rng,
+                hurdle_posterior.direction_mean,
+                hurdle_posterior.direction_covariance,
+                self.config.paths,
+            )
+            hurdle_move_probability = expit(
+                move_coefficients
+                @ hurdle_posterior.move_design(states, resolved_row)
+            )
+            direction_design = hurdle_posterior.direction_design(
+                states, resolved_row
+            )
+            direction_linear = direction_coefficients @ direction_design
+            hurdle_direction_probability = expit(direction_linear)
+            direction_probability = hurdle_direction_probability
+            prior_bullish_probability = float(
+                np.mean(expit(direction_coefficients[:, 0]))
+            )
+            feature_log_odds_delta = float(
+                np.mean(direction_coefficients[:, 1:] @ direction_design[1:])
+            )
+            base_drift = (
+                hurdle_move_probability
+                * (2.0 * direction_probability - 1.0)
+                * hurdle_posterior.return_scale
+            )
+        elif posterior.drift_model == "bayesian_direction_logit":
             direction_probability = expit(drift_linear)
             base_drift = (2.0 * direction_probability - 1.0) * posterior.drift_return_scale
         else:
@@ -211,13 +258,24 @@ class BranchFeynmanKacForecaster:
         attenuated_drift = drift * survival
         diffusion = posterior.diffusion_variance
         returns = drift + np.sqrt(diffusion) * return_shocks
-        classes = (
-            returns < -neutral_threshold,
-            np.abs(returns) <= neutral_threshold,
-            returns > neutral_threshold,
-        )
-        probabilities = tuple(float(np.mean(mask)) for mask in classes)
-        survival_joint = tuple(float(np.mean(survival * mask)) for mask in classes)
+        if hurdle_move_probability is None or hurdle_direction_probability is None:
+            classes = (
+                returns < -neutral_threshold,
+                np.abs(returns) <= neutral_threshold,
+                returns > neutral_threshold,
+            )
+            probabilities = tuple(float(np.mean(mask)) for mask in classes)
+            survival_joint = tuple(float(np.mean(survival * mask)) for mask in classes)
+        else:
+            class_mass = (
+                hurdle_move_probability * (1.0 - hurdle_direction_probability),
+                1.0 - hurdle_move_probability,
+                hurdle_move_probability * hurdle_direction_probability,
+            )
+            probabilities = tuple(float(np.mean(mass)) for mass in class_mass)
+            survival_joint = tuple(
+                float(np.mean(survival * mass)) for mass in class_mass
+            )
         conditional_bullish = ndtr(
             (drift - neutral_threshold) / np.sqrt(diffusion)
         )
@@ -250,6 +308,14 @@ class BranchFeynmanKacForecaster:
             expected_convection_drift_correction=float(
                 np.mean(convection_correction)
             ),
+            significant_move_probability=(
+                float(np.mean(hurdle_move_probability))
+                if hurdle_move_probability is not None
+                else 1.0
+            ),
+            conditional_bullish_probability=float(np.mean(direction_probability)),
+            prior_bullish_probability=prior_bullish_probability,
+            feature_log_odds_delta=feature_log_odds_delta,
         )
 
 
