@@ -83,6 +83,7 @@ def test_pipeline_predicts_one_sector_without_branch_memberships(tmp_path) -> No
         "SectorFK-LabelAligned",
         "SectorFK-BayesianHurdle",
         "SectorFK-FeatureEvidence",
+        "SectorFK-Regime",
     )
     assert all(stage.metrics and stage.metrics.observations > 0 for stage in result.stages)
     predictions = json.loads((tmp_path / "feynman-kac-predictions.json").read_text())
@@ -118,6 +119,12 @@ def test_pipeline_predicts_one_sector_without_branch_memberships(tmp_path) -> No
     ]
     assert evidence_posteriors
     assert 0.5 <= evidence_posteriors[0]["minimum_feature_evidence_probability"] <= 0.95
+    regime_posteriors = [
+        item for item in posteriors if item["model_name"] == "SectorFK-Regime"
+    ]
+    assert regime_posteriors
+    assert regime_posteriors[0]["model_type"] == "bayesian_path_regime"
+    assert 0.0 <= regime_posteriors[0]["next_agreement_probability"] <= 1.0
 
 
 def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
@@ -137,7 +144,7 @@ def test_sector_pipeline_reports_direction_baselines(tmp_path) -> None:
         "previous_day_direction",
         "path_efficiency_direction",
     }
-    assert len(report["models"]) == 3
+    assert len(report["models"]) == 4
     assert report["preferred_model"] == "SectorFK-FeatureEvidence"
     assert report["selection_rule"] == "fixed_predeclared_baseline"
     for model in report["models"]:

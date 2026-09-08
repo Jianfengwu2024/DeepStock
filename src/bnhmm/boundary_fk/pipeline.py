@@ -41,16 +41,25 @@ BOUNDARY_MODEL_NAMES = (
     "PathEfficiencyFK-60D-Beta0PlusC1-Baseline",
                 "PathEfficiencyFK-60D-StrongestHalf",
 )
+from .regime_model import (
+    BayesianPathRegimeModel,
+    BayesianPathRegimeModelConfig,
+    BayesianPathRegimePosterior,
+)
 SECTOR_MODEL_FEATURES = {
     "SectorFK-LabelAligned": ("signed_path_efficiency",),
     "SectorFK-BayesianHurdle": ("signed_path_efficiency",),
     "SectorFK-FeatureEvidence": ("signed_path_efficiency",),
+    "SectorFK-Regime": ("signed_path_efficiency",),
 }
 SECTOR_MODEL_NAMES = tuple(SECTOR_MODEL_FEATURES)
 SECTOR_HURDLE_MODELS = frozenset(
-    {"SectorFK-BayesianHurdle", "SectorFK-FeatureEvidence"}
+    {"SectorFK-BayesianHurdle", "SectorFK-FeatureEvidence", "SectorFK-Regime"}
 )
-SECTOR_FEATURE_EVIDENCE_MODELS = frozenset({"SectorFK-FeatureEvidence"})
+SECTOR_FEATURE_EVIDENCE_MODELS = frozenset(
+    {"SectorFK-FeatureEvidence", "SectorFK-Regime"}
+)
+SECTOR_REGIME_MODELS = frozenset({"SectorFK-Regime"})
 SECTOR_PRIMARY_MODEL = "SectorFK-FeatureEvidence"
 MINIMUM_TRADABLE_DIRECTION_SIGNALS = 30
 MINIMUM_TRADABLE_SIGNALS_PER_SIDE = 15
@@ -615,6 +624,7 @@ class BoundaryFlowPipeline:
             cutoff = test_start - np.timedelta64(1, "ns")
             posteriors: dict[str, BayesianBranchPosterior] = {}
             hurdle_posteriors: dict[str, BayesianHurdlePosterior] = {}
+            regime_posteriors: dict[str, BayesianPathRegimePosterior] = {}
             for model_name, feature_names in SECTOR_MODEL_FEATURES.items():
                 posterior = BayesianBranchModel(
                     BayesianBranchModelConfig(
@@ -650,13 +660,31 @@ class BoundaryFlowPipeline:
                         training_cutoff=cutoff,
                     )
                     hurdle_posteriors[model_name] = hurdle_posterior
+                regime_posterior = None
+                if model_name in SECTOR_REGIME_MODELS:
+                    regime_posterior = BayesianPathRegimeModel(
+                        BayesianPathRegimeModelConfig(
+                            minimum_rows=self.config.minimum_train_sessions,
+                            neutral_sigma=self.config.neutral_sigma,
+                        )
+                    ).fit(
+                        data.states,
+                        data.labels,
+                        branch=0,
+                        training_cutoff=cutoff,
+                    )
+                    regime_posteriors[model_name] = regime_posterior
                 fit_rows[model_name].append(posterior.fit_rows)
                 posterior_payload = {
                         "model_name": model_name,
                         "model_type": (
-                            "bayesian_hurdle"
-                            if hurdle_posterior is not None
-                            else "bayesian_direction_logit"
+                            "bayesian_path_regime"
+                            if regime_posterior is not None
+                            else (
+                                "bayesian_hurdle"
+                                if hurdle_posterior is not None
+                                else "bayesian_direction_logit"
+                            )
                         ),
                         "scope": "whole_sector",
                         "fold": fold_index,
@@ -688,6 +716,25 @@ class BoundaryFlowPipeline:
                                 hurdle_posterior.minimum_feature_evidence_probability
                             ),
                             "calibration_rows": hurdle_posterior.calibration_rows,
+                        }
+                    )
+                if regime_posterior is not None:
+                    posterior_payload.update(
+                        {
+                            "regime_fit_rows": regime_posterior.fit_rows,
+                            "continuation_probability": (
+                                regime_posterior.continuation_probability
+                            ),
+                            "stay_probability": regime_posterior.stay_probability,
+                            "emission_reliability": (
+                                regime_posterior.emission_reliability
+                            ),
+                            "next_agreement_probability": (
+                                regime_posterior.next_agreement_probability
+                            ),
+                            "next_agreement_probability_std": (
+                                regime_posterior.next_agreement_probability_std
+                            ),
                         }
                     )
                 posterior_payloads.append(posterior_payload)
@@ -722,6 +769,7 @@ class BoundaryFlowPipeline:
                         potential_features=potential_values[row],
                         neutral_threshold=threshold,
                         hurdle_posterior=hurdle_posteriors.get(model_name),
+                        regime_posterior=regime_posteriors.get(model_name),
                     )
                     decision = policies[model_name].decide(
                         (forecast,),
@@ -909,6 +957,12 @@ class BoundaryFlowPipeline:
                 ),
                 "minimum_feature_evidence_probability": (
                     forecast.minimum_feature_evidence_probability
+                ),
+                "regime_agreement_probability": (
+                    forecast.regime_agreement_probability
+                ),
+                "regime_agreement_probability_std": (
+                    forecast.regime_agreement_probability_std
                 ),
                 "expected_diffusion_variance": forecast.expected_diffusion_variance,
                 "actual_return": observation.actual_returns[0],

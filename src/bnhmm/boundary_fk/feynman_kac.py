@@ -10,6 +10,7 @@ from scipy.special import expit, ndtr
 from .bayesian_state import BayesianBoundaryPosterior, BoundaryStateLabels
 from .branch_model import BayesianBranchPosterior, BayesianConvectionDriftPosterior
 from .hurdle_model import BayesianHurdlePosterior
+from .regime_model import BayesianPathRegimePosterior
 from .types import BoundaryDailyStates
 from .types import TwoBranchDailyStates
 
@@ -52,6 +53,8 @@ class BoundaryFeynmanKacForecast:
     feature_log_odds_delta: float = 0.0
     feature_bullish_probability: float = 0.5
     minimum_feature_evidence_probability: float = 0.5
+    regime_agreement_probability: float = 0.5
+    regime_agreement_probability_std: float = 0.0
 
 
 class BoundaryFeynmanKacForecaster:
@@ -156,6 +159,7 @@ class BranchFeynmanKacForecaster:
         convection_drift_posterior: BayesianConvectionDriftPosterior | None = None,
         convection_drift_features: np.ndarray | None = None,
         hurdle_posterior: BayesianHurdlePosterior | None = None,
+        regime_posterior: BayesianPathRegimePosterior | None = None,
         neutral_threshold: float,
     ) -> BoundaryFeynmanKacForecast:
         if not np.isfinite(neutral_threshold) or neutral_threshold < 0.0:
@@ -180,6 +184,9 @@ class BranchFeynmanKacForecaster:
         feature_log_odds_delta = 0.0
         feature_bullish_probability = 0.5
         minimum_feature_evidence_probability = 0.5
+        regime_agreement_probability = 0.5
+        regime_agreement_probability_std = 0.0
+        direction_signal_to_noise: float | None = None
         if hurdle_posterior is not None:
             if hurdle_posterior.branch != posterior.branch:
                 raise ValueError("hurdle and FK branch posteriors must align")
@@ -220,6 +227,44 @@ class BranchFeynmanKacForecaster:
                 * (2.0 * direction_probability - 1.0)
                 * hurdle_posterior.return_scale
             )
+            if regime_posterior is not None:
+                if regime_posterior.branch != posterior.branch:
+                    raise ValueError("regime and FK branch posteriors must align")
+                regime_bullish = regime_posterior.bullish_probability(
+                    states, resolved_row
+                )
+                direction_probability = np.full(
+                    self.config.paths, regime_bullish, dtype=np.float64
+                )
+                clipped_bullish = float(np.clip(regime_bullish, 1e-8, 1.0 - 1e-8))
+                regime_log_odds = float(
+                    np.log(clipped_bullish / (1.0 - clipped_bullish))
+                )
+                drift_linear = np.full(
+                    self.config.paths, regime_log_odds, dtype=np.float64
+                )
+                prior_bullish_probability = 0.5
+                feature_log_odds_delta = regime_log_odds
+                regime_std = max(
+                    regime_posterior.next_agreement_probability_std, 1e-8
+                )
+                feature_bullish_probability = float(
+                    ndtr((regime_bullish - 0.5) / regime_std)
+                )
+                minimum_feature_evidence_probability = 0.51
+                regime_agreement_probability = (
+                    regime_posterior.next_agreement_probability
+                )
+                regime_agreement_probability_std = (
+                    regime_posterior.next_agreement_probability_std
+                )
+                direction_signal_to_noise = abs(regime_bullish - 0.5) / regime_std
+                hurdle_direction_probability = direction_probability
+                base_drift = (
+                    hurdle_move_probability
+                    * (2.0 * direction_probability - 1.0)
+                    * hurdle_posterior.return_scale
+                )
         elif posterior.drift_model == "bayesian_direction_logit":
             direction_probability = expit(drift_linear)
             base_drift = (2.0 * direction_probability - 1.0) * posterior.drift_return_scale
@@ -300,11 +345,17 @@ class BranchFeynmanKacForecaster:
             expected_drift=expected_drift,
             expected_diffusion_variance=float(diffusion),
             expected_effective_potential=float(np.mean(potential)),
-            bullish_probability_std=float(np.std(direction_probability)),
+            bullish_probability_std=(
+                regime_agreement_probability_std
+                if regime_posterior is not None
+                else float(np.std(direction_probability))
+            ),
             expected_attenuated_drift=float(np.mean(attenuated_drift)),
             bullish_drift_probability=float(np.mean(direction_probability)),
-            drift_signal_to_noise=float(
-                (
+            drift_signal_to_noise=(
+                direction_signal_to_noise
+                if direction_signal_to_noise is not None
+                else float(
                     abs(float(np.mean(drift_linear)))
                     / max(float(np.std(drift_linear)), 1e-8)
                     if posterior.drift_model == "bayesian_direction_logit"
@@ -327,6 +378,8 @@ class BranchFeynmanKacForecaster:
             minimum_feature_evidence_probability=(
                 minimum_feature_evidence_probability
             ),
+            regime_agreement_probability=regime_agreement_probability,
+            regime_agreement_probability_std=regime_agreement_probability_std,
         )
 
 
