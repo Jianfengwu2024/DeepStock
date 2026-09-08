@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from types import SimpleNamespace
 
@@ -7,6 +8,55 @@ import numpy as np
 
 from bnhmm.boundary_fk.pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
 from test_boundary_fk_pipeline import _walk_forward_data
+
+
+def test_direct_experiment_data_builder_never_constructs_topology(monkeypatch) -> None:
+    import bnhmm.boundary_fk.experiment as module
+
+    base = replace(_walk_forward_data(180), memberships=())
+
+    class FakeSource:
+        def fetch(self, symbol, timeframe, start, end):
+            assert timeframe == "1m"
+            return symbol
+
+    monkeypatch.setattr(
+        module,
+        "SectorMinutePanelBuilder",
+        lambda: SimpleNamespace(build=lambda bars: "panel"),
+    )
+    monkeypatch.setattr(
+        module,
+        "CausalBoundaryNormalizer",
+        lambda: SimpleNamespace(transform=lambda panel: "normalized"),
+    )
+    monkeypatch.setattr(
+        module,
+        "SectorDailyStateBuilder",
+        lambda: SimpleNamespace(build=lambda panel: base),
+    )
+    monkeypatch.setattr(
+        module,
+        "build_member_execution_constraints",
+        lambda panel: SimpleNamespace(
+            sessions=base.states.sessions,
+            hold_returns=base.member_next_hold_returns,
+            buy_returns=base.member_next_buy_returns,
+            buy_executable=base.member_next_buy_executable,
+            sell_returns=base.member_next_sell_returns,
+            sell_executable=base.member_next_sell_executable,
+        ),
+    )
+
+    data, context = module.build_boundary_experiment_data(
+        FakeSource(),
+        ("A", "B", "C", "D"),
+        date(2024, 1, 1),
+        date(2024, 12, 31),
+    )
+
+    assert data.memberships == ()
+    assert context == {}
 
 
 def test_experiment_reads_precomputed_data_without_opening_minute_source(
@@ -23,7 +73,7 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
             assert root == str(tmp_path / "cache")
 
         def load(self, key, **kwargs):
-            assert key.lookback_sessions == 30
+            assert key.lookback_sessions == 60
             return loaded
 
     class FakePipeline:
@@ -52,7 +102,6 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
         duckdb_path=str(database),
         dataset_id="semiconductor",
         cache_root=str(tmp_path / "cache"),
-        topology_lookback_sessions=30,
         minimum_train_sessions=60,
         max_folds=1,
         fk_paths=1000,
@@ -70,6 +119,9 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
 
     assert (tmp_path / "out" / "run-summary.json").is_file()
     assert '"convection_lookback_sessions"' not in (
+        tmp_path / "out" / "run-summary.json"
+    ).read_text(encoding="utf-8")
+    assert '"topology_lookback_sessions"' not in (
         tmp_path / "out" / "run-summary.json"
     ).read_text(encoding="utf-8")
 

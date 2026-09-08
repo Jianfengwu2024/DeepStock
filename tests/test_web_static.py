@@ -29,49 +29,14 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("min-width: 0; max-width: 100%;", styles)
         self.assertIn("overflow: hidden;", styles)
 
-    def test_window_comparison_has_submit_entry_and_dedicated_result_view(self) -> None:
+    def test_removed_branch_window_comparison_is_not_exposed(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        for identifier in (
-            "run-window-comparison",
-            "comparison-list",
-            "comparison-view",
-            "comparison-summary-metrics",
-            "comparison-window-table",
-            "comparison-equity-canvas",
-            "delete-comparison-button",
-        ):
-            self.assertIn(f'id="{identifier}"', html)
-        for label in (
-            "运行七窗口对比",
-            "窗口对比",
-            "成本后收益",
-            "最大回撤",
-            "方向正确率",
-            "均衡正确率",
-            "平均仓位",
-            "平均换手",
-        ):
-            self.assertIn(label, html)
-        self.assertIn('api("/api/comparisons"', script)
-        self.assertIn("submitWindowComparison", script)
-        self.assertIn("comparison.windows.length", script)
-        self.assertIn("120: \"#", script)
-        self.assertNotIn("comparison.completed_count}/6", script)
-        self.assertNotIn("ready}/6", script)
-        self.assertIn("boundary_cache_lookbacks?.length", script)
-        self.assertIn(
-            'type="hidden" name="topology_lookback_sessions" value="60"',
-            html,
-        )
-        self.assertIn("构造 / 刷新策略数据", html)
-        self.assertIn("renderComparison", script)
-        self.assertIn("drawComparisonEquity", script)
-        self.assertIn("openComparisonChild", script)
-        self.assertIn("async function openComparisonChild", script)
-        self.assertIn("deleteSelectedComparison", script)
-        self.assertIn("收益较好，但预测优势仍弱", script)
+        for identifier in ("run-window-comparison", "comparison-list", "comparison-view"):
+            self.assertNotIn(f'id="{identifier}"', html)
+        self.assertNotIn("submitWindowComparison", script)
+        self.assertNotIn("boundary_cache_lookbacks", script)
 
     def test_history_management_actions_stay_inside_history_panel(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -128,18 +93,19 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.27.6', html)
+        self.assertIn('/static/app.js?v=0.28.0', html)
         self.assertIn('/static/styles.css?v=0.28.2', html)
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('name="boundary_fk_paths"', html)
-        self.assertIn('name="boundary_maximum_branch_drawdown"', html)
+        self.assertIn('name="boundary_maximum_drawdown"', html)
         self.assertIn("贝叶斯基础漂移截距", html)
-        self.assertIn("支流内最强前 1/2", html)
-        self.assertIn("每 5 个交易日冻结一次", html)
-        self.assertIn("自动识别 2 至 8 条支流", html)
+        self.assertIn("全板块最强前 1/2", html)
+        self.assertIn("所有成分股压缩为一个每日板块状态", html)
+        self.assertIn("预测下一交易日板块涨跌方向", html)
         self.assertIn('id="boundary-data-build"', html)
         self.assertIn('id="boundary-data-status"', html)
-        self.assertIn('type="hidden" name="topology_lookback_sessions" value="60"', html)
+        boundary_config = html.split('<details class="form-section boundary-flow-only', 1)[1].split("</details>", 1)[0]
+        self.assertNotIn('name="topology_lookback_sessions"', boundary_config)
         self.assertNotIn('name="convection_lookback_sessions"', html)
         self.assertNotIn('<select name="topology_lookback_sessions">', html)
         self.assertIn('api("/api/boundary-data/build"', script)
@@ -238,8 +204,8 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("未通过改进标准", script)
         self.assertIn("相对基线收益", script)
         self.assertIn("回撤改善", script)
-        self.assertIn("最强 1/2 未改善全支流策略", script)
-        self.assertIn("支流止损触发", script)
+        self.assertIn("最强 1/2 未改善全板块策略", script)
+        self.assertIn("板块止损触发", script)
         for field in ("expected_effective_potential", "survival_confidence"):
             self.assertIn(field, script)
         self.assertIn("背景势 β0 + 一日反向流量集中度 C1", html)
@@ -262,16 +228,18 @@ class SectorFlowStaticContractTests(unittest.TestCase):
             self.assertIn(field, script)
         self.assertNotIn("旧衰减漂移", script)
 
-    def test_path_efficiency_fk_uses_periodic_dynamic_branches(self) -> None:
+    def test_path_efficiency_fk_uses_one_whole_sector_state(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
         self.assertEqual(html.count('value="boundary-flow-fk"'), 1)
         self.assertIn("路径效率 FK", html)
-        self.assertIn("看多：该支流使用总资产的 1/N", html)
-        self.assertIn("每次减少该支流预算的 1/4", html)
+        self.assertIn("看多：全仓买入最强前 1/2", html)
+        self.assertIn("看平：每次减仓总资产的 1/4", html)
         self.assertIn("连续四次看平清仓", html)
-        self.assertIn("看空：立即清仓", html)
+        self.assertIn("看空：全部清仓", html)
+        self.assertIn("const sector = latest.sector", script)
+        self.assertIn("latest.branches?.[0]", script)
         self.assertNotIn('value="path-efficiency-direct"', html)
         self.assertNotIn('"path-efficiency-direct"', script)
         self.assertNotIn("path-efficiency-evaluation.json", script)

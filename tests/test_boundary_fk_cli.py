@@ -23,7 +23,7 @@ def test_boundary_flow_cli_exposes_only_current_model_parameters() -> None:
         ]
     )
 
-    assert args.topology_lookback_sessions == 60
+    assert not hasattr(args, "topology_lookback_sessions")
     assert args.cache_root.endswith("path-efficiency-data")
     assert args.minimum_train_sessions == 120
     assert args.neutral_sigma == 0.35
@@ -47,25 +47,7 @@ def test_boundary_flow_cli_exposes_only_current_model_parameters() -> None:
     assert not hasattr(args, "layers")
 
 
-def test_boundary_flow_cli_accepts_120_day_window() -> None:
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "boundary-flow-fk-walk-forward",
-            "--duckdb-path", "/data/semiconductor.duckdb",
-            "--symbols", "000001,000002,000003",
-            "--dataset-id", "semiconductor",
-            "--start", "2024-01-01",
-            "--end", "2025-01-01",
-            "--output-dir", "/tmp/bfk-120",
-            "--topology-lookback-sessions", "120",
-        ]
-    )
-
-    assert args.topology_lookback_sessions == 120
-
-
-def test_boundary_data_build_cli_constructs_all_standard_windows() -> None:
+def test_boundary_data_build_cli_constructs_one_sector_state_cache() -> None:
     parser = build_parser()
     args = parser.parse_args(
         [
@@ -83,5 +65,5 @@ def test_boundary_data_build_cli_constructs_all_standard_windows() -> None:
         ]
     )
 
-    assert args.lookbacks == "10,20,30,40,60,90,120"
+    assert not hasattr(args, "lookbacks")
     assert args.cache_root.endswith("path-efficiency-data")

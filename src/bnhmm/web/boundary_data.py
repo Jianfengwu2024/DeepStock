@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..boundary_fk.cache import CACHE_LOOKBACKS, BoundaryDataCache
+from ..boundary_fk.cache import BoundaryDataCache
 
 
 def build_boundary_data_command(
@@ -39,8 +39,6 @@ def build_boundary_data_command(
         end,
         "--cache-root",
         str(cache_root),
-        "--lookbacks",
-        ",".join(str(item) for item in CACHE_LOOKBACKS),
     ]
 
 

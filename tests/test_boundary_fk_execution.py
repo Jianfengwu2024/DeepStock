@@ -37,7 +37,7 @@ def _panel(next_prices: tuple[tuple[float, float], ...]) -> SectorMinutePanel:
 
 def test_boundary_fk_defaults_to_five_basis_points() -> None:
     assert BoundaryFlowPipelineConfig().transaction_cost_bps == 5.0
-    assert BoundaryFlowPipelineConfig().maximum_branch_drawdown == 0.05
+    assert BoundaryFlowPipelineConfig().maximum_drawdown == 0.05
     assert BoundaryFlowPipelineConfig().minimum_direction_probability == 0.51
 
 

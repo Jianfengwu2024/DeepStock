@@ -102,7 +102,7 @@ class WalkForwardJobRequest(BaseModel):
     boundary_minimum_signal_to_noise: float = Field(0.10, ge=0.0, le=10.0)
     boundary_minimum_survival_probability: float = Field(0.35, ge=0.0, le=1.0)
     boundary_relative_strength_lookback_sessions: int = Field(20, ge=2, le=252)
-    boundary_maximum_branch_drawdown: float = Field(0.05, gt=0.0, lt=1.0)
+    boundary_maximum_drawdown: float = Field(0.05, gt=0.0, lt=1.0)
     percolation_activation_threshold: float = Field(1.5, gt=0.0, le=20.0)
     percolation_null_permutations: int = Field(500, ge=20, le=100_000)
     percolation_posterior_paths: int = Field(10_000, ge=100, le=1_000_000)
@@ -528,8 +528,6 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         str(request.uncertainty_aversion),
         "--transaction-cost-bps",
         str(request.transaction_cost_bps),
-        "--maximum-branch-drawdown",
-        str(request.boundary_maximum_branch_drawdown),
         "--seed",
         str(request.seed),
     ]
@@ -626,8 +624,6 @@ def _build_boundary_flow_command(
             "BNHMM_BOUNDARY_CACHE_ROOT",
             "/home/wujianfeng/private/bnhmm-storage/path-efficiency-data",
         ),
-        "--topology-lookback-sessions",
-        str(request.topology_lookback_sessions),
         "--minimum-train-sessions",
         str(request.minimum_train_sessions),
         "--neutral-sigma",
@@ -646,6 +642,8 @@ def _build_boundary_flow_command(
         str(request.boundary_relative_strength_lookback_sessions),
         "--transaction-cost-bps",
         str(request.transaction_cost_bps),
+        "--maximum-drawdown",
+        str(request.boundary_maximum_drawdown),
         "--seed",
         str(request.seed),
     ]

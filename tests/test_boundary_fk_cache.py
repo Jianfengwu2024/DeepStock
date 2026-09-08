@@ -9,15 +9,13 @@ import pytest
 
 from bnhmm.boundary_fk.cache import (
     CACHE_CONSTRUCTION_VERSION,
-    CACHE_LOOKBACKS,
+    SECTOR_CACHE_SLOT,
     BoundaryDataCache,
     BoundaryDataCacheKey,
     BoundaryDataCacheMiss,
 )
 from bnhmm.boundary_fk.precompute import (
-    build_boundary_cache_variants,
-    topology_months_for_available_data,
-    topology_months_with_minimum_history,
+    build_sector_boundary_cache,
 )
 from test_boundary_fk_pipeline import _walk_forward_data, _with_stable_branch_ids
 
@@ -107,10 +105,7 @@ def test_boundary_cache_round_trips_convection_diagnostics(tmp_path: Path) -> No
 
 
 def test_boundary_cache_uses_direction_feature_version() -> None:
-    assert (
-        CACHE_CONSTRUCTION_VERSION
-        == "path-efficiency-periodic-multibranch-v1"
-    )
+    assert CACHE_CONSTRUCTION_VERSION == "sector-direct-direction-v1"
 
 
 def test_boundary_cache_rejects_changed_source_and_wrong_window(tmp_path: Path) -> None:
@@ -133,55 +128,29 @@ def test_boundary_cache_rejects_changed_source_and_wrong_window(tmp_path: Path) 
         replace(key, lookback_sessions=15)
 
 
-def test_boundary_cache_manifest_lists_all_standard_windows(tmp_path: Path) -> None:
+def test_boundary_cache_manifest_contains_one_sector_state_variant(tmp_path: Path) -> None:
     cache = BoundaryDataCache(tmp_path / "cache")
-    for lookback in CACHE_LOOKBACKS:
-        cache.save(_key(tmp_path, lookback), _walk_forward_data(180))
+    cache.save(_key(tmp_path, SECTOR_CACHE_SLOT), _walk_forward_data(180))
 
     manifest = json.loads(
         (cache.root / "semiconductor" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert tuple(item["lookback_sessions"] for item in manifest["variants"]) == CACHE_LOOKBACKS
+    assert tuple(item["lookback_sessions"] for item in manifest["variants"]) == (
+        SECTOR_CACHE_SLOT,
+    )
     assert all(item["status"] == "ready" for item in manifest["variants"])
 
 
-def test_topology_months_never_precede_available_minute_history() -> None:
-    months = topology_months_for_available_data(
-        requested_start=np.datetime64("2023-03", "M"),
-        requested_end=np.datetime64("2026-08", "M"),
-        first_timestamp=np.datetime64("2024-01-02T09:30", "m"),
-    )
-
-    assert months[0] == np.datetime64("2024-02", "M")
-    assert months[-1] == np.datetime64("2026-08", "M")
-    assert np.all(months > np.datetime64("2024-01", "M"))
-
-
-def test_topology_months_require_completed_session_history() -> None:
-    sessions = np.busday_offset(
-        np.datetime64("2024-01-02", "D"), np.arange(70), roll="forward"
-    )
-    months = np.arange(
-        np.datetime64("2024-02", "M"),
-        np.datetime64("2024-06", "M"),
-        dtype="datetime64[M]",
-    )
-
-    eligible = topology_months_with_minimum_history(
-        months=months,
-        timestamps=sessions.astype("datetime64[ns]"),
-        minimum_sessions=40,
-    )
-
-    assert eligible[0] == np.datetime64("2024-03", "M")
-    assert all(np.sum(sessions < month.astype("datetime64[D]")) >= 40 for month in eligible)
-
-
-def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
+def test_precompute_builds_one_whole_sector_state_without_topology(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: dict[str, list[object]] = {"fetch": [], "normalize": [], "execution": [], "lookbacks": [], "minimums": [], "save": []}
-    source = object()
+    calls: dict[str, list[object]] = {
+        "fetch": [],
+        "normalize": [],
+        "execution": [],
+        "state": [],
+        "save": [],
+    }
 
     class FakeSource:
         def fetch(self, symbol, timeframe, start, end):
@@ -208,30 +177,16 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
                 },
             )()
 
-    class FakeTopologyConfig:
-        def __init__(self, *, lookback_sessions, **kwargs):
-            self.lookback_sessions = lookback_sessions
-            calls["minimums"].append(
-                (kwargs["minimum_sessions"], kwargs["minimum_pair_sessions"])
-            )
-
-    class FakeTopologyBuilder:
-        def __init__(self, config):
-            calls["lookbacks"].append(config.lookback_sessions)
-
-        def build(self, panel, months):
-            assert hasattr(panel, "timestamps")
-            return (f"topology-{calls['lookbacks'][-1]}",)
-
     class FakeStateBuilder:
-        def build(self, panel, topologies):
+        def build(self, panel):
             assert hasattr(panel, "timestamps")
-            return _walk_forward_data(180)
+            calls["state"].append(panel)
+            return replace(_walk_forward_data(180), memberships=())
 
     class FakeCache:
-        def save(self, key, data, *, topologies):
+        def save(self, key, data):
             calls["save"].append(key.lookback_sessions)
-            assert topologies == (f"topology-{key.lookback_sessions}",)
+            assert data.memberships == ()
 
     import bnhmm.boundary_fk.precompute as module
 
@@ -253,14 +208,12 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
             },
         )(),
     )
-    monkeypatch.setattr(module, "TopologyConfig", FakeTopologyConfig)
-    monkeypatch.setattr(module, "BoundaryTopologyBuilder", FakeTopologyBuilder)
-    monkeypatch.setattr(module, "TwoBranchDailyStateBuilder", FakeStateBuilder)
+    monkeypatch.setattr(module, "SectorDailyStateBuilder", FakeStateBuilder)
     monkeypatch.setattr(module, "BoundaryDataCacheKey", type("KeyFactory", (), {
         "from_source": staticmethod(lambda **kwargs: type("Key", (), kwargs)())
     }))
 
-    build_boundary_cache_variants(
+    result = build_sector_boundary_cache(
         FakeSource(),
         FakeCache(),
         dataset_id="semiconductor",
@@ -273,8 +226,7 @@ def test_precompute_reads_and_normalizes_minutes_once_for_all_windows(
     assert len(calls["fetch"]) == 4
     assert calls["normalize"] == ["raw-panel"]
     assert calls["execution"] == ["raw-panel"]
-    assert tuple(calls["lookbacks"]) == CACHE_LOOKBACKS
-    assert tuple(calls["minimums"]) == (
-        (7, 5), (14, 10), (20, 15), (27, 20), (40, 30), (60, 45), (80, 60)
-    )
-    assert tuple(calls["save"]) == CACHE_LOOKBACKS
+    assert len(calls["state"]) == 1
+    assert calls["save"] == [SECTOR_CACHE_SLOT]
+    assert result["rows"] == 180
+    assert "lookbacks" not in result

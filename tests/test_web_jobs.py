@@ -474,15 +474,16 @@ class WebJobTests(unittest.TestCase):
             dataset_id="semiconductor",
             minimum_train_sessions=120,
             topology_lookback_sessions=30,
+            boundary_maximum_drawdown=0.03,
         )
 
         command = build_command(request, Path("/tmp/boundary-flow"))
 
         self.assertIn("boundary-flow-fk-walk-forward", command)
         self.assertEqual(command[command.index("--fk-paths") + 1], "10000")
-        self.assertEqual(
-            command[command.index("--topology-lookback-sessions") + 1], "30"
-        )
+        self.assertNotIn("--topology-lookback-sessions", command)
+        self.assertEqual(command[command.index("--maximum-drawdown") + 1], "0.03")
+        self.assertNotIn("--maximum-branch-drawdown", command)
         self.assertIn("--cache-root", command)
         self.assertNotIn("--branch-count", command)
         self.assertNotIn("--viscosity-window", command)

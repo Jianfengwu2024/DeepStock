@@ -20,7 +20,6 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..config import HOLOGRAPHIC_LITE_FIELD_NAMES
-from ..boundary_fk.cache import CACHE_LOOKBACKS
 from ..data.sector_dataset import SectorDatasetCatalog
 from ..data.source import DuckDBBarSource
 from ..repair import RepairVariantCatalog
@@ -259,13 +258,13 @@ def config(request: Request) -> dict[str, Any]:
             "sector_flow_ranking_window",
             "sector_flow_evaluation_horizon_minutes",
             "sector_flow_monte_carlo_samples",
+            "topology_lookback_sessions",
         }
     }
     boundary_flow_defaults.update({
         "strategy": "boundary-flow-fk",
         "training_scope": "sector-pooled",
         "device": "cpu",
-        "topology_lookback_sessions": 60,
         "minimum_train_sessions": 120,
         "regime_neutral_sigma": 0.35,
         "boundary_fk_paths": 10_000,
@@ -274,7 +273,7 @@ def config(request: Request) -> dict[str, Any]:
         "boundary_minimum_signal_to_noise": 0.10,
         "boundary_minimum_survival_probability": 0.35,
         "boundary_relative_strength_lookback_sessions": 20,
-        "boundary_maximum_branch_drawdown": 0.05,
+        "boundary_maximum_drawdown": 0.05,
     })
     percolation_defaults = {
         **defaults,
@@ -293,7 +292,6 @@ def config(request: Request) -> dict[str, Any]:
         "devices": _devices(),
         "job_root": str(manager(request).root),
         "active_jobs": sum(item.status in {"queued", "running"} for item in jobs),
-        "boundary_cache_lookbacks": list(CACHE_LOOKBACKS),
         "defaults": defaults,
         "strategy_defaults": {
             "bnhmm": defaults,

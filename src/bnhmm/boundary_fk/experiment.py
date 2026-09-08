@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -12,14 +13,12 @@ import numpy as np
 
 from ..data.source import DuckDBBarSource
 from ..sector_flow.panel import SectorMinutePanelBuilder
-from ..sector_flow.topology import TopologyConfig
-from .branch_state import TwoBranchDailyStateBuilder
-from .cache import BoundaryDataCache, BoundaryDataCacheKey
-from .daily_state import BoundaryTopologyBuilder
+from .cache import SECTOR_CACHE_SLOT, BoundaryDataCache, BoundaryDataCacheKey
 from .execution import build_member_execution_constraints
 from .normalization import CausalBoundaryNormalizer
 from .pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
 from .reporting import write_json
+from .sector_state import SectorDailyStateBuilder
 from .types import TwoBranchDataset
 
 
@@ -40,7 +39,7 @@ def run_boundary_flow_experiment(args: Any) -> None:
         symbols=symbols,
         start=start.isoformat(),
         end=end.isoformat(),
-        lookback_sessions=args.topology_lookback_sessions,
+        lookback_sessions=SECTOR_CACHE_SLOT,
     )
     data = BoundaryDataCache(args.cache_root).load(
         key,
@@ -62,23 +61,22 @@ def run_boundary_flow_experiment(args: Any) -> None:
                 args.relative_strength_lookback_sessions
             ),
             transaction_cost_bps=args.transaction_cost_bps,
-            maximum_branch_drawdown=getattr(
-                args, "maximum_branch_drawdown", 0.05
+            maximum_drawdown=getattr(
+                args, "maximum_drawdown", 0.05
             ),
         )
     ).run(data, output)
     summary = {
         "strategy": "boundary-flow-fk",
-        "display_name": "路径效率 FK",
+        "display_name": "板块方向 FK",
         "dataset_id": args.dataset_id,
         "symbols": len(symbols),
         "data_source": "precomputed",
-        "topology_lookback_sessions": args.topology_lookback_sessions,
         "relative_strength_lookback_sessions": (
             args.relative_strength_lookback_sessions
         ),
-        "maximum_branch_drawdown": getattr(
-            args, "maximum_branch_drawdown", 0.05
+        "maximum_drawdown": getattr(
+            args, "maximum_drawdown", 0.05
         ),
         "elapsed_seconds": time.perf_counter() - started,
         "model_names": list(result.model_names),
@@ -100,10 +98,8 @@ def build_boundary_experiment_data(
     symbols: tuple[str, ...],
     start: date,
     end: date,
-    *,
-    topology_lookback_sessions: int,
 ) -> tuple[TwoBranchDataset, dict[str, Any]]:
-    warmup_start = start - timedelta(days=max(450, topology_lookback_sessions * 5))
+    warmup_start = start - timedelta(days=450)
     bars = {
         symbol: source.fetch(symbol, "1m", warmup_start, end)
         for symbol in symbols
@@ -111,21 +107,11 @@ def build_boundary_experiment_data(
     panel = SectorMinutePanelBuilder().build(bars)
     normalized = CausalBoundaryNormalizer().transform(panel)
     execution = build_member_execution_constraints(panel)
-    topologies = BoundaryTopologyBuilder(
-        TopologyConfig(
-            lookback_sessions=topology_lookback_sessions,
-            maximum_bands=8,
-            minimum_band_size=max(2, int(np.ceil(len(symbols) * 0.10))),
-        )
-    ).build_periodic(normalized, every_sessions=5)
-    built = TwoBranchDailyStateBuilder().build(normalized, topologies)
-    data = TwoBranchDataset(
-        states=built.states,
-        labels=built.labels,
-        memberships=built.memberships,
-        symbols=built.symbols,
-        member_next_returns=built.member_next_returns,
-        member_next_valid=built.member_next_valid,
+    built = SectorDailyStateBuilder().build(normalized)
+    if not np.array_equal(built.states.sessions, execution.sessions):
+        raise ValueError("execution constraints do not align with daily states")
+    data = replace(
+        built,
         member_next_hold_returns=execution.hold_returns,
         member_next_buy_returns=execution.buy_returns,
         member_next_buy_executable=execution.buy_executable,
@@ -134,34 +120,4 @@ def build_boundary_experiment_data(
         evaluation_start=np.datetime64(start),
         evaluation_end=np.datetime64(end),
     )
-    return data, {"topologies": topologies, "memberships": built.memberships}
-
-
-def _write_upstream_artifacts(output: Path, context: dict[str, Any]) -> None:
-    topologies = context["topologies"]
-    memberships = context["memberships"]
-    write_json(
-        output / "branch-topologies.json",
-        [
-            {
-                "effective_session": str(item.effective_session),
-                "training_cutoff": str(item.training_cutoff),
-                "symbols": list(item.symbols),
-                "assigned": item.assigned.tolist(),
-                "band_ids": item.band_ids.tolist(),
-                "row_order": item.row_order.tolist(),
-            }
-            for item in topologies
-        ],
-    )
-    write_json(
-        output / "branch-memberships.json",
-        [
-            {
-                "effective_session": str(item.effective_session),
-                "training_cutoff": str(item.training_cutoff),
-                "branches": [list(branch) for branch in item.branches],
-            }
-            for item in memberships
-        ],
-    )
+    return data, {}

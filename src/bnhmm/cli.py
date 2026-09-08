@@ -10,7 +10,6 @@ from typing import Sequence
 
 import numpy as np
 
-from .boundary_fk.cache import CACHE_LOOKBACKS
 from .config import (
     HOLOGRAPHIC_FIELD_NAMES,
     HOLOGRAPHIC_LITE_FIELD_NAMES,
@@ -1425,9 +1424,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache-root",
         default="/home/wujianfeng/private/bnhmm-storage/path-efficiency-data",
     )
-    boundary_data.add_argument(
-        "--lookbacks", default=",".join(str(item) for item in CACHE_LOOKBACKS)
-    )
     boundary_data.set_defaults(handler=_boundary_data_build)
 
     boundary_flow = subparsers.add_parser("boundary-flow-fk-walk-forward")
@@ -1441,12 +1437,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache-root",
         default="/home/wujianfeng/private/bnhmm-storage/path-efficiency-data",
     )
-    boundary_flow.add_argument(
-        "--topology-lookback-sessions",
-        type=int,
-        choices=CACHE_LOOKBACKS,
-        default=60,
-    )
     boundary_flow.add_argument("--minimum-train-sessions", type=int, default=120)
     boundary_flow.add_argument("--neutral-sigma", type=float, default=0.35)
     boundary_flow.add_argument("--fk-paths", type=int, default=10_000)
@@ -1459,7 +1449,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     boundary_flow.add_argument("--transaction-cost-bps", type=float, default=5.0)
     boundary_flow.add_argument(
-        "--maximum-branch-drawdown", type=float, default=0.05
+        "--maximum-drawdown", type=float, default=0.05
     )
     boundary_flow.add_argument("--seed", type=int, default=7)
     boundary_flow.add_argument("--max-folds", type=int)

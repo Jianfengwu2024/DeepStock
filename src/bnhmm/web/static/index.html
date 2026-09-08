@@ -6,7 +6,7 @@
   <title>DeepStock Lab</title>
   <link rel="stylesheet" href="/static/styles.css?v=0.28.2">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/static/app.js?v=0.27.6" defer></script>
+  <script src="/static/app.js?v=0.28.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -130,32 +130,32 @@
         </details>
 
         <details class="form-section boundary-flow-only hidden" open>
-          <summary>路径效率 FK</summary>
+          <summary>板块方向 FK</summary>
           <div class="fixed-spec-grid">
-            <div class="fixed-spec"><span>支流</span><strong>回看 60 日同步关系，每 5 个交易日冻结一次；自动识别 2 至 8 条支流</strong></div>
+            <div class="fixed-spec"><span>板块状态</span><strong>所有成分股压缩为一个每日板块状态</strong></div>
+            <div class="fixed-spec"><span>预测目标</span><strong>预测下一交易日板块涨跌方向</strong></div>
             <div class="fixed-spec"><span>后验</span><strong>贝叶斯基础漂移截距</strong></div>
             <div class="fixed-spec"><span>漂移输入</span><strong>带方向路径效率 + 板块成分股同步率</strong></div>
             <div class="fixed-spec"><span>训练标签</span><strong>忽略小于 0.1 倍历史波动率的模糊涨跌</strong></div>
             <div class="fixed-spec"><span>一日外势</span><strong>背景势 β0 + 一日反向流量集中度 C1</strong></div>
-            <div class="fixed-spec"><span>支流内选股</span><strong>比较全支流等权与支流内最强前 1/2</strong></div>
-            <div class="fixed-spec"><span>看多</span><strong>看多：该支流使用总资产的 1/N</strong></div>
-            <div class="fixed-spec"><span>看平</span><strong>看平：每次减少该支流预算的 1/4，连续四次看平清仓</strong></div>
-            <div class="fixed-spec"><span>看空</span><strong>看空：立即清仓；任一支流看空则全部清仓</strong></div>
-            <div class="fixed-spec"><span>回撤止损</span><strong>任一支流从持仓权益峰值回撤超过 5%，全局清仓；跌停时持续等待可卖</strong></div>
+            <div class="fixed-spec"><span>板块选股</span><strong>全板块最强前 1/2</strong></div>
+            <div class="fixed-spec"><span>看多</span><strong>看多：全仓买入最强前 1/2</strong></div>
+            <div class="fixed-spec"><span>看平</span><strong>看平：每次减仓总资产的 1/4，连续四次看平清仓</strong></div>
+            <div class="fixed-spec"><span>看空</span><strong>看空：全部清仓</strong></div>
+            <div class="fixed-spec"><span>回撤止损</span><strong>持仓权益从峰值回撤超过设定值时全局清仓；跌停时等待可卖</strong></div>
           </div>
           <div class="boundary-data-control">
             <div><strong>预计算策略数据</strong><span id="boundary-data-status">尚未检查</span></div>
             <button class="secondary-button" type="button" id="boundary-data-build"><i data-lucide="database-zap"></i>构造 / 刷新策略数据</button>
           </div>
           <div class="two-columns">
-            <input type="hidden" name="topology_lookback_sessions" value="60">
             <label>评估平区间（波动率倍数）<input name="regime_neutral_sigma" type="number" min="0.01" max="5" step="0.01"></label>
             <label>漂移半衰期（日）<input name="boundary_drift_half_life_sessions" type="number" min="5" max="504" step="1"></label>
             <label>方向最低后验概率<input name="boundary_minimum_direction_probability" type="number" min="0.5" max="1" step="0.01"></label>
             <label>最低信噪比<input name="boundary_minimum_signal_to_noise" type="number" min="0" max="10" step="0.01"></label>
             <label>有效势最低可信度<input name="boundary_minimum_survival_probability" type="number" min="0" max="1" step="0.01"></label>
             <label>相对强弱回看（日）<input name="boundary_relative_strength_lookback_sessions" type="number" min="2" max="252" step="1"></label>
-            <label>支流峰值回撤止损<input name="boundary_maximum_branch_drawdown" type="number" min="0.01" max="0.5" step="0.01"><small>0.05 表示任一支流回撤超过 5% 时全局清仓</small></label>
+            <label>板块峰值回撤止损<input name="boundary_maximum_drawdown" type="number" min="0.01" max="0.5" step="0.01"><small>0.05 表示持仓权益从峰值回撤超过 5% 时全局清仓</small></label>
             <label>Feynman-Kac 路径<input name="boundary_fk_paths" type="number" min="1000" max="100000" step="1000"></label>
             <label>交易成本（BP）<input name="transaction_cost_bps" type="number" min="0" step="0.1"><small>默认 5 BP：佣金 2 BP + 滑点 3 BP</small></label>
             <label>随机种子<input name="seed" type="number" min="0"></label>
@@ -346,7 +346,6 @@
 
         <div class="form-actions">
           <button class="primary-button" type="submit" id="run-button"><i data-lucide="play"></i>开始测试</button>
-          <button class="secondary-button boundary-flow-only hidden" type="button" id="run-window-comparison"><i data-lucide="columns-3"></i>运行七窗口对比</button>
           <div id="form-error" class="form-error" role="alert"></div>
         </div>
       </form>
@@ -380,36 +379,12 @@
             <span id="history-selected-count">已选 0</span>
           </div>
           <div id="job-list" class="job-list"></div>
-          <div class="comparison-history-head"><h2>窗口对比</h2><span id="comparison-count">0</span></div>
-          <div id="comparison-list" class="job-list comparison-list"></div>
         </nav>
 
         <section class="result-area" id="result-area">
           <div class="empty-state" id="empty-state">
             <i data-lucide="scan-line"></i>
             <strong>尚未选择测试</strong>
-          </div>
-
-          <div id="comparison-view" class="comparison-view hidden">
-            <div class="run-toolbar">
-              <div class="run-identity">
-                <div class="run-title-row"><h2 id="comparison-title"></h2><span id="comparison-status" class="status-badge neutral"></span></div>
-                <div id="comparison-meta" class="run-meta"></div>
-              </div>
-              <button class="icon-button danger-icon-button" id="delete-comparison-button" type="button" title="删除本组对比" aria-label="删除本组对比"><i data-lucide="trash-2"></i></button>
-            </div>
-            <div class="comparison-progress" id="comparison-progress"></div>
-            <div class="boundary-evaluation-summary" id="comparison-conclusion"></div>
-            <div class="boundary-key-metrics" id="comparison-summary-metrics"></div>
-            <section class="comparison-section">
-              <div class="boundary-panel-intro"><strong>七窗口结果</strong><span>七次测试除支流历史长度外使用完全相同的参数和样本外区间。</span></div>
-              <div class="table-scroll"><table><thead><tr><th>窗口</th><th>状态</th><th>成本后收益</th><th>最大回撤</th><th>方向正确率</th><th>均衡正确率</th><th>平均仓位</th><th>平均换手</th><th></th></tr></thead><tbody id="comparison-window-table"></tbody></table></div>
-            </section>
-            <section class="comparison-section">
-              <div class="boundary-panel-intro"><strong>成本后净值对比</strong><span>所有曲线从 1.000 开始，已扣除各自每日换手成本。</span></div>
-              <div class="comparison-legend" id="comparison-equity-legend"></div>
-              <div class="boundary-canvas-wrap"><canvas id="comparison-equity-canvas" width="1200" height="380" aria-label="七窗口成本后净值对比"></canvas></div>
-            </section>
           </div>
 
           <div id="job-view" class="job-view hidden">
@@ -467,7 +442,7 @@
 
             <section class="boundary-flow-results hidden" id="boundary-flow-results">
               <div class="sector-flow-head">
-                <div><h3 id="boundary-result-title">路径效率 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
+                <div><h3 id="boundary-result-title">板块方向 FK</h3><span id="boundary-flow-result-status" role="status" aria-live="polite"></span></div>
                 <span class="scope-badge">月度样本外</span>
               </div>
               <div class="boundary-result-tabs" id="boundary-result-tabs" role="tablist" aria-label="路径效率 FK 结果">
@@ -487,7 +462,7 @@
 
               <div class="boundary-result-panel hidden" data-boundary-panel="predictions">
                 <div class="boundary-panel-intro"><strong>逐日样本外决策</strong><span>每一行都只使用当时已经成熟的数据，显示预测方向、目标仓位和下一日实际收益。</span></div>
-            <div class="table-scroll"><table><thead><tr><th>信号日</th><th>支流判断</th><th>一日反向流量 C1</th><th>实际仓位</th><th>持股数</th><th>成交受限</th><th>下一日策略收益</th></tr></thead><tbody id="boundary-prediction-table"></tbody></table></div>
+            <div class="table-scroll"><table><thead><tr><th>信号日</th><th>板块判断</th><th>一日反向流量 C1</th><th>实际仓位</th><th>持股数</th><th>成交受限</th><th>下一日策略收益</th></tr></thead><tbody id="boundary-prediction-table"></tbody></table></div>
               </div>
 
               <div class="boundary-result-panel hidden" data-boundary-panel="posterior">

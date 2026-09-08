@@ -75,7 +75,7 @@ class BoundaryFlowPipelineConfig:
     relative_strength_lookback_sessions: int = 20
     drift_feature_names: tuple[str, ...] = DRIFT_FEATURE_NAMES
     direction_label_sigma: float = 0.1
-    maximum_branch_drawdown: float = 0.05
+    maximum_drawdown: float = 0.05
 
     def __post_init__(self) -> None:
         if self.minimum_train_sessions < 30:
@@ -102,8 +102,8 @@ class BoundaryFlowPipelineConfig:
             raise ValueError("drift half-life must be positive when provided")
         if not 0.0 <= self.direction_label_sigma <= 5.0:
             raise ValueError("direction label sigma must lie in [0, 5]")
-        if not 0.0 < self.maximum_branch_drawdown < 1.0:
-            raise ValueError("maximum branch drawdown must lie in (0, 1)")
+        if not 0.0 < self.maximum_drawdown < 1.0:
+            raise ValueError("maximum drawdown must lie in (0, 1)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,7 +283,7 @@ class BoundaryFlowPipeline:
                     if model_name not in trailing_stops:
                         trailing_stops[model_name] = BranchTrailingStop(
                             data.states.values.shape[1],
-                            self.config.maximum_branch_drawdown,
+                            self.config.maximum_drawdown,
                         )
                     active_ids = set(branch_ids)
                     previous_branch_states[model_name] = {
@@ -549,7 +549,7 @@ class BoundaryFlowPipeline:
         }
         previous_states = {name: BranchPositionState() for name in SECTOR_MODEL_NAMES}
         trailing_stops = {
-            name: BranchTrailingStop(1, self.config.maximum_branch_drawdown)
+            name: BranchTrailingStop(1, self.config.maximum_drawdown)
             for name in SECTOR_MODEL_NAMES
         }
         prediction_payloads: list[dict[str, object]] = []

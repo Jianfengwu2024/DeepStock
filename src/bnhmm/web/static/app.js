@@ -2,9 +2,7 @@ const state = {
   config: null,
   devices: [],
   jobs: [],
-  comparisons: [],
   selectedId: null,
-  selectedComparisonId: null,
   symbols: [],
   datasets: [],
   dialogSelected: new Set(),
@@ -47,7 +45,7 @@ const numberFields = new Set([
   "boundary_drift_half_life_sessions", "boundary_minimum_direction_probability",
   "boundary_minimum_signal_to_noise", "boundary_minimum_survival_probability",
   "boundary_relative_strength_lookback_sessions",
-  "boundary_maximum_branch_drawdown",
+  "boundary_maximum_drawdown",
   "percolation_activation_threshold", "percolation_null_permutations",
   "percolation_posterior_paths", "percolation_phase_probability_threshold",
 ]);
@@ -103,7 +101,7 @@ const strategyParameterFields = {
     "boundary_minimum_direction_probability", "boundary_minimum_signal_to_noise",
     "boundary_minimum_survival_probability", "transaction_cost_bps", "seed",
     "boundary_relative_strength_lookback_sessions",
-    "boundary_maximum_branch_drawdown",
+    "boundary_maximum_drawdown",
   ],
   "percolation-branching": [
     "percolation_activation_threshold", "percolation_null_permutations",
@@ -120,7 +118,7 @@ const strategyNamePrefixes = {
   "stock-transformer": "StockTransformer",
   "fk-stock": "FKStock",
   "sector-flow-bayes": "SectorFlow",
-  "boundary-flow-fk": "PathEfficiencyFK-60D",
+  "boundary-flow-fk": "SectorFK",
   "percolation-branching": "PercolationBranching",
 };
 
@@ -288,7 +286,7 @@ function syncStrategySelection() {
   document.querySelector("#brand-subtitle").textContent = percolation
     ? "PercolationBranching · dual propagation networks"
     : boundaryFlow
-    ? "PathEfficiencyFK · Bayesian drift and potential"
+    ? "SectorFK · Bayesian sector direction"
     : sectorFlow
     ? "SectorFlow · Bayesian sector dynamics"
     : fk
@@ -313,7 +311,7 @@ function syncStrategySelection() {
   const noDataset = (stock || fk || holo || sectorFlow || boundaryFlow || percolation) && state.datasets.length === 0;
   document.querySelector("#run-button").disabled = noDataset;
   document.querySelector("#form-error").textContent = noDataset
-    ? `${percolation ? "渗流分枝" : boundaryFlow ? "路径效率 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
+    ? `${percolation ? "渗流分枝" : boundaryFlow ? "板块方向 FK" : sectorFlow ? "SectorFlow" : fk ? "FKStock" : stock ? "StockTransformer" : holoLite ? "HoloLite" : "HoloBNHMM"} 需要可用的概念板块数据集`
     : "";
   syncStrategyControlAvailability();
 }
@@ -393,7 +391,7 @@ async function refreshBoundaryDataStatus() {
     const payload = await api(`/api/boundary-data/status/${encodeURIComponent(datasetId)}`);
     const variants = payload.cache?.variants || [];
     const ready = variants.filter(item => item.status === "ready").length;
-    const expected = state.config?.boundary_cache_lookbacks?.length || variants.length || 7;
+    const expected = 1;
     button.disabled = payload.status === "running";
     if (payload.status === "running") element.textContent = `构造中 · 已就绪 ${ready}/${expected}`;
     else if (payload.status === "failed") element.textContent = `构造失败 · ${payload.error || "请查看日志"}`;
@@ -607,7 +605,6 @@ async function submitExperiment(event) {
   try {
     const job = await api("/api/jobs", { method: "POST", body: JSON.stringify(formPayload()) });
     state.selectedId = job.id;
-    state.selectedComparisonId = null;
     await refreshAll();
     setNextExperimentName();
     document.querySelector("#config-panel").classList.remove("open");
@@ -622,26 +619,17 @@ async function refreshAll() {
   if (state.polling) return;
   state.polling = true;
   try {
-    const [jobs, comparisons, gpuPayload] = await Promise.all([
+    const [jobs, gpuPayload] = await Promise.all([
       api("/api/jobs"),
-      api("/api/comparisons"),
       api("/api/gpus").catch(() => api("/api/config").then(config => ({ devices: config.devices }))),
     ]);
     state.jobs = jobs;
-    state.comparisons = comparisons;
     updateDevices(gpuPayload.devices);
-    if (state.selectedComparisonId && !state.comparisons.some(item => item.id === state.selectedComparisonId)) {
-      state.selectedComparisonId = null;
-    }
-    if (!state.selectedComparisonId && !state.jobs.some(job => job.id === state.selectedId)) {
+    if (!state.jobs.some(job => job.id === state.selectedId)) {
       state.selectedId = state.jobs[0]?.id || null;
     }
     renderJobList();
-    renderComparisonList();
-    if (state.selectedComparisonId) {
-      const comparison = await api(`/api/comparisons/${encodeURIComponent(state.selectedComparisonId)}`);
-      renderComparison(comparison);
-    } else if (state.selectedId) {
+    if (state.selectedId) {
       const job = await api(`/api/jobs/${encodeURIComponent(state.selectedId)}`);
       renderJob(job);
     } else {
@@ -659,7 +647,6 @@ async function refreshAll() {
 function renderEmptyState() {
   document.querySelector("#empty-state").classList.remove("hidden");
   document.querySelector("#job-view").classList.add("hidden");
-  document.querySelector("#comparison-view").classList.add("hidden");
   document.querySelector("#job-subtitle").textContent = "开始新的实验";
 }
 
@@ -681,7 +668,7 @@ function renderJobList() {
   list.replaceChildren(...state.jobs.map(job => {
     const strategy = job.request.strategy === "holo-repair"
       ? job.request.repair_variant
-      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow", "boundary-flow-fk": "路径效率 FK" })[job.request.strategy] || job.request.strategy;
+      : ({ bnhmm: "BNHMM", "holo-bnhmm": "HoloBNHMM", "holo-bnhmm-lite": "HoloLite", "stock-transformer": "StockTransformer", "fk-stock": "FKStock", "sector-flow-bayes": "SectorFlow", "boundary-flow-fk": "板块方向 FK" })[job.request.strategy] || job.request.strategy;
     const symbolCount = job.summary?.symbols ?? job.request.symbols.length;
     const content = `<div class="job-item-head"><strong>${escapeHtml(job.request.name)}</strong><span class="status-badge ${job.status}">${statusText[job.status]}</span></div><div class="job-item-meta">${strategy} · ${formatDate(job.created_at)} · ${symbolCount} 股</div>`;
     if (state.historyEditing) {
@@ -703,32 +690,11 @@ function renderJobList() {
     button.innerHTML = content;
     button.addEventListener("click", () => {
       state.selectedId = job.id;
-      state.selectedComparisonId = null;
       refreshAll();
     });
     return button;
   }));
   icons();
-}
-
-function renderComparisonList() {
-  document.querySelector("#comparison-count").textContent = state.comparisons.length;
-  const list = document.querySelector("#comparison-list");
-  list.replaceChildren(...state.comparisons.map(comparison => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `job-item comparison-item${comparison.id === state.selectedComparisonId ? " active" : ""}`;
-    const label = comparison.status === "completed"
-      ? "已完成"
-      : comparison.status === "running" ? "运行中" : comparison.status === "queued" ? "排队中" : "失败";
-    button.innerHTML = `<div class="job-item-head"><strong>${escapeHtml(comparison.name)}</strong><span class="status-badge ${comparison.status}">${label}</span></div><div class="job-item-meta">${comparison.completed_count}/${comparison.windows.length} 完成 · ${formatDate(comparison.created_at)}</div>`;
-    button.addEventListener("click", () => {
-      state.selectedComparisonId = comparison.id;
-      state.selectedId = null;
-      refreshAll();
-    });
-    return button;
-  }));
 }
 
 function renderHistoryEditor(activeIds) {
@@ -756,155 +722,6 @@ function renderHistoryEditor(activeIds) {
   document.querySelector("#history-selected-count").textContent = `已选 ${selectedEligible.length}`;
 }
 
-function nextComparisonName() {
-  const pattern = /^PathEfficiencyFK-Compare-(\d+)$/i;
-  const maximum = state.comparisons.reduce((value, item) => {
-    const match = String(item.name || "").match(pattern);
-    return match ? Math.max(value, Number(match[1])) : value;
-  }, 0);
-  return `PathEfficiencyFK-Compare-${String(maximum + 1).padStart(3, "0")}`;
-}
-
-async function submitWindowComparison() {
-  const error = document.querySelector("#form-error");
-  const button = document.querySelector("#run-window-comparison");
-  error.textContent = "";
-  button.disabled = true;
-  try {
-    const comparison = await api("/api/comparisons", {
-      method: "POST",
-      body: JSON.stringify({ name: nextComparisonName(), request: formPayload() }),
-    });
-    state.selectedComparisonId = comparison.id;
-    state.selectedId = null;
-    await refreshAll();
-    document.querySelector("#config-panel").classList.remove("open");
-  } catch (exception) {
-    error.textContent = exception.message;
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function comparisonStatusLabel(status) {
-  return ({ completed: "已完成", running: "运行中", queued: "排队中", failed: "失败", cancelled: "已停止", interrupted: "已中断" })[status] || status;
-}
-
-function renderComparison(comparison) {
-  document.querySelector("#empty-state").classList.add("hidden");
-  document.querySelector("#job-view").classList.add("hidden");
-  document.querySelector("#comparison-view").classList.remove("hidden");
-  document.querySelector("#comparison-title").textContent = comparison.name;
-  document.querySelector("#job-subtitle").textContent = comparison.id;
-  const badge = document.querySelector("#comparison-status");
-  badge.className = `status-badge ${comparison.status}`;
-  badge.textContent = comparisonStatusLabel(comparison.status);
-  const windowCount = comparison.windows.length;
-  const windowLabels = comparison.windows.map(item => item.window_sessions).join(" / ");
-  document.querySelector("#comparison-meta").textContent = `PathEfficiencyFK · ${windowLabels} 日 · ${formatDate(comparison.created_at)}`;
-  document.querySelector("#comparison-progress").innerHTML = `<strong>${comparison.completed_count}/${windowCount} 个窗口完成</strong><span>${comparison.finished_count}/${windowCount} 个窗口已经结束</span>`;
-
-  const completed = comparison.windows.filter(item => item.status === "completed" && Object.keys(item.metrics || {}).length);
-  const byMetric = (field, direction) => [...completed].sort((left, right) => direction * (Number(right.metrics[field]) - Number(left.metrics[field])))[0];
-  const bestReturn = byMetric("net_total_return", 1);
-  const lowestDrawdown = byMetric("maximum_drawdown", -1);
-  const bestDirection = byMetric("drift_direction_accuracy", 1);
-  const bestBalanced = byMetric("balanced_accuracy", 1);
-  const conclusion = document.querySelector("#comparison-conclusion");
-  if (!completed.length) {
-    conclusion.className = "boundary-evaluation-summary caution";
-    conclusion.innerHTML = `<span>当前进度</span><strong>正在等待窗口结果</strong><p>六个窗口按顺序运行，完成一个就会立即出现在下方表格和净值图中。</p>`;
-  } else {
-    const positive = Number(bestReturn.metrics.net_total_return) > 0;
-    const weakPrediction = Number(bestBalanced.metrics.balanced_accuracy) < 0.36
-      || Number(bestDirection.metrics.drift_direction_accuracy) < 0.55;
-    conclusion.className = `boundary-evaluation-summary ${positive && weakPrediction ? "caution" : positive ? "positive" : "negative"}`;
-    const title = positive && weakPrediction
-      ? `${bestReturn.window_sessions} 日收益较好，但预测优势仍弱`
-      : `${bestReturn.window_sessions} 日窗口的成本后收益最高`;
-    conclusion.innerHTML = `<span>当前结论</span><strong>${title}</strong><p>已完成 ${completed.length} 个窗口；最高收益 ${formatPercent(bestReturn.metrics.net_total_return)}，最高均衡正确率 ${formatPercent(bestBalanced.metrics.balanced_accuracy)}。均衡正确率接近 33% 时，不能只凭收益认定模型已经稳定。</p>`;
-  }
-  document.querySelector("#comparison-summary-metrics").innerHTML = [
-    boundaryMetric("最高成本后收益", bestReturn ? `${bestReturn.window_sessions} 日 · ${formatPercent(bestReturn.metrics.net_total_return)}` : "等待结果"),
-    boundaryMetric("最低最大回撤", lowestDrawdown ? `${lowestDrawdown.window_sessions} 日 · ${formatPercent(lowestDrawdown.metrics.maximum_drawdown)}` : "等待结果"),
-    boundaryMetric("最高方向正确率", bestDirection ? `${bestDirection.window_sessions} 日 · ${formatPercent(bestDirection.metrics.drift_direction_accuracy)}` : "等待结果"),
-    boundaryMetric("最高均衡正确率", bestBalanced ? `${bestBalanced.window_sessions} 日 · ${formatPercent(bestBalanced.metrics.balanced_accuracy)}` : "等待结果"),
-  ].join("");
-
-  document.querySelector("#comparison-window-table").innerHTML = comparison.windows.map(item => {
-    const metrics = item.metrics || {};
-    const action = item.status === "completed"
-      ? `<button class="mini-button" type="button" data-comparison-job="${escapeHtml(item.job_id)}">查看完整结果</button>`
-      : item.error ? `<span class="negative-text">${escapeHtml(item.error)}</span>` : "—";
-    return `<tr><td><strong>${item.window_sessions} 日</strong></td><td><span class="status-badge ${item.status}">${comparisonStatusLabel(item.status)}</span></td><td>${formatPercent(metrics.net_total_return)}</td><td>${formatPercent(metrics.maximum_drawdown)}</td><td>${formatPercent(metrics.drift_direction_accuracy)}</td><td>${formatPercent(metrics.balanced_accuracy)}</td><td>${formatPercent(metrics.average_exposure)}</td><td>${formatPercent(metrics.average_turnover)}</td><td>${action}</td></tr>`;
-  }).join("");
-  document.querySelectorAll("[data-comparison-job]").forEach(button => {
-    button.addEventListener("click", () => openComparisonChild(button.dataset.comparisonJob));
-  });
-  drawComparisonEquity(comparison.windows);
-  icons();
-}
-
-async function openComparisonChild(jobId) {
-  state.selectedId = jobId;
-  state.selectedComparisonId = null;
-  const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
-  renderJobList();
-  renderComparisonList();
-  renderJob(job);
-}
-
-async function deleteSelectedComparison() {
-  if (!state.selectedComparisonId) return;
-  if (!window.confirm("确定删除这组窗口对比吗？所有原始回测结果会继续保留。")) return;
-  await api(`/api/comparisons/${encodeURIComponent(state.selectedComparisonId)}`, { method: "DELETE" });
-  state.selectedComparisonId = null;
-  await refreshAll();
-}
-
-function drawComparisonEquity(windows) {
-  const canvas = document.querySelector("#comparison-equity-canvas");
-  const context = canvas.getContext("2d");
-  const colors = { 120: "#8c3f62", 90: "#176b87", 60: "#2f7d4f", 40: "#a96f16", 30: "#7a5aa6", 20: "#b64b45", 10: "#52636a" };
-  const series = windows
-    .filter(item => item.equity_curve?.length)
-    .map(item => ({ window: item.window_sessions, values: item.equity_curve.map(point => Number(point.value)) }));
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  document.querySelector("#comparison-equity-legend").innerHTML = series
-    .map(item => `<span><i style="background:${colors[item.window]}"></i>${item.window} 日</span>`)
-    .join("");
-  if (!series.length) {
-    context.fillStyle = "#6d787d";
-    context.font = "20px sans-serif";
-    context.fillText("等待窗口净值结果", 40, 60);
-    return;
-  }
-  const padding = { left: 62, right: 24, top: 30, bottom: 38 };
-  const allValues = series.flatMap(item => item.values);
-  const minimum = Math.min(1, ...allValues);
-  const maximum = Math.max(1, ...allValues);
-  const span = Math.max(maximum - minimum, 1e-9);
-  const y = value => padding.top + (maximum - value) * (canvas.height - padding.top - padding.bottom) / span;
-  context.strokeStyle = "#d9dfe1";
-  context.lineWidth = 1;
-  for (let row = 0; row <= 4; row += 1) {
-    const py = padding.top + row * (canvas.height - padding.top - padding.bottom) / 4;
-    context.beginPath(); context.moveTo(padding.left, py); context.lineTo(canvas.width - padding.right, py); context.stroke();
-  }
-  for (const item of series) {
-    const x = index => padding.left + index * (canvas.width - padding.left - padding.right) / Math.max(item.values.length - 1, 1);
-    context.strokeStyle = colors[item.window];
-    context.lineWidth = 3;
-    context.beginPath();
-    item.values.forEach((value, index) => index ? context.lineTo(x(index), y(value)) : context.moveTo(x(index), y(value)));
-    context.stroke();
-  }
-  context.fillStyle = "#34444a";
-  context.font = "16px sans-serif";
-  context.fillText(maximum.toFixed(3), 8, padding.top + 5);
-  context.fillText(minimum.toFixed(3), 8, canvas.height - padding.bottom + 5);
-}
-
 function renderGlobalStatus() {
   const active = state.jobs.filter(job => ["queued", "running"].includes(job.status)).length;
   const badge = document.querySelector("#global-status");
@@ -914,7 +731,6 @@ function renderGlobalStatus() {
 
 function renderJob(job) {
   document.querySelector("#empty-state").classList.add("hidden");
-  document.querySelector("#comparison-view").classList.add("hidden");
   document.querySelector("#job-view").classList.remove("hidden");
   document.querySelector("#run-title").textContent = job.request.name;
   document.querySelector("#job-subtitle").textContent = job.id;
@@ -1016,8 +832,8 @@ function renderJob(job) {
   document.querySelector("#cancel-button").classList.toggle("hidden", !active);
   document.querySelector("#progress-band").classList.toggle("hidden", !active);
   document.querySelector("#progress-label").textContent = job.status === "queued"
-    ? (percolation ? "等待渗流分枝任务" : boundaryFlow ? "等待路径效率 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
-    : percolation ? "渗流分枝月度样本外计算中" : boundaryFlow ? "路径效率 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
+    ? (percolation ? "等待渗流分枝任务" : boundaryFlow ? "等待板块方向 FK 任务" : sectorFlow ? "等待 SectorFlow 任务" : fk ? "等待 FKStock 任务" : "等待 GPU 任务")
+    : percolation ? "渗流分枝月度样本外计算中" : boundaryFlow ? "板块方向 FK 月度 Walk-forward 运行中" : sectorFlow ? "SectorFlow 月度 Walk-forward 运行中" : fk ? "FKStock 最小模型 Walk-forward 运行中" : stock ? "StockTransformer 三层 Walk-forward 运行中" : holo ? `${holoLite ? "HoloLite" : "HoloBNHMM"} 二维流场 Walk-forward 运行中` : "BNHMM Walk-forward 运行中";
   document.querySelector("#elapsed-time").textContent = job.started_at ? elapsed(job.started_at, job.finished_at) : "";
   document.querySelector("#job-log").textContent = (job.log || []).join("\n") || "暂无日志";
   renderResultScope(job);
@@ -1161,8 +977,8 @@ function renderBoundaryFlowResult(job) {
     "feynman-kac-predictions.json": "样本外预测",
     "boundary-model-posterior.json": "模型后验",
     "boundary-residual-analysis.json": "残差分析",
-    "boundary-daily-states.json": "每日支流状态",
-    "branch-memberships.json": "月度支流成分",
+    "boundary-daily-states.json": "每日板块状态",
+    "sector-direction-evaluation.json": "方向评估",
     "run-summary.json": "运行摘要",
   };
   document.querySelector("#boundary-flow-downloads").innerHTML = Object.entries(downloads)
@@ -1182,7 +998,7 @@ function renderBoundaryFlowResult(job) {
   if (!evaluationUrl || !predictionsUrl) {
     status.textContent = job.status === "failed"
       ? "运行失败，请查看日志"
-      : ["queued", "running"].includes(job.status) ? "路径效率 FK 样本外计算中" : "暂无可读取的结果制品";
+      : ["queued", "running"].includes(job.status) ? "板块方向 FK 样本外计算中" : "暂无可读取的结果制品";
     document.querySelector("#boundary-probabilities").replaceChildren();
     document.querySelector("#boundary-dynamics").replaceChildren();
     document.querySelector("#boundary-prediction-table").replaceChildren();
@@ -1253,7 +1069,7 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
   }
   if (returnDelta > 0) {
     return {
-      title: "最强 1/2 超过全支流策略",
+      title: "最强 1/2 超过全板块策略",
       level: "positive",
       returnDelta,
       drawdownImprovement,
@@ -1263,7 +1079,7 @@ function boundaryImprovementVerdict(metrics = {}, baselineMetrics = {}) {
   return {
     title: drawdownImprovement > 0
       ? "最强 1/2 降低回撤，但没有提高收益，未通过改进标准"
-      : "最强 1/2 未改善全支流策略，未通过改进标准",
+      : "最强 1/2 未改善全板块策略，未通过改进标准",
     level: drawdownImprovement > 0 ? "caution" : "negative",
     returnDelta,
     drawdownImprovement,
@@ -1280,8 +1096,12 @@ function selectBoundaryStages(stages) {
 
 function boundaryModelLabel(modelName) {
   const name = String(modelName || "");
-  if (name.includes("StrongestHalf")) return "支流内最强前 1/2";
-  if (name.includes("Beta0PlusC1-Baseline")) return "β0 + C1 全支流基线";
+  if (name.includes("SectorFK-PathFull")) return "路径、同步率与短期记忆";
+  if (name.includes("SectorFK-PathMemory")) return "路径效率与短期记忆";
+  if (name.includes("SectorFK-PathSync")) return "路径效率与同步率";
+  if (name.includes("SectorFK-PathOnly")) return "纯路径效率";
+  if (name.includes("StrongestHalf")) return "历史最强前 1/2";
+  if (name.includes("Beta0PlusC1-Baseline")) return "历史 β0 + C1 基线";
   if (name.includes("PathEfficiencyFK-60D-OneDayPotential")) return "β0 + C1 外势 FK";
   if (name.includes("Baseline")) return "纯路径效率基线";
   return name || "未命名阶段";
@@ -1302,12 +1122,8 @@ function paintBoundaryFlowResult(job, payload) {
   const metrics = stage.metrics || {};
   const baselineMetrics = baselineStage.metrics || {};
   const latest = predictions.at(-1);
-  const trailingStopEvents = predictions.filter(
-    item => (item.trailing_stop_triggered_branches || []).length > 0
-  ).length;
-  const trailingStopExitDays = predictions.filter(
-    item => item.trailing_stop_forced_exit
-  ).length;
+  const trailingStopEvents = predictions.filter(item => item.trailing_stop_pending).length;
+  const trailingStopExitDays = predictions.filter(item => item.trailing_stop_forced_exit).length;
   document.querySelector("#boundary-flow-result-status").textContent =
     `${formatInteger(predictions.length)} 个样本外交易日 · ${strategyLabel}`;
 
@@ -1320,7 +1136,7 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("基线成本后收益", formatPercent(baselineMetrics.net_total_return), baselineLabel),
     boundaryMetric("成本后总收益", formatPercent(metrics.net_total_return), "扣除换手成本"),
     boundaryMetric("平均一日有效势", formatNumber(potential?.mean_effective_potential, 4), "V = softplus(β0 + β1·C1)"),
-    boundaryMetric("平均趋势存活率", formatPercent(potential?.mean_trend_survival_probability), "FK 对漂移的保留比例"),
+    boundaryMetric("平均趋势存活率", formatPercent(potential?.mean_trend_survival_probability), "FK 对板块漂移的保留比例"),
     boundaryMetric("最大回撤", formatPercent(metrics.maximum_drawdown), "历史高点后的最大跌幅"),
     boundaryMetric("方向判断正确率", formatPercent(metrics.drift_direction_accuracy), "上涨或下跌方向"),
     boundaryMetric("方向信号覆盖率", formatPercent(metrics.direction_signal_coverage), "输出看多或看空的比例"),
@@ -1328,75 +1144,69 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("平均实际仓位", formatPercent(metrics.average_exposure), "整个测试期平均"),
     boundaryMetric("涨停未买入", formatInteger(metrics.failed_buy_orders), "全天未打开涨停板"),
     boundaryMetric("跌停未卖出", formatInteger(metrics.failed_sell_orders), "全天未打开跌停板"),
-    boundaryMetric("支流止损触发", formatInteger(trailingStopEvents), "任一支流从持仓峰值回撤超过设定值"),
+    boundaryMetric("板块止损触发", formatInteger(trailingStopEvents), "持仓权益从峰值回撤超过设定值"),
     boundaryMetric("止损清仓日", formatInteger(trailingStopExitDays), "跌停未卖出时会持续清仓"),
   ].join("");
 
   if (!latest) {
     document.querySelector("#boundary-probabilities").innerHTML = '<p class="boundary-empty">没有样本外预测。</p>';
     document.querySelector("#boundary-dynamics").replaceChildren();
-    document.querySelector("#boundary-gate-reason").textContent = "没有产生可展示的支流预测。";
+    document.querySelector("#boundary-gate-reason").textContent = "没有产生可展示的板块预测。";
     return;
   }
 
   const states = ["空", "平", "多"];
-  const branches = latest.branches || [];
-  document.querySelector("#boundary-probabilities").innerHTML = branches.map(branch => {
-    const probabilities = branch.state_probabilities || [];
-    return `<div class="boundary-probability ${branch.direction === "bear" ? "bear" : branch.direction === "bull" ? "bull" : "neutral"}">
-      <strong>支流 ${branch.branch} · ${{ bear: "空", flat: "平", bull: "多" }[branch.direction] || "—"}</strong>
+  const sector = latest.sector || latest.branches?.[0] || null;
+  const probabilities = sector?.state_probabilities || [];
+  const directionLabel = ({ bear: "空", flat: "平", bull: "多" })[sector?.direction] || "—";
+  document.querySelector("#boundary-probabilities").innerHTML = `
+    <div class="boundary-probability ${sector?.direction === "bear" ? "bear" : sector?.direction === "bull" ? "bull" : "neutral"}">
+      <strong>板块判断 · ${directionLabel}</strong>
       ${states.map((label, index) => `<span>${label} ${formatPercent(probabilities[index])}</span>`).join("")}
     </div>`;
-  }).join("");
 
-  const dynamics = branches.flatMap(branch => {
-    const values = [
-    [`支流 ${branch.branch} 预期涨跌`, formatPercent(branch.expected_drift)],
-    [`支流 ${branch.branch} 一日有效势`, formatNumber(branch.expected_effective_potential, 4)],
-    [`支流 ${branch.branch} 趋势延续可信度`, formatPercent(branch.survival_confidence)],
-    [`支流 ${branch.branch} 看多概率`, formatPercent(branch.bullish_drift_probability)],
-    [`支流 ${branch.branch} 趋势强度`, formatNumber(branch.drift_signal_to_noise, 3)],
-    ];
-    return values;
-  });
+  const dynamics = [
+    ["板块预期涨跌", formatPercent(sector?.expected_drift)],
+    ["一日有效势", formatNumber(sector?.expected_effective_potential, 4)],
+    ["趋势延续可信度", formatPercent(sector?.survival_confidence)],
+    ["看多概率", formatPercent(sector?.bullish_drift_probability)],
+    ["趋势信噪比", formatNumber(sector?.drift_signal_to_noise, 3)],
+  ];
   document.querySelector("#boundary-dynamics").innerHTML = dynamics
     .map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`)
     .join("");
 
-  const branchTargetExposures = latest.branch_target_exposures || [];
-  const branchFlatSignalCounts = latest.branch_flat_signal_counts || [];
-  const totalExposure = branchTargetExposures.reduce((total, value) => total + value, 0);
+  const totalExposure = Number(latest.target_exposure ?? (latest.branch_target_exposures || []).reduce((total, value) => total + value, 0));
+  const flatSignalCount = Number(latest.flat_signal_count ?? latest.branch_flat_signal_counts?.[0] ?? 0);
   const normalHoldings = latest.selected_symbols?.length
-    ? `当前持有 ${latest.selected_symbols.length} 只股票 · 目标仓位 ${formatPercent(totalExposure)} · ${branchTargetExposures.length} 条支流仓位 ${branchTargetExposures.map(formatPercent).join(" / ")}`
-    : `当前空仓 · 连续看平 ${branchFlatSignalCounts.join(" / ")}`;
+    ? `当前持有 ${latest.selected_symbols.length} 只股票 · 目标仓位 ${formatPercent(totalExposure)}`
+    : `当前空仓 · 连续看平 ${flatSignalCount} 次`;
   const holdings = latest.trailing_stop_pending
-    ? `支流峰值回撤止损已触发 · 全局清仓锁生效 · 实际剩余 ${latest.actual_symbols?.length || 0} 只股票`
+    ? `板块峰值回撤止损已触发 · 全局清仓锁生效 · 实际剩余 ${latest.actual_symbols?.length || 0} 只股票`
     : normalHoldings;
   const trace = `信号 ${latest.signal_time || "—"} · 训练截止 ${latest.training_cutoff || "—"} · 下一交易日 ${latest.target_time || "—"}`;
-  const potentialTrace = branches.map(branch =>
-    `支流${branch.branch} 势能 ${formatNumber(branch.expected_effective_potential, 4)} / 存活率 ${formatPercent(branch.survival_confidence)}`
-  ).join(" · ");
-  const riskTrace = `支流权益 ${latest.branch_equities?.map(value => formatNumber(value, 4)).join(" / ") || "—"} · 峰值回撤 ${latest.branch_trailing_drawdowns?.map(value => formatPercent(value)).join(" / ") || "—"}`;
+  const potentialTrace = `有效势 ${formatNumber(sector?.expected_effective_potential, 4)} · 存活率 ${formatPercent(sector?.survival_confidence)}`;
+  const sectorEquity = latest.sector_equity ?? latest.branch_equities?.[0];
+  const sectorDrawdown = latest.sector_trailing_drawdown ?? latest.branch_trailing_drawdowns?.[0];
+  const riskTrace = `板块权益 ${formatNumber(sectorEquity, 4)} · 峰值回撤 ${formatPercent(sectorDrawdown)}`;
   document.querySelector("#boundary-gate-reason").innerHTML = `<strong>${escapeHtml(holdings)}</strong><span>${escapeHtml(trace)}</span><span>${escapeHtml(potentialTrace)}</span><span>${escapeHtml(riskTrace)}</span>`;
 
   document.querySelector("#boundary-prediction-table").innerHTML = predictions.slice(-60).reverse().map(item => {
-    const itemBranches = item.branches || [];
+    const itemSector = item.sector || item.branches?.[0] || {};
     const exposure = (item.actual_weights || []).reduce((sum, value) => sum + Number(value || 0), 0);
-    const label = branch => ({ bear: "空", flat: "平", bull: "多" })[branch?.direction] || "—";
-    const potentialText = itemBranches.map(branch => formatPercent(branch.convection_potential_features?.reverse_flow_1d)).join(" · ");
+    const label = ({ bear: "空", flat: "平", bull: "多" })[itemSector.direction] || "—";
+    const potentialText = formatPercent(itemSector.convection_potential_features?.reverse_flow_1d);
     const blocked = Number(item.failed_buy_orders || 0) + Number(item.failed_sell_orders || 0);
-    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${escapeHtml(itemBranches.map(label).join(" / "))}</td><td>${escapeHtml(potentialText)}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.actual_symbols?.length || 0)}</td><td>${formatInteger(blocked)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
+    return `<tr><td>${escapeHtml(String(item.signal_time || "—").slice(0, 10))}</td><td>${escapeHtml(label)}</td><td>${escapeHtml(potentialText)}</td><td>${formatPercent(exposure)}</td><td>${formatInteger(item.actual_symbols?.length || 0)}</td><td>${formatInteger(blocked)}</td><td class="${Number(item.gross_strategy_return) >= 0 ? "positive-text" : "negative-text"}">${formatPercent(item.gross_strategy_return)}</td></tr>`;
   }).join("");
 
-  const latestBeta0 = [...new Set((posterior || []).map(item => item.branch))].sort((a, b) => a - b).map(branch =>
-    [...(posterior || [])].reverse().find(item => item.branch === branch)?.potential_mean?.[0]
-  );
+  const latestPosterior = [...(posterior || [])].reverse().find(item => item.model_name === potentialModel) || posterior?.at(-1) || {};
   document.querySelector("#boundary-model-quality").innerHTML = [
-    boundaryMetric("最新 β0", latestBeta0.map(value => formatNumber(value, 4)).join(" / "), "按当前支流顺序"),
+    boundaryMetric("最新 β0", formatNumber(latestPosterior.potential_mean?.[0], 4), "板块背景外势"),
     boundaryMetric("概率整体误差", formatNumber(metrics.brier_score, 4), "越小越好"),
     boundaryMetric("概率校准偏差", formatPercent(metrics.ece), "预测概率与实际频率的差"),
     boundaryMetric("三状态均衡正确率", formatPercent(metrics.balanced_accuracy), "避免多数状态掩盖结果"),
-    boundaryMetric("训练成熟样本", formatInteger(stage.minimum_fit_rows), "每支流用于后验估计"),
+    boundaryMetric("训练成熟样本", formatInteger(stage.minimum_fit_rows), "板块后验估计使用的历史交易日"),
   ].join("");
 
   paintBoundaryReturnComparison(
@@ -1416,12 +1226,12 @@ function paintBoundaryFlowResult(job, payload) {
     boundaryMetric("数据集", job.request.dataset_id || "—"),
     boundaryMetric("测试区间", `${job.request.start} 至 ${job.request.end}`),
     boundaryMetric("股票数量", `${formatInteger(job.summary?.symbols || job.request.symbols?.length)} 只`),
-    boundaryMetric("支流历史", `${job.request.topology_lookback_sessions} 日`),
+    boundaryMetric("板块状态", "全部成分股单一日状态"),
     boundaryMetric("外势输入", "背景势 β0 + 一日反向流量 C1"),
     boundaryMetric("FK 模拟路径", formatInteger(job.request.boundary_fk_paths)),
     boundaryMetric("模型版本", latest.model_version || posterior?.[0]?.model_name || "PathEfficiencyFK"),
     boundaryMetric("训练截止", latest.training_cutoff || "—"),
-    boundaryMetric("支流止损", `峰值回撤超过 ${formatPercent(job.request.boundary_maximum_branch_drawdown ?? 0.05)}`, "任一支流触发后全局清仓"),
+    boundaryMetric("板块止损", `峰值回撤超过 ${formatPercent(job.request.boundary_maximum_drawdown ?? job.request.boundary_maximum_branch_drawdown ?? 0.05)}`, "触发后全局清仓"),
     boundaryMetric("运行耗时", `${formatNumber(job.summary?.elapsed_seconds, 2)} 秒`),
   ].join("");
   switchBoundaryResultTab(state.boundaryTabByJob.get(job.id) || "evaluation", job.id);
@@ -2227,8 +2037,6 @@ function applySymbols() {
 
 function setupEvents() {
   document.querySelector("#experiment-form").addEventListener("submit", submitExperiment);
-  document.querySelector("#run-window-comparison").addEventListener("click", submitWindowComparison);
-  document.querySelector("#delete-comparison-button").addEventListener("click", deleteSelectedComparison);
   document.querySelector("#device-select").addEventListener("change", updateDeviceNote);
   document.querySelectorAll("[name=strategy]").forEach(field => field.addEventListener("change", changeStrategy));
   document.querySelector("#repair-variant").addEventListener("change", () => {

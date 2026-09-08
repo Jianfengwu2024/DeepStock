@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 
 
 CACHE_FORMAT_VERSION = 2
-CACHE_CONSTRUCTION_VERSION = "path-efficiency-periodic-multibranch-v1"
-CACHE_LOOKBACKS = (10, 20, 30, 40, 60, 90, 120)
+CACHE_CONSTRUCTION_VERSION = "sector-direct-direction-v1"
+SECTOR_CACHE_SLOT = 60
 
 
 class BoundaryDataCacheMiss(FileNotFoundError):
@@ -44,8 +44,10 @@ class BoundaryDataCacheKey:
     construction_version: str = CACHE_CONSTRUCTION_VERSION
 
     def __post_init__(self) -> None:
-        if self.lookback_sessions not in CACHE_LOOKBACKS:
-            raise ValueError(f"supported lookback sessions are {CACHE_LOOKBACKS}")
+        if self.lookback_sessions != SECTOR_CACHE_SLOT:
+            raise ValueError(
+                f"supported lookback is the {SECTOR_CACHE_SLOT}-session sector cache slot"
+            )
         if not self.dataset_id or not self.symbols:
             raise ValueError("cache key requires a dataset and symbols")
 

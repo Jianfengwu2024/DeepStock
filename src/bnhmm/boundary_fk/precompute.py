@@ -1,9 +1,10 @@
-"""One-pass construction of reusable PathEfficiencyFK datasets."""
+"""One-pass construction of reusable whole-sector FK inputs."""
 
 from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -12,59 +13,17 @@ import numpy as np
 
 from ..data.source import DuckDBBarSource
 from ..sector_flow.panel import SectorMinutePanelBuilder
-from ..sector_flow.topology import TopologyConfig
-from .branch_state import TwoBranchDailyStateBuilder
-from .cache import CACHE_LOOKBACKS, BoundaryDataCache, BoundaryDataCacheKey
-from .daily_state import BoundaryTopologyBuilder
+from .cache import SECTOR_CACHE_SLOT, BoundaryDataCache, BoundaryDataCacheKey
 from .execution import build_member_execution_constraints
 from .normalization import CausalBoundaryNormalizer
+from .sector_state import SectorDailyStateBuilder
 
 
 class MinuteSource(Protocol):
     def fetch(self, symbol: str, timeframe: str, start: date, end: date): ...
 
 
-def topology_months_for_available_data(
-    *,
-    requested_start: np.datetime64,
-    requested_end: np.datetime64,
-    first_timestamp: np.datetime64,
-) -> np.ndarray:
-    """Return causal topology months with at least one prior month of data."""
-
-    start_month = np.datetime64(requested_start, "M")
-    end_month = np.datetime64(requested_end, "M")
-    first_eligible = np.datetime64(first_timestamp, "M") + np.timedelta64(1, "M")
-    effective_start = max(start_month, first_eligible)
-    if effective_start > end_month:
-        raise ValueError("available minute history does not reach a topology month")
-    return np.arange(
-        effective_start,
-        end_month + np.timedelta64(1, "M"),
-        dtype="datetime64[M]",
-    )
-
-
-def topology_months_with_minimum_history(
-    *,
-    months: tuple[np.datetime64, ...] | np.ndarray,
-    timestamps: np.ndarray,
-    minimum_sessions: int,
-) -> tuple[np.datetime64, ...]:
-    if minimum_sessions < 1:
-        raise ValueError("minimum topology sessions must be positive")
-    sessions = np.unique(np.asarray(timestamps).astype("datetime64[D]"))
-    eligible = tuple(
-        np.datetime64(month, "M")
-        for month in months
-        if np.sum(sessions < np.datetime64(month, "D")) >= minimum_sessions
-    )
-    if not eligible:
-        raise ValueError("available minute history cannot satisfy topology minimums")
-    return eligible
-
-
-def build_boundary_cache_variants(
+def build_sector_boundary_cache(
     source: MinuteSource,
     cache: BoundaryDataCache,
     *,
@@ -73,95 +32,49 @@ def build_boundary_cache_variants(
     symbols: tuple[str, ...],
     start: str | date,
     end: str | date,
-    lookbacks: tuple[int, ...] = CACHE_LOOKBACKS,
 ) -> dict[str, object]:
     started = time.perf_counter()
     start_date = date.fromisoformat(start) if isinstance(start, str) else start
     end_date = date.fromisoformat(end) if isinstance(end, str) else end
     if end_date <= start_date:
         raise ValueError("cache end must follow start")
-    if tuple(sorted(set(lookbacks))) != tuple(lookbacks):
-        raise ValueError("cache lookbacks must be unique and increasing")
-    if any(item not in CACHE_LOOKBACKS for item in lookbacks):
-        raise ValueError(f"supported lookbacks are {CACHE_LOOKBACKS}")
 
-    warmup_start = start_date - timedelta(days=max(450, max(lookbacks) * 5))
+    warmup_start = start_date - timedelta(days=450)
     bars = {
         symbol: source.fetch(symbol, "1m", warmup_start, end_date)
         for symbol in symbols
     }
     panel = SectorMinutePanelBuilder().build(bars)
     normalized = CausalBoundaryNormalizer().transform(panel)
-    execution = build_member_execution_constraints(panel)
-    topology_start = start_date - timedelta(days=300)
     if not len(normalized.timestamps):
-        raise ValueError("boundary cache requires available minute history")
-    rows: list[dict[str, object]] = []
-    for lookback in lookbacks:
-        minimum_sessions = max(2, int(np.ceil(lookback * 2.0 / 3.0)))
-        minimum_pair_sessions = max(2, int(np.ceil(lookback / 2.0)))
-        topology_builder = BoundaryTopologyBuilder(
-            TopologyConfig(
-                lookback_sessions=lookback,
-                minimum_sessions=minimum_sessions,
-                minimum_pair_sessions=minimum_pair_sessions,
-                maximum_bands=8,
-                minimum_band_size=max(2, int(np.ceil(len(symbols) * 0.10))),
-            )
-        )
-        # The fallback preserves compatibility with external topology adapters.
-        if hasattr(topology_builder, "build_periodic"):
-            topologies = topology_builder.build_periodic(normalized, every_sessions=5)
-        else:
-            months = topology_months_for_available_data(
-                requested_start=np.datetime64(start_date - timedelta(days=300), "M"),
-                requested_end=np.datetime64(end_date, "M"),
-                first_timestamp=normalized.timestamps[0],
-            )
-            topologies = topology_builder.build(normalized, tuple(months))
-        built = TwoBranchDailyStateBuilder().build(normalized, topologies)
-        if not np.array_equal(built.states.sessions, execution.sessions):
-            raise ValueError("execution constraints do not align with daily states")
-        data = type(built)(
-            states=built.states,
-            labels=built.labels,
-            memberships=built.memberships,
-            symbols=built.symbols,
-            member_next_returns=built.member_next_returns,
-            member_next_valid=built.member_next_valid,
-            member_next_hold_returns=execution.hold_returns,
-            member_next_buy_returns=execution.buy_returns,
-            member_next_buy_executable=execution.buy_executable,
-            member_next_sell_returns=execution.sell_returns,
-            member_next_sell_executable=execution.sell_executable,
-            convection_strength=built.convection_strength,
-            convection_valid=built.convection_valid,
-            convection_total_flow=built.convection_total_flow,
-            convection_observations=built.convection_observations,
-        )
-        key = BoundaryDataCacheKey.from_source(
-            dataset_id=dataset_id,
-            source_path=source_path,
-            symbols=symbols,
-            start=start_date.isoformat(),
-            end=end_date.isoformat(),
-            lookback_sessions=lookback,
-        )
-        cache.save(key, data, topologies=topologies)
-        rows.append(
-            {
-                "lookback_sessions": lookback,
-                "rows": len(data.states.sessions),
-                "memberships": len(data.memberships),
-            }
-        )
+        raise ValueError("sector cache requires available minute history")
+    execution = build_member_execution_constraints(panel)
+    built = SectorDailyStateBuilder().build(normalized)
+    if not np.array_equal(built.states.sessions, execution.sessions):
+        raise ValueError("execution constraints do not align with daily states")
+    data = replace(
+        built,
+        member_next_hold_returns=execution.hold_returns,
+        member_next_buy_returns=execution.buy_returns,
+        member_next_buy_executable=execution.buy_executable,
+        member_next_sell_returns=execution.sell_returns,
+        member_next_sell_executable=execution.sell_executable,
+    )
+    key = BoundaryDataCacheKey.from_source(
+        dataset_id=dataset_id,
+        source_path=source_path,
+        symbols=symbols,
+        start=start_date.isoformat(),
+        end=end_date.isoformat(),
+        lookback_sessions=SECTOR_CACHE_SLOT,
+    )
+    cache.save(key, data)
     return {
         "dataset_id": dataset_id,
-        "lookbacks": list(lookbacks),
         "symbols": len(symbols),
         "start": start_date.isoformat(),
         "end": end_date.isoformat(),
-        "variants": rows,
+        "rows": len(data.states.sessions),
         "elapsed_seconds": time.perf_counter() - started,
     }
 
@@ -169,9 +82,8 @@ def build_boundary_cache_variants(
 def run_boundary_data_build(args) -> None:
     symbols = tuple(item.strip() for item in args.symbols.split(",") if item.strip())
     if len(symbols) < 4:
-        raise ValueError("boundary data construction requires at least four symbols")
-    lookbacks = tuple(int(item.strip()) for item in args.lookbacks.split(",") if item.strip())
-    result = build_boundary_cache_variants(
+        raise ValueError("sector data construction requires at least four symbols")
+    result = build_sector_boundary_cache(
         DuckDBBarSource(args.duckdb_path),
         BoundaryDataCache(args.cache_root),
         dataset_id=args.dataset_id,
@@ -179,6 +91,5 @@ def run_boundary_data_build(args) -> None:
         symbols=symbols,
         start=args.start,
         end=args.end,
-        lookbacks=lookbacks,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
