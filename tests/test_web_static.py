@@ -208,6 +208,10 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         self.assertIn("方向预测结论", script)
         self.assertIn("纯路径效率尚未超过多数方向基线", script)
         self.assertIn("paintSectorDirectionComparison", script)
+        self.assertIn("整板块单一日状态", script)
+        self.assertNotIn("60 日同步聚类、每 5 个交易日冻结", script)
+        self.assertIn("`${strategyLabel} · 固定主模型`", script)
+        self.assertNotIn("`${baselineLabel} vs ${strategyLabel}`", script)
         self.assertIn("板块峰值回撤止损已触发", script)
         for field in ("expected_effective_potential", "survival_confidence"):
             self.assertIn(field, script)

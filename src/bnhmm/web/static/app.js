@@ -751,7 +751,7 @@ function renderJob(job) {
   if (percolation) {
     document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 双向分枝网络 · 固定 1–3 分钟传播 · 60 日月度骨架 · ${formatInteger(job.request.percolation_posterior_paths)} 条后验路径 · CPU`;
   } else if (boundaryFlow) {
-    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 路径效率 FK · 60 日同步聚类、每 5 个交易日冻结 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
+    document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 路径效率 FK · 整板块单一日状态 · ${job.request.minimum_train_sessions} 个成熟训练日 · ${formatInteger(job.request.boundary_fk_paths)} 条 FK 路径 · CPU`;
   } else if (sectorFlow) {
     const water = job.summary?.latest_water_state || {};
     document.querySelector("#run-meta").textContent = `${job.request.start} → ${job.request.end} · ${dataset?.name || job.request.dataset_id || "板块"} · 1分钟同步 · 最大滞后 ${job.request.maximum_lag_minutes} 分钟 · 水势 ${formatNumber(water.flow_strength, 3)} · ${job.request.normalization_lookback_sessions}日因果归一化`;
@@ -1139,7 +1139,7 @@ function paintBoundaryFlowResult(job, payload) {
   const baselinePredictions = allPredictions.filter(item => item.model_version === baselineModel);
   const strategyLabel = boundaryModelLabel(potentialModel);
   const baselineLabel = boundaryModelLabel(baselineModel);
-  document.querySelector("#boundary-result-title").textContent = `${baselineLabel} vs ${strategyLabel}`;
+  document.querySelector("#boundary-result-title").textContent = `${strategyLabel} · 固定主模型`;
   const metrics = stage.metrics || {};
   const baselineMetrics = baselineStage.metrics || {};
   const latest = predictions.at(-1);
