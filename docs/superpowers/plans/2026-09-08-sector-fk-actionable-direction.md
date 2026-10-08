@@ -120,4 +120,3 @@
 - [ ] Record each stage's signal count, coverage, accuracy, matched baseline, balanced accuracy and bull/bear counts in the Chinese report.
 - [ ] Implement `SectorFK-Regime` only if the first three stages still lack usable two-sided accuracy; otherwise document why added complexity was rejected.
 - [ ] Sync TriadMind, rerun topology verification, commit, push and restart DeepStock Lab.
-
