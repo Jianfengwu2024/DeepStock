@@ -17,7 +17,7 @@ from numpy.typing import NDArray
 
 from .config import HOLOGRAPHIC_FIELD_NAMES, ProfileConfig
 from .data.holographic import HolographicProfileBuilder
-from .data.source import DuckDBBarSource
+from .data.source import create_bar_source, describe_bar_source
 from .types import BarBatch, HolographicState
 
 
@@ -415,8 +415,8 @@ class VisualDatasetExporter:
         output_root: str | Path,
         config: VisualDatasetConfig,
     ) -> None:
-        self.source = DuckDBBarSource(database_path)
-        self.database_path = str(Path(database_path).expanduser().resolve())
+        self.source = create_bar_source(database_path)
+        self.database_path = describe_bar_source(database_path)
         self.output_root = Path(output_root).expanduser().resolve()
         self.config = config
 
@@ -643,7 +643,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         volume_bins=args.volume_bins,
         density_ceiling=args.density_ceiling,
     )
-    source = DuckDBBarSource(args.duckdb_path)
+    source = create_bar_source(args.duckdb_path)
     symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
     if not symbols:
         symbols = source.list_symbols()

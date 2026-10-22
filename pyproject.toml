@@ -27,6 +27,7 @@ dev = ["pytest>=8.0"]
 bnhmm = "bnhmm.cli:main"
 bnhmm-web = "bnhmm.web.app:run"
 bnhmm-visual-dataset = "bnhmm.visual_dataset:main"
+bnhmm-catalog = "bnhmm.catalog:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bnhmm"]

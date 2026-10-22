@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..data.sector_dataset import SectorDatasetCatalog
-from ..data.source import DuckDBBarSource
+from ..data.source import create_bar_source
 from ..visual_dataset import VisualDatasetIndex
 from .jobs import (
     ActiveJobDeletionError,
@@ -208,11 +208,11 @@ def gpus() -> dict[str, Any]:
 
 @app.get("/api/symbols")
 def symbols(
-    database_path: str = Query("/home/share/data/market.duckdb"),
+    database_path: str = Query(os.getenv("BNHMM_MARKET_SOURCE", "/home/share/data/market.duckdb")),
     limit: int = Query(200, ge=1, le=200),
 ) -> dict[str, list[str]]:
     try:
-        values = DuckDBBarSource(database_path).list_symbols(limit)
+        values = create_bar_source(database_path).list_symbols(limit)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"symbols": values}
@@ -536,7 +536,7 @@ def run() -> None:
 
     uvicorn.run(
         "bnhmm.web.app:app",
-        host=os.getenv("BNHMM_WEB_HOST", "0.0.0.0"),
+        host=os.getenv("BNHMM_WEB_HOST", "127.0.0.1"),
         port=int(os.getenv("BNHMM_WEB_PORT", "8765")),
         reload=False,
     )

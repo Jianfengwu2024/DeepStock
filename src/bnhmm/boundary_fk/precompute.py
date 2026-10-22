@@ -11,7 +11,7 @@ from typing import Protocol
 
 import numpy as np
 
-from ..data.source import DuckDBBarSource
+from ..data.source import create_bar_source
 from ..sector_flow.panel import SectorMinutePanelBuilder
 from .cache import (
     ANCHOR_PROTOCOL,
@@ -92,7 +92,7 @@ def run_boundary_data_build(args) -> None:
     if len(symbols) < 4:
         raise ValueError("sector data construction requires at least four symbols")
     result = build_sector_boundary_cache(
-        DuckDBBarSource(args.duckdb_path),
+        create_bar_source(args.duckdb_path),
         BoundaryDataCache(args.cache_root),
         dataset_id=args.dataset_id,
         source_path=args.duckdb_path,

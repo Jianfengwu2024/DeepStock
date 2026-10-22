@@ -34,13 +34,15 @@ class DuplicateJobNameError(RuntimeError):
 class WalkForwardJobRequest(BaseModel):
     strategy: Literal["bnhmm", "boundary-flow-fk"] = "bnhmm"
     name: str = "experiment"
-    database_path: str = "/home/share/data/market.duckdb"
+    database_path: str = os.getenv(
+        "BNHMM_MARKET_SOURCE", "http://127.0.0.1:9000/api/v1/db"
+    )
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
     dataset_id: str | None = None
     training_scope: Literal["per-symbol", "sector-pooled"] = "per-symbol"
     start: date = date(2024, 1, 1)
     end: date = date(2026, 8, 5)
-    device: str = "cuda:0"
+    device: str = os.getenv("BNHMM_DEFAULT_DEVICE", "cuda:0")
     epochs: int = Field(10, ge=1, le=1000)
     batch_size: int = Field(8, ge=1, le=512)
     learning_rate: float = Field(3e-4, gt=0, le=1.0)

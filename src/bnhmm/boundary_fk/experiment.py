@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from ..data.source import DuckDBBarSource
+from ..data.source import create_bar_source
 from ..sector_flow.panel import SectorMinutePanelBuilder
 from .cache import SECTOR_CACHE_SLOT, BoundaryDataCache, BoundaryDataCacheKey
 from .execution import build_member_execution_constraints
@@ -94,7 +94,7 @@ def run_boundary_flow_experiment(args: Any) -> None:
 
 
 def build_boundary_experiment_data(
-    source: DuckDBBarSource,
+    source,
     symbols: tuple[str, ...],
     start: date,
     end: date,

@@ -22,7 +22,12 @@ from .config import (
 )
 from .data.dataset import ProfileLabelBuilder, SequenceWindowBuilder
 from .data.profile import PriceVolumeProfileBuilder
-from .data.source import BrokerBarSource, DuckDBBarSource
+from .data.source import (
+    BrokerBarSource,
+    DuckDBBarSource,
+    create_bar_source,
+    describe_bar_source,
+)
 from .storage import apply_migrations
 
 
@@ -115,7 +120,7 @@ def _train(args: argparse.Namespace) -> int:
         stride=args.sequence_stride,
         minimum_length=args.minimum_sequence_length,
     )
-    source = DuckDBBarSource(args.duckdb_path)
+    source = create_bar_source(args.duckdb_path)
     bars = source.fetch(args.symbol, "1m", args.start, args.end)
     states = PriceVolumeProfileBuilder(profile_config).build(bars)
     label_config = LabelConfig(
@@ -182,7 +187,7 @@ def _train(args: argparse.Namespace) -> int:
     metadata = {
         "symbol": args.symbol,
         "model_scope": "single-symbol",
-        "source": str(Path(args.duckdb_path).resolve()),
+        "source": describe_bar_source(args.duckdb_path),
         "start": args.start,
         "end": args.end,
         "cutoff": str(cutoff),
@@ -293,7 +298,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
     from .training import ModelConfig, TrainerConfig
     from .walk_forward import WalkForwardConfig, run_walk_forward
 
-    source = DuckDBBarSource(args.duckdb_path)
+    source = create_bar_source(args.duckdb_path)
     symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
     if not symbols:
         symbols = source.list_symbols(args.symbol_limit)
@@ -546,7 +551,7 @@ def _bnhmm_ablation(args: argparse.Namespace) -> int:
     from .training import ModelConfig, TrainerConfig
     from .walk_forward import WalkForwardConfig
 
-    source = DuckDBBarSource(args.duckdb_path)
+    source = create_bar_source(args.duckdb_path)
     symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
     if not symbols:
         symbols = source.list_symbols(args.symbol_limit)

@@ -108,6 +108,39 @@ model = BNHMMNetwork()
 posterior = model.predict_posterior(profiles, timeframe_ids, mc_samples=16)
 ```
 
+## Quant Platform integration
+
+DeepStock production and training run on the local GPU workstation. Configure
+`BNHMM_MARKET_SOURCE` to the local read-only Quant DuckDB broker; the engine
+queries bounded symbol/date ranges and never opens the broker-owned database
+file. The local web console binds to `127.0.0.1` and keeps datasets, checkpoints,
+and reports under the ignored `local-state` directory.
+
+The Quant Platform API at `/api/v1/deepstock/catalog` stores only administrator-
+maintained dataset categories, names, descriptions, date ranges, and feature
+schemas. It does not receive generated samples, source databases, checkpoints,
+or trained models. Catalog reads require a logged-in account with the existing
+`fast_screener` entitlement; administrators can always read and maintain the
+catalog directly.
+
+On Windows with an NVIDIA RTX 50-series GPU, run `setup-local.ps1` to create an
+isolated Python 3.12 environment with CUDA 12.8 PyTorch, then start the local
+console with `start-local.ps1`. The console is intentionally not exposed to the
+public network.
+
+List the permission-filtered cloud catalog with `bnhmm-catalog list`. After a
+local visual dataset exporter completes successfully, an administrator can
+publish only its description and feature schema:
+
+```powershell
+bnhmm-catalog publish-visual .\local-state\visual-datasets\my-dataset\manifest.json `
+  --category "图像训练集" --name "示例数据集" --description "日级价格与成交参与图像样本"
+```
+
+The command prompts for an administrator access token without echoing it. The
+token is used for that process only and is not written to disk. Generated data,
+market-source URLs, images, checkpoints, and reports remain on this computer.
+
 ## Server smoke check
 
 ```bash

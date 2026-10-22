@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -77,9 +79,17 @@ def _market_cap_query(symbols: list[str] | tuple[str, ...]) -> tuple[str, list[s
 class BrokerBarSource:
     """Read-only source that never opens the broker-owned DuckDB file."""
 
-    def __init__(self, broker_url: str, timeout_seconds: float = 120.0) -> None:
+    def __init__(
+        self,
+        broker_url: str,
+        timeout_seconds: float = 120.0,
+        token: str | None = None,
+    ) -> None:
         self.broker_url = broker_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.token = token if token is not None else os.getenv(
+            "BNHMM_MARKET_BROKER_TOKEN", os.getenv("QUANT_DB_BROKER_TOKEN", "")
+        )
 
     def fetch(
         self,
@@ -94,18 +104,32 @@ class BrokerBarSource:
         if not symbol:
             raise ValueError("symbol cannot be empty")
 
-        payload = self.query(
-            f"SELECT timestamp, open, high, low, close, volume "
-            f"FROM {table} WHERE symbol = ? AND timestamp >= ? AND timestamp < ? "
-            "AND COALESCE(paused, false) = false AND COALESCE(suspicious, false) = false "
-            "ORDER BY timestamp",
-            [symbol, self._iso(start), self._iso(end)],
-        )
-        columns = payload.get("columns", [])
-        records = [
-            {column: self._decode(value) for column, value in zip(columns, row, strict=True)}
-            for row in payload.get("rows", [])
-        ]
+        lower, upper = self._as_datetime(start), self._as_datetime(end)
+        if upper <= lower:
+            raise ValueError("end must be later than start")
+        records: list[dict[str, Any]] = []
+        cursor = lower
+        while cursor < upper:
+            month_end = datetime(
+                cursor.year + (cursor.month == 12),
+                1 if cursor.month == 12 else cursor.month + 1,
+                1,
+                tzinfo=cursor.tzinfo,
+            )
+            chunk_end = min(upper, month_end)
+            payload = self.query(
+                f"SELECT timestamp, open, high, low, close, volume "
+                f"FROM {table} WHERE symbol = ? AND timestamp >= ? AND timestamp < ? "
+                "AND COALESCE(paused, false) = false AND COALESCE(suspicious, false) = false "
+                "ORDER BY timestamp",
+                [symbol, self._iso(cursor), self._iso(chunk_end)],
+            )
+            columns = payload.get("columns", [])
+            records.extend(
+                {column: self._decode(value) for column, value in zip(columns, row, strict=True)}
+                for row in payload.get("rows", [])
+            )
+            cursor = chunk_end
         return BarBatch.from_records(symbol, records)
 
     def fetch_sector_index(
@@ -172,21 +196,48 @@ class BrokerBarSource:
         ]
         return _market_cap_records(records)
 
+    def list_symbols(self, limit: int | None = None) -> list[str]:
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be positive")
+        query = "SELECT symbol FROM stock_universe ORDER BY symbol"
+        params: list[Any] = []
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        payload = self.query(query, params)
+        columns = payload.get("columns", [])
+        if "symbol" not in columns:
+            raise BrokerError("DuckDB broker did not return the symbol column")
+        symbol_column = columns.index("symbol")
+        return sorted({str(row[symbol_column]) for row in payload.get("rows", [])})
+
     def query(self, sql: str, params: list[Any] | None = None) -> dict[str, Any]:
         body = json.dumps(
             {"sql": sql, "params": params or [], "db_type": "duckdb", "read_only": True}
         ).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["X-Database-Broker-Token"] = self.token
         request = Request(
             f"{self.broker_url}/query",
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                payload = json.load(response)
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise BrokerError(f"DuckDB broker query failed: {exc}") from exc
+        for attempt in range(6):
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    payload = json.load(response)
+                break
+            except HTTPError as exc:
+                if exc.code == 409 and attempt < 5:
+                    time.sleep(min(0.25 * (2**attempt), 4.0))
+                    continue
+                raise BrokerError(f"DuckDB broker query failed: {exc}") from exc
+            except (URLError, TimeoutError) as exc:
+                raise BrokerError(f"DuckDB broker query failed: {exc}") from exc
+        else:  # pragma: no cover - the loop always breaks or raises
+            raise BrokerError("DuckDB broker remained busy")
         if "detail" in payload:
             raise BrokerError(str(payload["detail"]))
         return payload
@@ -200,6 +251,17 @@ class BrokerBarSource:
     @staticmethod
     def _iso(value: str | date | datetime) -> str:
         return value if isinstance(value, str) else value.isoformat()
+
+    @staticmethod
+    def _as_datetime(value: str | date | datetime) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, date):
+            return datetime.combine(value, datetime.min.time())
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("date range must use ISO date or datetime values") from exc
 
 
 class DuckDBBarSource:
@@ -346,4 +408,27 @@ class DuckDBBarSource:
             params.append(limit)
         with duckdb.connect(self.database_path, read_only=True) as connection:
             return [str(row[0]) for row in connection.execute(query, params).fetchall()]
+
+
+def create_bar_source(
+    source: str,
+    timeout_seconds: float = 120.0,
+    broker_token: str | None = None,
+):
+    """Select the local read-only broker or a static DuckDB replica."""
+    value = str(source).strip()
+    if value.lower().startswith(("http://", "https://")):
+        return BrokerBarSource(
+            value, timeout_seconds=timeout_seconds, token=broker_token,
+        )
+    return DuckDBBarSource(value)
+
+
+def describe_bar_source(source: str) -> str:
+    value = str(source).strip()
+    if value.lower().startswith(("http://", "https://")):
+        return value.rstrip("/")
+    from pathlib import Path
+
+    return str(Path(value).expanduser().resolve())
 
