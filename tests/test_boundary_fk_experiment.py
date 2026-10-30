@@ -91,7 +91,7 @@ def test_experiment_reads_precomputed_data_without_opening_minute_source(
     monkeypatch.setattr(module, "BoundaryFlowPipeline", FakePipeline)
     monkeypatch.setattr(
         module,
-        "DuckDBBarSource",
+        "create_bar_source",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("minute source opened")),
     )
     args = SimpleNamespace(

@@ -29,6 +29,7 @@ from .data.source import (
     describe_bar_source,
 )
 from .storage import apply_migrations
+from .progress import start_progress, report_progress
 
 
 def _state_timeframes(mode: str) -> tuple[str, ...]:
@@ -287,6 +288,8 @@ def _train(args: argparse.Namespace) -> int:
 
 
 def _walk_forward(args: argparse.Namespace) -> int:
+    progress = start_progress(args.output_dir)
+    progress.update("starting", message="正在初始化本地模型与数据读取")
     import torch
 
     from .evaluation import (
@@ -323,7 +326,9 @@ def _walk_forward(args: argparse.Namespace) -> int:
         minimum_return_scale=args.minimum_return_scale_percent / 100.0,
         strong_threshold_sigma=args.strong_threshold_sigma,
     )
-    for symbol in symbols:
+    for symbol_index, symbol in enumerate(symbols):
+        progress.update("preparing_profiles", message=f"准备分钟样本 {symbol_index + 1} / {len(symbols)}：{symbol}",
+                        completed_units=symbol_index, total_units=len(symbols), unit="股票", current_symbol=symbol)
         bars = source.fetch(symbol, "1m", args.start, args.end)
         states = PriceVolumeProfileBuilder(profile_config).build(bars)
         if not states:
@@ -346,6 +351,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         }
     if not observations:
         raise ValueError("none of the requested symbols produced observations")
+    progress.update(completed_units=len(symbols), message="本地训练样本准备完成")
 
     sequence_config = SequenceConfig(
         length=args.sequence_length,
@@ -406,6 +412,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
         training_scope=args.training_scope,
         dataset_id=args.dataset_id,
     )
+    progress.update("evaluation", message="训练回测完成，汇总策略评估", completed_units=0, total_units=None)
     policy = DecisionPolicy(
         DecisionPolicyConfig(
             uncertainty_aversion=args.uncertainty_aversion,
@@ -534,6 +541,7 @@ def _walk_forward(args: argparse.Namespace) -> int:
     Path(args.output_dir, "run-summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    progress.update("completed", message="回测及报告已完成")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 

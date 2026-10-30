@@ -20,6 +20,7 @@ from .pipeline import BoundaryFlowPipeline, BoundaryFlowPipelineConfig
 from .reporting import write_json
 from .sector_state import SectorDailyStateBuilder
 from .types import TwoBranchDataset
+from ..progress import start_progress
 
 
 def run_boundary_flow_experiment(args: Any) -> None:
@@ -33,6 +34,8 @@ def run_boundary_flow_experiment(args: Any) -> None:
         raise ValueError("PathEfficiencyFK end must follow start")
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    progress = start_progress(output)
+    progress.update("loading_strategy_dataset", message="读取已保存的 FK 策略输入，不重新构建分钟样本")
     key = BoundaryDataCacheKey.from_source(
         dataset_id=args.dataset_id,
         source_path=args.duckdb_path,
@@ -46,6 +49,16 @@ def run_boundary_flow_experiment(args: Any) -> None:
         evaluation_start=start.isoformat(),
         evaluation_end=end.isoformat(),
     )
+    write_json(output / "strategy-dataset-used.json", {
+        "dataset_id": key.dataset_id,
+        "source_path": str(key.source_path),
+        "source_fingerprint": key.source_fingerprint,
+        "construction_version": key.construction_version,
+        "lookback_sessions": key.lookback_sessions,
+        "evaluation_start": args.start,
+        "evaluation_end_exclusive": args.end,
+        "run_mode": "reuse_only",
+    })
     result = BoundaryFlowPipeline(
         BoundaryFlowPipelineConfig(
             minimum_train_sessions=args.minimum_train_sessions,

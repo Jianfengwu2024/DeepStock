@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from bnhmm.data.source import (
+    BrokerError,
     BrokerBarSource,
     DuckDBBarSource,
     create_bar_source,
@@ -134,6 +135,20 @@ def test_broker_source_lists_symbols_and_factory_preserves_broker_url() -> None:
     )
 
 
+def test_broker_symbol_search_is_prefix_bounded_and_parameterized() -> None:
+    source = BrokerBarSource("http://127.0.0.1:9000/api/v1/db")
+    captured = {}
+
+    def query(sql, params=None):
+        captured.update(sql=sql, params=params)
+        return {"columns": ["symbol"], "rows": [["000001"], ["000002"]]}
+
+    source.query = query
+    assert source.list_symbols(2, q="000") == ["000001", "000002"]
+    assert "FROM stock_universe WHERE symbol LIKE ? ORDER BY symbol LIMIT ?" in captured["sql"]
+    assert captured["params"] == ["000%", 2]
+
+
 def test_broker_source_sends_database_token_without_putting_it_in_url() -> None:
     from unittest.mock import patch
 
@@ -173,6 +188,54 @@ def test_broker_query_retries_a_busy_read_pool():
         assert source.query("SELECT 1")["rows"] == [[1]]
     assert calls == 2
     sleep.assert_called_once_with(0.25)
+
+
+def test_broker_source_reports_read_pool_busy_detail():
+    import io
+    from urllib.error import HTTPError
+    from unittest.mock import patch
+
+    source = BrokerBarSource("http://127.0.0.1:9000/api/v1/db", busy_retries=0)
+    response = HTTPError(
+        "http://127.0.0.1:9000/api/v1/db/query", 409, "Conflict", {},
+        io.BytesIO(b'{"detail":"DuckDB connection pool is busy"}'),
+    )
+
+    with patch("bnhmm.data.source.urlopen", side_effect=response):
+        with pytest.raises(BrokerError, match="connection pool is busy"):
+            source.query("SELECT 1")
+
+
+def test_broker_fetch_many_scans_one_symbol_universe_range():
+    source = BrokerBarSource("http://127.0.0.1:9000/api/v1/db")
+    captured = {}
+
+    def query(sql, params=None):
+        captured.update(sql=sql, params=params)
+        if "FROM kline_coverage" in sql:
+            return {
+                "columns": ["symbol", "first_ts", "last_ts"],
+                "rows": [
+                    ["000001", "2020-01-01", "2025-01-01"],
+                    ["600000", "2020-01-01", "2025-01-01"],
+                ],
+            }
+        return {
+            "columns": ["symbol", "timestamp", "open", "high", "low", "close", "volume"],
+            "rows": [
+                ["000001", "2024-01-02T09:30:00", 10, 11, 9, 10, 100],
+                ["600000", "2024-01-02T09:30:00", 20, 21, 19, 20, 200],
+            ],
+        }
+
+    source.query = query
+    result = source.fetch_many(["000001", "600000"], "1m", "2024-01-01", "2025-01-01")
+
+    assert set(result) == {"000001", "600000"}
+    assert len(result["000001"]) == len(result["600000"]) == 1
+    assert "symbol IN (?,?)" in captured["sql"]
+    assert "ORDER BY" not in captured["sql"]
+    assert captured["params"] == ["000001", "600000", "2024-01-01T00:00:00", "2025-01-01T00:00:00"]
 
 
 def test_broker_bar_fetch_splits_large_ranges_into_half_open_months() -> None:

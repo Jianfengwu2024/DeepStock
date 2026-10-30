@@ -128,6 +128,24 @@ isolated Python 3.12 environment with CUDA 12.8 PyTorch, then start the local
 console with `start-local.ps1`. The console is intentionally not exposed to the
 public network.
 
+The local console has six sections: Data Service, Deep Strategy, Training
+Dashboard, Stock Pools, AI Configuration, and User Verification. Stock pools
+are stored in the ignored local state directory and can load symbols into a
+strategy run. The AI configuration accepts a free-form model name and can query
+an OpenAI-compatible `/models` endpoint. Provider settings are saved in this
+browser; the API key stays in the current browser session and is sent only
+when checking the provider.
+
+User Verification checks a Quant Platform account and the existing
+`fast_screener` entitlement before displaying the remote dataset catalog. The
+password is forwarded over HTTPS and discarded after login. Its access token
+stays in page memory and can be cleared from the verification page.
+
+After account verification, the Stock Pools page lists the signed-in user's
+saved AI screener pools from Quant Platform. Syncing a pool copies its symbols,
+description, run ID, and source pool ID into local state; syncing it again
+updates the existing local copy instead of creating duplicates.
+
 List the permission-filtered cloud catalog with `bnhmm-catalog list`. After a
 local visual dataset exporter completes successfully, an administrator can
 publish only its description and feature schema:
@@ -214,6 +232,51 @@ python -m bnhmm.web.app
 The Python entry point loads `.env` from the repository root automatically. Open
 `http://SERVER_IP:8765` when using the example port. The console is intended for
 the trusted local network and must not be exposed directly to the public internet.
+
+On the Windows research workstation, `start-local.ps1` points DeepStock at the
+local read-only market broker and the CUDA GPU. Create a stock pool, then use
+the Data Service page to materialize its selected `1m` through `1d` intervals
+into a separate local DuckDB dataset. Initial history backfill and the daily
+after-close refresh run in the background. Deep strategies select a ready local
+dataset and train from that file; the shared broker is never used as the model's
+training database.
+
+Completed FK runs open as an interactive research dashboard in Training Board.
+The evaluation overview contains gate status, return/drawdown metrics, monthly
+direction accuracy against its matched majority baseline, and signal counts.
+Returns are reconstructed from daily strategy returns minus turnover costs;
+the resettable internal trailing-stop equity is not used as cumulative NAV.
+Months without scored signals remain gaps. Charts open in a larger dialog;
+prediction tables support direction filtering, pagination, and point-in-time
+signal/holding details. Posterior intervals use a labelled normal approximation.
+Raw JSON stays available in collapsed details for audit. These views read only
+saved local artifacts and do not fetch market data or restart the market guardian.
+
+Training Board also displays a persisted task monitor: current phase, completed
+and remaining work, backtest percentage, elapsed time, and estimated remaining
+time for the current phase. FK reports completed prediction days; BNHMM reports
+completed walk-forward folds with the current stock, epoch, and batch. Estimates
+use measured completed work, remain unknown until the first unit finishes, and
+are hidden when progress has not updated for 30 seconds. The page polls every
+three seconds; final status and counts remain visible after completion or a
+page reload. A 100% backtest can still be followed by the report phase.
+
+The Data Service page keeps reusable FK inputs under **策略数据集**. Prepare and
+save these inputs explicitly before running a strategy. A repeated preparation
+request validates and reuses an unchanged dataset. Jobs never rebuild missing
+inputs: missing date coverage, changed source fingerprints, member universes,
+or construction versions require explicit preparation. Rebuilt variants archive
+their previous files and metadata. Market bars, strategy inputs, and run results
+remain separate local artifacts; a service restart rediscovers saved inputs.
+
+Completed FK runs can be published from Training Board with **发布到云端策略**
+after signing in on the User Verification page. Quant Platform stores the result
+under that account and displays it at Cloud Strategies → FK-贝叶斯. Publication
+is idempotent by local run ID. Cloud-created jobs return the same result format
+automatically, including measured progress, daily NAV/drawdown, direction
+probabilities, prediction history, and fold sample counts. The cloud receives
+only research results and run metadata; minute bars, model coefficients,
+checkpoints, dataset files, and local filesystem paths stay on the workstation.
 
 The server installation includes convenience scripts in the repository root:
 

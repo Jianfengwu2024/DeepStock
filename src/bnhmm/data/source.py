@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -18,7 +19,11 @@ from ..types import BarBatch
 
 _TABLES = {
     "1m": "kline_1m",
+    "5m": "kline_5m",
+    "15m": "kline_15m",
+    "30m": "kline_30m",
     "60m": "kline_60m",
+    "2h": "kline_2h",
     "1d": "kline_1d",
 }
 
@@ -84,9 +89,13 @@ class BrokerBarSource:
         broker_url: str,
         timeout_seconds: float = 120.0,
         token: str | None = None,
+        busy_retries: int = 5,
     ) -> None:
+        if busy_retries < 0:
+            raise ValueError("busy_retries cannot be negative")
         self.broker_url = broker_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.busy_retries = busy_retries
         self.token = token if token is not None else os.getenv(
             "BNHMM_MARKET_BROKER_TOKEN", os.getenv("QUANT_DB_BROKER_TOKEN", "")
         )
@@ -97,7 +106,11 @@ class BrokerBarSource:
         timeframe: str,
         start: str | date | datetime,
         end: str | date | datetime,
+        *,
+        dataset_id: str | None = None,
     ) -> BarBatch:
+        if dataset_id:
+            raise ValueError("broker datasets are not a training source; select the local materialized database")
         table = _TABLES.get(timeframe)
         if table is None:
             raise ValueError(f"unsupported timeframe: {timeframe}")
@@ -131,6 +144,53 @@ class BrokerBarSource:
             )
             cursor = chunk_end
         return BarBatch.from_records(symbol, records)
+
+    def fetch_many(
+        self,
+        symbols: list[str] | tuple[str, ...],
+        timeframe: str,
+        start: str | date | datetime,
+        end: str | date | datetime,
+    ) -> dict[str, BarBatch]:
+        """Fetch a bounded range for a whole universe with one broker scan."""
+        table = _TABLES.get(timeframe)
+        if table is None:
+            raise ValueError(f"unsupported timeframe: {timeframe}")
+        selected = list(dict.fromkeys(symbol.strip() for symbol in symbols if symbol.strip()))
+        if not selected or any(not re.fullmatch(r"[A-Za-z0-9._-]{1,24}", symbol) for symbol in selected):
+            raise ValueError("symbols must contain 1 or more valid securities")
+        lower, upper = self._as_datetime(start), self._as_datetime(end)
+        if upper <= lower:
+            raise ValueError("end must be later than start")
+        placeholders = ",".join("?" for _ in selected)
+        coverage = self.query(
+            "SELECT symbol,first_ts,last_ts FROM kline_coverage "
+            f"WHERE interval=? AND symbol IN ({placeholders}) AND last_ts>=? AND first_ts<?",
+            [timeframe, *selected, self._iso(lower), self._iso(upper)],
+        )
+        columns = coverage.get("columns", [])
+        positions = {name: columns.index(name) for name in ("symbol", "first_ts", "last_ts")}
+        eligible = {
+            str(row[positions["symbol"]])
+            for row in coverage.get("rows", [])
+        }
+        if not eligible:
+            return {symbol: BarBatch.empty(symbol) for symbol in selected}
+        selected = [symbol for symbol in selected if symbol in eligible]
+        placeholders = ",".join("?" for _ in selected)
+        payload = self.query(
+            f"SELECT symbol,timestamp,open,high,low,close,volume FROM {table} "
+            f"WHERE symbol IN ({placeholders}) AND timestamp>=? AND timestamp<? "
+            "AND COALESCE(paused,false)=false AND COALESCE(suspicious,false)=false",
+            [*selected, self._iso(lower), self._iso(upper)],
+        )
+        grouped = {symbol: [] for symbol in selected}
+        columns = payload.get("columns", [])
+        positions = {name: columns.index(name) for name in ("symbol", "timestamp", "open", "high", "low", "close", "volume")}
+        for row in payload.get("rows", []):
+            item = {name: self._decode(row[index]) for name, index in positions.items()}
+            grouped[str(item.pop("symbol"))].append(item)
+        return {symbol: BarBatch.from_records(symbol, records) for symbol, records in grouped.items()}
 
     def fetch_sector_index(
         self,
@@ -196,11 +256,15 @@ class BrokerBarSource:
         ]
         return _market_cap_records(records)
 
-    def list_symbols(self, limit: int | None = None) -> list[str]:
+    def list_symbols(self, limit: int | None = None, *, q: str | None = None) -> list[str]:
         if limit is not None and limit < 1:
             raise ValueError("limit must be positive")
-        query = "SELECT symbol FROM stock_universe ORDER BY symbol"
+        query = "SELECT symbol FROM stock_universe"
         params: list[Any] = []
+        if q:
+            query += " WHERE symbol LIKE ?"
+            params.append(q.upper() + "%")
+        query += " ORDER BY symbol"
         if limit is not None:
             query += " LIMIT ?"
             params.append(limit)
@@ -224,16 +288,23 @@ class BrokerBarSource:
             headers=headers,
             method="POST",
         )
-        for attempt in range(6):
+        for attempt in range(self.busy_retries + 1):
             try:
                 with urlopen(request, timeout=self.timeout_seconds) as response:
                     payload = json.load(response)
                 break
             except HTTPError as exc:
-                if exc.code == 409 and attempt < 5:
+                if exc.code == 409 and attempt < self.busy_retries:
                     time.sleep(min(0.25 * (2**attempt), 4.0))
                     continue
-                raise BrokerError(f"DuckDB broker query failed: {exc}") from exc
+                try:
+                    response = json.load(exc)
+                    detail = response.get("detail", exc.reason) if isinstance(response, dict) else exc.reason
+                except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                    detail = exc.reason
+                raise BrokerError(
+                    f"DuckDB broker query failed (HTTP {exc.code}): {detail}"
+                ) from exc
             except (URLError, TimeoutError) as exc:
                 raise BrokerError(f"DuckDB broker query failed: {exc}") from exc
         else:  # pragma: no cover - the loop always breaks or raises
@@ -278,6 +349,8 @@ class DuckDBBarSource:
         timeframe: str,
         start: str | date | datetime,
         end: str | date | datetime,
+        *,
+        dataset_id: str | None = None,
     ) -> BarBatch:
         table = _TABLES.get(timeframe)
         if table is None:
@@ -289,6 +362,12 @@ class DuckDBBarSource:
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError("DuckDBBarSource requires the 'data' extra") from exc
 
+        if dataset_id:
+            from pathlib import Path
+
+            if Path(self.database_path).stem != dataset_id:
+                raise ValueError("the selected local dataset does not match the database file")
+
         query = (
             f"SELECT timestamp, open, high, low, close, volume FROM {table} "
             "WHERE symbol = ? AND timestamp >= ? AND timestamp < ? "
@@ -296,12 +375,49 @@ class DuckDBBarSource:
             "AND COALESCE(suspicious, false) = false ORDER BY timestamp"
         )
         with duckdb.connect(self.database_path, read_only=True) as connection:
+            if dataset_id:
+                exists = connection.execute(
+                    "SELECT count(*) FROM information_schema.tables WHERE table_schema='main' AND table_name=?",
+                    [table],
+                ).fetchone()[0]
+                if not exists:
+                    raise ValueError(f"selected local dataset is missing the {timeframe} table")
             rows = connection.execute(
                 query,
                 [symbol, BrokerBarSource._iso(start), BrokerBarSource._iso(end)],
             ).fetchall()
         columns = ("timestamp", "open", "high", "low", "close", "volume")
         return BarBatch.from_records(symbol, (dict(zip(columns, row)) for row in rows))
+
+    def fetch_many(
+        self,
+        symbols: list[str] | tuple[str, ...],
+        timeframe: str,
+        start: str | date | datetime,
+        end: str | date | datetime,
+    ) -> dict[str, BarBatch]:
+        table = _TABLES.get(timeframe)
+        if table is None:
+            raise ValueError(f"unsupported timeframe: {timeframe}")
+        selected = list(dict.fromkeys(symbol.strip() for symbol in symbols if symbol.strip()))
+        if not selected or any(not re.fullmatch(r"[A-Za-z0-9._-]{1,24}", symbol) for symbol in selected):
+            raise ValueError("symbols must contain 1 or more valid securities")
+        try:
+            import duckdb
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("DuckDBBarSource requires the 'data' extra") from exc
+        placeholders = ",".join("?" for _ in selected)
+        with duckdb.connect(self.database_path, read_only=True) as connection:
+            rows = connection.execute(
+                f"SELECT symbol,timestamp,open,high,low,close,volume FROM {table} "
+                f"WHERE symbol IN ({placeholders}) AND timestamp>=? AND timestamp<? "
+                "AND COALESCE(paused,false)=false AND COALESCE(suspicious,false)=false",
+                [*selected, BrokerBarSource._iso(start), BrokerBarSource._iso(end)],
+            ).fetchall()
+        grouped = {symbol: [] for symbol in selected}
+        for row in rows:
+            grouped[str(row[0])].append(dict(zip(("timestamp", "open", "high", "low", "close", "volume"), row[1:])))
+        return {symbol: BarBatch.from_records(symbol, records) for symbol, records in grouped.items()}
 
     def fetch_sector_index(
         self,
@@ -394,15 +510,19 @@ class DuckDBBarSource:
         columns = ("symbol", "session", "circ_mv")
         return _market_cap_records([dict(zip(columns, row)) for row in rows])
 
-    def list_symbols(self, limit: int | None = None) -> list[str]:
+    def list_symbols(self, limit: int | None = None, *, q: str | None = None) -> list[str]:
         if limit is not None and limit < 1:
             raise ValueError("limit must be positive")
         try:
             import duckdb
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError("DuckDBBarSource requires the 'data' extra") from exc
-        query = "SELECT DISTINCT symbol FROM kline_1m ORDER BY symbol"
-        params: list[int] = []
+        query = "SELECT symbol FROM stock_universe"
+        params: list[Any] = []
+        if q:
+            query += " WHERE symbol LIKE ?"
+            params.append(q.upper() + "%")
+        query += " ORDER BY symbol"
         if limit is not None:
             query += " LIMIT ?"
             params.append(limit)
@@ -414,12 +534,13 @@ def create_bar_source(
     source: str,
     timeout_seconds: float = 120.0,
     broker_token: str | None = None,
+    busy_retries: int = 5,
 ):
     """Select the local read-only broker or a static DuckDB replica."""
     value = str(source).strip()
     if value.lower().startswith(("http://", "https://")):
         return BrokerBarSource(
-            value, timeout_seconds=timeout_seconds, token=broker_token,
+            value, timeout_seconds=timeout_seconds, token=broker_token, busy_retries=busy_retries,
         )
     return DuckDBBarSource(value)
 

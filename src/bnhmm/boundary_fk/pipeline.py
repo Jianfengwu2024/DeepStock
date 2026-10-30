@@ -7,6 +7,7 @@ from math import ceil
 from pathlib import Path
 
 import numpy as np
+from ..progress import start_progress
 
 from .branch_model import (
     BayesianBranchModel,
@@ -202,6 +203,8 @@ class BoundaryFlowPipeline:
             raise ValueError("whole-sector FK data must contain exactly one state stream")
         root = Path(output_directory)
         root.mkdir(parents=True, exist_ok=True)
+        progress = start_progress(root)
+        progress.update("loading_strategy_dataset", message="读取持久化策略数据，检查回测区间")
         folds = self._mature_monthly_folds(data)
         if not folds:
             raise ValueError("no monthly fold has enough mature whole-sector history")
@@ -243,7 +246,14 @@ class BoundaryFlowPipeline:
             convection_potential_features(data, 0)
         )
 
+        total_folds = len(folds)
+        total_predictions = sum(int(np.sum(data.labels.valid[rows, 0] & potential_valid[rows])) for _, _, _, rows in folds)
+        completed_predictions = 0
+        progress.update("walk_forward", message="开始 FK 样本外回测", completed_units=0,
+                        total_units=total_predictions, unit="交易日", completed_folds=0, total_folds=total_folds)
         for fold_index, test_start, _, test_rows in folds:
+            progress.update(message=f"训练第 {fold_index + 1} / {total_folds} 月度折", current_fold=fold_index+1,
+                            fold_month=str(test_start.astype("datetime64[M]")), activity="拟合贝叶斯后验")
             cutoff = test_start - np.timedelta64(1, "ns")
             posteriors: dict[str, BayesianBranchPosterior] = {}
             hurdle_posteriors: dict[str, BayesianHurdlePosterior] = {}
@@ -429,9 +439,15 @@ class BoundaryFlowPipeline:
                             strength_scores=strength_scores,
                         )
                     )
+                completed_predictions += 1
+                progress.update(force=False, completed_units=completed_predictions, activity="样本外预测与执行回放",
+                                message=f"FK 已回测 {completed_predictions} / {total_predictions} 个交易日",
+                                signal_date=str(data.states.sessions[row]), completed_folds=fold_index)
+            progress.update(completed_folds=fold_index+1, completed_units=completed_predictions)
 
         if any(not observations for observations in observations_by_model.values()):
             raise ValueError("whole-sector FK produced no sample-out predictions")
+        progress.update("evaluation", message="回测结束，正在汇总评估与结果文件", completed_units=0, total_units=None)
         evaluation_config = BoundaryEvaluationConfig(
             transaction_cost_bps=self.config.transaction_cost_bps
         )
@@ -497,6 +513,8 @@ class BoundaryFlowPipeline:
         self._write_sector_report(
             root / "path-efficiency-fk-report.md", direction_report
         )
+        progress.update("completed", message="FK 回测完成", completed_units=total_predictions,
+                        total_units=total_predictions, completed_folds=total_folds, total_folds=total_folds)
         return BoundaryFlowRunResult(SECTOR_MODEL_NAMES, stages)
 
     @staticmethod

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,6 +92,37 @@ class BoundaryDataCache:
         dataset_root = self.root / key.dataset_id
         dataset_root.mkdir(parents=True, exist_ok=True)
         destination = dataset_root / f"lookback-{key.lookback_sessions}.npz"
+        # Keep previous inputs alongside their matching manifest before an
+        # explicit refresh replaces the current reusable dataset. Byte-identical
+        # requests reuse the existing version instead of growing duplicate history.
+        manifest_path = dataset_root / "manifest.json"
+        archived_entry = None
+        if destination.is_file() and manifest_path.is_file():
+            try:
+                current = self.status(key.dataset_id)
+            except BoundaryDataCacheMiss:
+                current = {}
+            previous_entry = next(
+                (item for item in current.get("variants", []) if isinstance(item, dict) and item.get("lookback_sessions") == key.lookback_sessions),
+                None,
+            )
+            changed = previous_entry is not None and any(
+                previous_entry.get(field) != value
+                for field, value in (
+                    ("source_fingerprint", key.source_fingerprint),
+                    ("construction_version", key.construction_version),
+                    ("symbols", list(key.symbols)), ("start", key.start), ("end", key.end),
+                )
+            )
+            if changed:
+                version_root = dataset_root / "versions" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                version_root.mkdir(parents=True)
+                shutil.copy2(destination, version_root / destination.name)
+                archived_entry = {
+                    **previous_entry, "status": "archived",
+                    "file": str(Path("versions") / version_root.name / destination.name),
+                    "archived_at": datetime.now(timezone.utc).isoformat(),
+                }
         temporary = destination.with_suffix(".npz.tmp")
         with temporary.open("wb") as stream:
             np.savez_compressed(
@@ -122,7 +154,7 @@ class BoundaryDataCache:
                 convection_observations=data.convection_observations,
             )
         os.replace(temporary, destination)
-        self._update_manifest(key, destination, data)
+        self._update_manifest(key, destination, data, archived_entry=archived_entry)
         return destination
 
     def load(
@@ -132,6 +164,13 @@ class BoundaryDataCache:
         evaluation_start: str | np.datetime64 | None = None,
         evaluation_end: str | np.datetime64 | None = None,
     ) -> TwoBranchDataset:
+        entry = self.inspect(key)
+        path = self.root / key.dataset_id / str(entry["file"])
+        with np.load(path, allow_pickle=False) as payload:
+            return self._dataset_from_payload(payload, evaluation_start, evaluation_end)
+
+    def inspect(self, key: BoundaryDataCacheKey) -> dict[str, Any]:
+        """Validate reusable input metadata without reading/rebuilding minutes."""
         entry = self._entry(key)
         if entry.get("source_fingerprint") != key.source_fingerprint:
             raise BoundaryDataCacheMiss("cached source fingerprint is stale")
@@ -142,9 +181,15 @@ class BoundaryDataCache:
         if entry.get("start", "9999-12-31") > key.start or entry.get("end", "0001-01-01") < key.end:
             raise BoundaryDataCacheMiss("cached date range does not cover the request")
         path = self.root / key.dataset_id / str(entry["file"])
+        dataset_root = (self.root / key.dataset_id).resolve()
+        if not path.resolve().is_relative_to(dataset_root):
+            raise BoundaryDataCacheMiss("cached data file must stay within dataset directory")
         if not path.is_file():
             raise BoundaryDataCacheMiss(f"cached data file is missing: {path}")
-        with np.load(path, allow_pickle=False) as payload:
+        return dict(entry)
+
+    @staticmethod
+    def _dataset_from_payload(payload, evaluation_start, evaluation_end) -> TwoBranchDataset:
             states = TwoBranchDailyStates(
                 sessions=payload["states_sessions"].copy(),
                 topology_months=payload["states_topology_months"].copy(),
@@ -190,7 +235,13 @@ class BoundaryDataCache:
         path = self.root / dataset_id / "manifest.json"
         if not path.is_file():
             return {"dataset_id": dataset_id, "variants": []}
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BoundaryDataCacheMiss("cached manifest is unreadable") from exc
+        if not isinstance(payload, dict):
+            raise BoundaryDataCacheMiss("cached manifest must be an object")
+        return payload
 
     def _entry(self, key: BoundaryDataCacheKey) -> dict[str, Any]:
         manifest = self.status(key.dataset_id)
@@ -199,7 +250,7 @@ class BoundaryDataCache:
         if manifest.get("anchor_protocol") != ANCHOR_PROTOCOL:
             raise BoundaryDataCacheMiss("cached anchor protocol is stale")
         for entry in manifest.get("variants", []):
-            if entry.get("lookback_sessions") == key.lookback_sessions:
+            if isinstance(entry, dict) and entry.get("lookback_sessions") == key.lookback_sessions and entry.get("status") == "ready":
                 return entry
         raise BoundaryDataCacheMiss(
             f"precomputed {key.lookback_sessions}-session data is not ready"
@@ -210,10 +261,15 @@ class BoundaryDataCache:
         key: BoundaryDataCacheKey,
         destination: Path,
         data: TwoBranchDataset,
+        *,
+        archived_entry: dict[str, Any] | None = None,
     ) -> None:
         dataset_root = destination.parent
         path = dataset_root / "manifest.json"
         current = self.status(key.dataset_id)
+        history = [item for item in current.get("history", []) if isinstance(item, dict)]
+        if archived_entry is not None:
+            history.append(archived_entry)
         variants = [
             item
             for item in current.get("variants", [])
@@ -241,6 +297,7 @@ class BoundaryDataCache:
             "anchor_protocol": ANCHOR_PROTOCOL,
             "dataset_id": key.dataset_id,
             "variants": sorted(variants, key=lambda item: item["lookback_sessions"]),
+            "history": history,
         }
         temporary = path.with_suffix(".json.tmp")
         temporary.write_text(

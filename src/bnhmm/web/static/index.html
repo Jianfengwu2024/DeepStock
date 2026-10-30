@@ -4,11 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeepStock Lab</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.29.2">
+  <link rel="stylesheet" href="/static/styles.css?v=0.33.0">
 </head>
 <body>
   <div class="app-shell">
-    <aside class="config-panel" id="config-panel">
+    <header class="app-topbar">
+      <a class="brand-lockup" href="#data"><span class="brand-mark">DS</span><span><strong>DeepStock</strong><small>本地研究平台</small></span></a>
+      <nav class="primary-nav" aria-label="主导航">
+        <button data-page="data">数据服务</button><button data-page="strategy">深度策略</button>
+        <button data-page="training">训练看板</button><button data-page="pools">股票池</button>
+        <button data-page="ai">AI配置</button><button data-page="verification">用户验证</button>
+      </nav>
+      <div class="topbar-status"><span class="status-dot"></span><span id="global-status">本机</span></div>
+    </header>
+    <main class="page-section data-page hidden" data-page-panel="data">
+      <header class="page-heading"><div><h1>数据服务</h1><p>行情读取、GPU 设备与本地数据集</p></div><button class="icon-button" type="button" id="data-refresh" title="刷新数据服务状态">↻</button></header>
+      <div class="service-strip" id="service-strip"><span class="status-light"></span><strong>正在检查数据连接</strong><span id="service-source"></span></div>
+      <div class="data-overview">
+        <section class="plain-section"><div class="section-head"><h2>行情连接</h2><span id="service-readonly">只读</span></div><dl class="detail-list"><div><dt>数据源</dt><dd id="data-source-value">-</dd></div><div><dt>连接状态</dt><dd id="data-source-status">检查中</dd></div><div><dt>最后检查</dt><dd id="data-checked-at">-</dd></div><div><dt>本地行情数据集</dt><dd id="data-dataset-count">-</dd></div></dl><button class="secondary-button" id="service-check" type="button">检查连接</button></section>
+        <section class="plain-section"><div class="section-head"><h2>计算设备</h2><span>本机</span></div><div id="device-list" class="device-list"><span class="muted">正在读取设备</span></div></section>
+      </div>
+      <section class="plain-section dataset-section"><div class="section-head"><div><h2>本地行情数据集</h2><span id="market-dataset-count">0</span></div></div><form id="market-dataset-form" class="market-dataset-form"><label>数据集名称<input name="name" maxlength="80" required placeholder="例如：自选股分钟与日线"></label><label>从股票池创建<select name="stock_pool_id" id="market-dataset-pool" required><option value="">选择本地股票池</option></select></label><label>起始日期<input name="start_date" type="date" value="2020-01-01" required></label><fieldset><legend>K 线周期</legend><label><input type="checkbox" name="intervals" value="1m" checked>1 分钟</label><label><input type="checkbox" name="intervals" value="5m" checked>5 分钟</label><label><input type="checkbox" name="intervals" value="15m" checked>15 分钟</label><label><input type="checkbox" name="intervals" value="30m" checked>30 分钟</label><label><input type="checkbox" name="intervals" value="60m" checked>60 分钟</label><label><input type="checkbox" name="intervals" value="2h">2 小时</label><label><input type="checkbox" name="intervals" value="1d" checked>日线</label></fieldset><button class="primary-button" type="submit">创建并初始化行情数据</button><span id="market-dataset-form-status" class="inline-status" role="status"></span></form><div id="market-datasets" class="dataset-list"></div></section>
+      <section class="plain-section dataset-section"><div class="section-head"><div><h2>本地板块数据集</h2><span id="sector-dataset-count">0</span></div><a class="text-link" href="/visual-dataset" target="_blank" rel="noreferrer">可视化数据集 ↗</a></div><div id="sector-datasets" class="dataset-list"></div></section>
+      <section class="plain-section dataset-section"><div class="section-head"><div><h2>策略数据集</h2><span id="strategy-dataset-count">0</span></div></div><div id="strategy-datasets" class="dataset-list"><div class="empty-state">正在读取策略预计算数据</div></div></section>
+      <section class="plain-section dataset-section"><div class="section-head"><div><h2>云端数据目录</h2><span id="cloud-dataset-count">需要验证</span></div><button class="secondary-button" id="cloud-catalog-refresh" type="button" disabled>刷新目录</button></div><div id="cloud-datasets" class="dataset-list"><div class="empty-state">验证 Quant Platform 账号和访问资格后查看</div></div></section>
+    </main>
+    <aside class="config-panel page-section hidden" id="config-panel" data-page-panel="strategy">
+      <header class="page-heading"><div><h1>深度策略</h1><p>配置策略与样本外训练，任务在本机执行</p></div><button class="secondary-button" id="open-training" type="button">查看训练看板 →</button></header>
       <header class="brand-row"><div><div class="brand">DeepStock Lab</div><div class="brand-sub">严格样本外模型实验</div></div></header>
       <form id="experiment-form">
         <section class="form-section">
@@ -18,9 +40,11 @@
             <label><input type="radio" name="strategy" value="boundary-flow-fk"><span>FK-贝叶斯</span></label>
           </div>
           <label>测试名称<input name="name" required maxlength="64"></label>
-          <label id="dataset-field">板块数据集<select name="dataset_id" id="dataset-select"></select></label>
+          <label id="dataset-field">本地行情数据集<select name="market_dataset_id" id="dataset-select" required></select></label>
+          <div id="strategy-data-warning" class="dataset-warning hidden"><span id="strategy-data-warning-text"></span><button class="secondary-button" id="strategy-data-open" type="button">配置本地数据</button></div>
           <div class="dataset-summary" id="dataset-summary"></div>
-          <label>数据文件<input name="database_path" required></label>
+          <label>行情数据源<input name="database_path" required></label>
+          <div id="strategy-pool-field"><label>从股票池加载<select id="strategy-pool"><option value="">选择股票池</option></select></label><button class="secondary-button" id="strategy-pool-apply" type="button">加载标的</button></div>
           <label>股票代码<textarea name="symbols" rows="3" required spellcheck="false"></textarea></label>
           <div class="two-columns">
             <label>开始日期<input name="start" type="date" required></label>
@@ -51,8 +75,8 @@
         <section class="form-section hidden" id="boundary-fields">
           <h2>FK-贝叶斯配置</h2>
           <div class="data-status">
-            <div><strong>60日连续扩散数据</strong><span id="boundary-data-status">尚未检查</span></div>
-            <button class="secondary-button" type="button" id="boundary-data-build">重建数据</button>
+            <div><strong>60日连续扩散策略数据集</strong><span id="boundary-data-status">尚未检查</span></div>
+            <button class="secondary-button" type="button" id="boundary-data-build">构建并保存</button>
           </div>
           <div class="fixed-spec"><span>价格锚点</span><strong>窗口前一交易日收盘，60日内不重置</strong></div>
           <div class="fixed-spec"><span>交易规则</span><strong>看多：全仓买入最强前 1/2；看平：每次减总资产的 1/4；看空：立即全部清仓</strong></div>
@@ -73,10 +97,10 @@
         <div class="form-actions"><button class="primary-button" type="submit" id="run-button">开始测试</button><div id="form-error" class="form-error" role="alert"></div></div>
       </form>
     </aside>
-    <main class="workspace">
+    <main class="workspace page-section hidden" data-page-panel="training">
       <header class="workspace-header">
-        <div><h1>样本外测试</h1><p id="job-subtitle">选择历史任务或开始新实验</p></div>
-        <div class="header-actions"><span class="gpu-monitor" id="gpu-monitor"></span><span class="status-badge" id="global-status">空闲</span><button class="icon-button" type="button" id="refresh-button" title="刷新">↻</button></div>
+        <div><h1>训练看板</h1><p id="job-subtitle">选择历史任务或开始新实验</p></div>
+        <div class="header-actions"><span class="gpu-monitor" id="gpu-monitor"></span><span class="status-badge" id="training-status">空闲</span><button class="icon-button" type="button" id="refresh-button" title="刷新">↻</button></div>
       </header>
       <div class="work-grid">
         <section class="run-history">
@@ -87,8 +111,12 @@
         <section class="result-area">
           <div class="empty-state" id="empty-state">选择一个历史测试查看结果</div>
           <div id="job-view" class="job-view hidden">
-            <header class="run-header"><div><h2 id="run-title"></h2><div id="run-meta" class="run-meta"></div></div><button class="danger-button hidden" id="cancel-button" type="button">终止</button></header>
-            <div class="progress-band hidden" id="progress-band"><div><strong id="progress-label">任务运行中</strong><span id="elapsed-time"></span></div><progress id="progress-value" max="100" value="0"></progress></div>
+            <header class="run-header"><div><h2 id="run-title"></h2><div id="run-meta" class="run-meta"></div></div><div class="button-row"><button class="secondary-button hidden" id="publish-cloud-button" type="button">发布到云端策略</button><button class="danger-button hidden" id="cancel-button" type="button">终止</button></div></header><p id="publish-cloud-status" class="inline-status" role="status"></p>
+            <section class="progress-band task-monitor hidden" id="progress-band" aria-label="任务状态监控">
+              <header><div><span class="monitor-kicker">运行状态监控</span><strong id="progress-label">等待进度</strong><p id="monitor-message"></p></div><span class="monitor-heartbeat" id="monitor-freshness">等待首次上报</span></header>
+              <div class="monitor-stats"><div><span id="monitor-percent-label">回测进度</span><strong id="monitor-percent">统计中</strong></div><div><span>已完成 / 总量</span><strong id="monitor-completed">尚未确定</strong></div><div><span>剩余</span><strong id="monitor-remaining">尚未确定</strong></div><div><span>已耗时</span><strong id="elapsed-time">0 秒</strong></div><div><span>预计剩余 · 当前阶段</span><strong id="monitor-eta">估算中</strong></div></div>
+              <progress id="progress-value" max="100"></progress><p class="monitor-detail" id="monitor-detail"></p><small id="monitor-eta-note">完成首个工作单元后估算</small>
+            </section>
             <nav class="result-tabs" id="result-tabs">
               <button data-tab="evaluation" class="active">策略评估</button><button data-tab="predictions">样本外预测</button><button data-tab="posterior">模型后验</button><button data-tab="returns">收益分析</button><button data-tab="residuals">残差分析</button><button data-tab="summary">运行摘要</button><button data-tab="logs">日志</button>
             </nav>
@@ -103,7 +131,24 @@
         </section>
       </div>
     </main>
+    <main class="page-section hidden" data-page-panel="pools">
+      <header class="page-heading"><div><h1>股票池</h1><p>联动线上 AI 选股结果，或手工维护本机研究标的</p></div><button class="secondary-button" id="pool-create" type="button">新建股票池</button></header>
+      <section class="plain-section quant-pool-section"><div class="section-head"><div><h2>Quant Platform 用户自选股</h2><span id="quant-watchlist-count">请先验证账号</span></div><button class="secondary-button" id="quant-watchlist-sync" type="button" disabled>刷新并同步自选股</button></div><div id="quant-watchlist-status" class="inline-status" role="status"></div></section>
+      <section class="plain-section quant-pool-section"><div class="section-head"><div><h2>Quant Platform AI 选股</h2><span id="quant-pool-count">请先验证账号</span></div><div class="button-row"><button class="secondary-button" id="quant-pool-refresh" type="button" disabled>刷新线上结果</button><button class="secondary-button" id="quant-pool-sync-all" type="button" disabled>同步全部</button></div></div><div id="quant-pool-list" class="quant-pool-list"><div class="empty-state">验证账号后查看自己的线上 AI 选股结果</div></div></section>
+      <div class="pool-workspace"><nav id="pool-list" class="pool-list" aria-label="股票池列表"></nav><section class="pool-detail"><header class="section-head"><div><h2 id="pool-title">选择股票池</h2><span id="pool-count">0 只</span><small id="pool-origin">手工股票池</small></div><button class="danger-button" id="pool-delete" type="button" disabled>删除股票池</button></header><div id="pool-description" class="pool-description hidden"></div><form id="pool-symbol-form" class="pool-add-form"><label>添加证券代码<input id="pool-symbol-input" name="symbol" list="stock-symbol-options" maxlength="24" placeholder="输入代码查询，如 000001" required><datalist id="stock-symbol-options"></datalist></label><button class="primary-button" type="submit" disabled>添加</button></form><div id="pool-symbols" class="pool-symbols"><div class="empty-state">选择或新建一个股票池</div></div><p class="form-error" id="pool-error" role="status"></p></section></div>
+      <dialog id="pool-dialog" class="compact-dialog"><form id="pool-create-form"><h2>新建股票池</h2><label>名称<input name="name" required maxlength="80" autofocus></label><p id="pool-create-error" class="form-error" role="alert"></p><div class="button-row"><button class="secondary-button" id="pool-create-cancel" type="button">取消</button><button class="primary-button" type="submit">创建</button></div></form></dialog>
+    </main>
+    <main class="page-section hidden" data-page-panel="ai">
+      <header class="page-heading"><div><h1>AI 配置</h1><p>OpenAI 兼容服务；模型名称可自定义</p></div></header>
+      <section class="settings-form"><form id="ai-form"><label>服务商<input name="provider" maxlength="80" placeholder="自定义服务商名称"></label><label>API 地址<input name="base_url" type="url" required placeholder="https://api.example.com/v1"></label><label>模型名称<input name="model" list="ai-model-options" required maxlength="160" placeholder="手动输入当前模型名"><datalist id="ai-model-options"></datalist></label><label>API 密钥<input name="api_key" type="password" autocomplete="new-password" required placeholder="仅保存于当前浏览器会话"></label><div class="button-row"><button class="primary-button" id="ai-save" type="button">保存配置</button><button class="secondary-button" id="ai-test" type="button">检查服务并读取模型</button></div><div id="ai-status" class="inline-status" role="status"></div></form></section>
+    </main>
+    <main class="page-section hidden" data-page-panel="verification">
+      <header class="page-heading"><div><h1>用户验证</h1><p>使用 Quant Platform 账号验证 DeepStock 访问资格</p></div></header>
+      <div class="verification-layout"><form id="verification-form" class="settings-form"><div id="verification-login-fields"><label>Quant Platform 用户名<input name="username" autocomplete="username" required maxlength="128"></label><label>密码<input name="password" type="password" autocomplete="current-password" required maxlength="256"></label><button class="primary-button" type="submit">登录 Quant Platform</button></div><div id="verification-status" class="inline-status" role="status"></div></form><section class="verification-result"><div class="section-head"><h2>在线账户</h2><button class="secondary-button" id="verification-clear" type="button" disabled>退出登录</button></div><div id="verification-result"><span class="status-light status-neutral"></span><span>未登录</span></div><div id="verification-permissions" class="permission-row hidden"></div><p id="cloud-fk-worker-status" class="cloud-fk-worker-status">本机策略 worker 未连接</p><p>账号登录状态与 DeepStock 数据目录权限分别显示。密码不会保存；登录令牌仅保存在当前浏览器标签页会话内。</p></section></div>
+    </main>
   </div>
-  <script src="/static/app.js?v=0.29.2"></script>
+  <script src="/static/progress-ui.js?v=0.34.1"></script>
+  <script src="/static/dashboard.js?v=0.33.0"></script>
+  <script src="/static/app.js?v=0.35.0"></script>
 </body>
 </html>

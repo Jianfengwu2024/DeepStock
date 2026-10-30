@@ -8,6 +8,23 @@ ROOT = Path(__file__).parents[1] / "src" / "bnhmm" / "web" / "static"
 
 
 class SectorFlowStaticContractTests(unittest.TestCase):
+    def test_six_primary_pages_are_exposed_with_feature_ownership(self) -> None:
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "app.js").read_text(encoding="utf-8")
+        for page in ("data", "strategy", "training", "pools", "ai", "verification"):
+            self.assertIn(f'data-page="{page}"', html)
+            self.assertIn(f'data-page-panel="{page}"', html)
+        self.assertIn('id="pool-symbol-form"', html)
+        self.assertIn('id="ai-test"', html)
+        self.assertIn('name="model" list="ai-model-options"', html)
+        self.assertIn('id="verification-form"', html)
+        self.assertIn("本地行情数据集</dt>", html)
+        self.assertIn('id="cloud-datasets"', html)
+        self.assertIn('id="quant-pool-list"', html)
+        self.assertIn('id="quant-pool-sync-all"', html)
+        self.assertIn('data-quant-sync', script)
+        self.assertIn("function setPage(page)", script)
+
     def test_strategy_selector_contains_only_bnhmm_and_bayesian_fk(self) -> None:
         html = (ROOT / "index.html").read_text(encoding="utf-8")
 
@@ -104,11 +121,20 @@ class SectorFlowStaticContractTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('/static/app.js?v=0.29.2', html)
-        self.assertIn('/static/styles.css?v=0.29.2', html)
+        self.assertIn('/static/app.js?v=0.35.0', html)
+        self.assertIn('/static/styles.css?v=0.33.0', html)
+        self.assertIn('/static/dashboard.js?v=0.33.0', html)
+        self.assertLess(html.index('/static/dashboard.js'), html.index('/static/app.js'))
         self.assertIn('value="boundary-flow-fk"', html)
         self.assertIn('id="boundary-data-build"', html)
         self.assertIn('id="boundary-data-status"', html)
+        self.assertIn('id="strategy-datasets"', html)
+        self.assertIn('/api/strategy-datasets', script)
+        self.assertIn("构建并保存", html)
+        self.assertIn('id="monitor-percent"', html)
+        self.assertIn('id="monitor-remaining"', html)
+        self.assertIn('id="monitor-eta"', html)
+        self.assertIn('/static/progress-ui.js', html)
         self.assertIn("窗口前一交易日收盘，60日内不重置", html)
         for field in (
             "boundary_fk_paths",
@@ -136,10 +162,12 @@ class SectorFlowStaticContractTests(unittest.TestCase):
     def test_fk_dataset_switch_uses_catalog_dates_and_nested_cache_status(self) -> None:
         script = (ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('const start = (dataset.data_start || dataset.start || "").slice(0, 10);', script)
-        self.assertIn('const end = (dataset.data_end || dataset.end || "").slice(0, 10);', script)
-        self.assertIn('const variants = result.cache?.variants || result.variants || [];', script)
-        self.assertIn('if (kind === "boundary-flow-fk") applyDataset();', script)
+        self.assertIn("const start = dataset.start_date;", script)
+        self.assertIn("dataset.last_refresh_date || dataset.start_date", script)
+        self.assertIn("market_dataset_id", script)
+        self.assertIn('/api/market-datasets', script)
+        self.assertIn('state.boundaryReady = result.status === "ready";', script)
+        self.assertIn('syncStrategyControlAvailability();\n  applyDataset();', script)
         self.assertIn('start: $(\'[name="start"]\').value,', script)
         self.assertIn('end: $(\'[name="end"]\').value,', script)
 

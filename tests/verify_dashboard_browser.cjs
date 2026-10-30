@@ -1,0 +1,70 @@
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const fs = require('node:fs');
+const { chromium } = require('C:/Users/Admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+
+(async () => {
+  const browser = await chromium.launch({channel:'msedge',headless:true});
+  try {
+    const page = await browser.newPage({viewport:{width:1540,height:1080}});
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto('http://127.0.0.1:8765/#training',{waitUntil:'domcontentloaded'});
+    await page.waitForFunction(() => document.querySelectorAll('#evaluation-content .dash-metric').length >= 4,null,{timeout:15000});
+    assert.equal(await page.locator('#evaluation-content .dash-gate').count(),1);
+    assert.equal(await page.locator('#evaluation-content svg').count(),3);
+    const texts = await page.locator('#evaluation-content .dash-metric').allTextContents();
+    assert.ok(texts.some(t=>t.includes('35.97%')));
+    assert.ok(texts.some(t=>t.includes('22.45%')));
+    assert.ok(texts.some(t=>t.includes('53.57%')));
+    assert.equal(await page.locator('#evaluation-content > pre').count(),0);
+    await page.locator('#evaluation-content svg [data-chart-tip]').nth(60).hover();
+    await page.locator('#research-chart-tooltip').waitFor({state:'visible'});
+    assert.ok((await page.locator('#research-chart-tooltip').textContent()).includes('策略净值'));
+    assert.ok((await page.locator('#research-chart-tooltip').textContent()).includes('\n'));
+    await page.mouse.move(0,0);
+    const output = path.resolve('local-state/validation');
+    fs.mkdirSync(output,{recursive:true});
+    await page.screenshot({path:path.join(output,'training-dashboard-desktop.png'),fullPage:true});
+    await page.locator('#evaluation-content .chart-expand').first().click();
+    await page.locator('#chart-detail-dialog[open]').waitFor();
+    assert.equal(await page.locator('#chart-detail-dialog svg').count(),1);
+    await page.screenshot({path:path.join(output,'training-dashboard-expanded.png')});
+    await page.keyboard.press('Escape');
+    await page.locator('[data-tab="predictions"]').click();
+    assert.equal(await page.locator('#predictions-content svg').count(),1);
+    await page.locator('[data-prediction-filter]').selectOption('bear');
+    const rows = await page.locator('.dash-table tbody tr').count();
+    assert.ok(rows > 0);
+    assert.equal(await page.locator('.dash-table tbody .direction-bear').count(),rows);
+    const firstDate = await page.locator('.dash-date-link').first().textContent();
+    await page.waitForTimeout(3300);
+    assert.equal(await page.locator('[data-prediction-filter]').inputValue(),'bear');
+    assert.equal(await page.locator('.dash-date-link').first().textContent(),firstDate);
+    await page.locator('.dash-date-link').first().click();
+    await page.locator('#chart-detail-dialog[open]').waitFor();
+    assert.ok((await page.locator('#chart-detail-dialog').textContent()).includes('训练截止'));
+    await page.keyboard.press('Escape');
+    await page.locator('[data-prediction-filter]').selectOption('all');
+    await page.getByRole('button',{name:'下一页',exact:true}).click();
+    assert.ok((await page.locator('.dash-pagination').textContent()).includes('第 2 /'));
+    for (const [tab,expected] of [['returns',4],['posterior',2],['residuals',2]]) {
+      await page.locator('[data-tab="'+tab+'"]').click();
+      assert.equal(await page.locator('#'+tab+'-content svg').count(),expected);
+      assert.equal(await page.locator('#'+tab+'-content > pre').count(),0);
+    }
+    await page.locator('[data-tab="returns"]').click();
+    await page.screenshot({path:path.join(output,'training-dashboard-returns.png'),fullPage:true});
+    await page.locator('[data-tab="summary"]').click();
+    assert.ok((await page.locator('#summary-content .dash-definition').textContent()).includes('10,000'));
+    await page.setViewportSize({width:390,height:844});
+    await page.locator('[data-tab="evaluation"]').click();
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.screenshot({path:path.join(output,'training-dashboard-mobile.png'),fullPage:true});
+    await page.locator('#evaluation-content .chart-expand').first().click();
+    assert.equal(await page.evaluate(()=>document.querySelector('#chart-detail-dialog').getBoundingClientRect().right>innerWidth),false);
+    await page.keyboard.press('Escape');
+    assert.deepEqual(errors,[]);
+    console.log(JSON.stringify({passed:true,checks:['real metrics','auto select latest','SVG charts','chart modal','signal detail','filters','pagination','refresh retains interaction','all tabs','mobile overflow'],screenshots:output}));
+  } finally { await browser.close(); }
+})().catch(e=>{console.error(e);process.exit(1)});

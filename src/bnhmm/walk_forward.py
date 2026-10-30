@@ -19,6 +19,7 @@ from .evaluation import (
     records_as_json,
 )
 from .model import BNHMMNetwork
+from .progress import report_progress
 from .training import (
     BNHMMTrainer,
     ModelConfig,
@@ -141,7 +142,13 @@ def run_walk_forward(
     return_means: dict[str, tuple[float, ...]] = {}
     return_variances: dict[str, tuple[float, ...]] = {}
 
-    for observation in observations:
+    total_work = sum(len(build_walk_forward_folds([item], walk_forward_config)) for item in observations)
+    completed_work = 0
+    report_progress("walk_forward", message="开始滚动训练与样本外回测", completed_units=0,
+                    total_units=total_work, unit="折", completed_symbols=0, total_symbols=len(observations))
+    for symbol_index, observation in enumerate(observations):
+        report_progress(current_symbol=observation.symbol, symbol_index=symbol_index+1,
+                        message=f"处理股票 {symbol_index+1} / {len(observations)}：{observation.symbol}")
         symbol_destination = destination / "symbols" / observation.symbol
         result = _run_symbol_walk_forward(
             observation,
@@ -152,11 +159,15 @@ def run_walk_forward(
             device=device,
             output_dir=symbol_destination,
             mc_samples=mc_samples,
+            completed_before=completed_work,
+            total_work=total_work,
         )
         all_predictions.extend(result.predictions)
         fold_summaries.extend(result.folds)
         return_means[observation.symbol] = result.regime_return_means
         return_variances[observation.symbol] = result.regime_return_variances
+        completed_work += len(result.folds)
+        report_progress(completed_units=completed_work, completed_symbols=symbol_index+1)
 
     ordered_predictions = tuple(
         sorted(
@@ -201,7 +212,11 @@ def _run_pooled_walk_forward(
     return_variances: dict[str, tuple[float, ...]] = {}
     symbols = [item.symbol for item in observations]
 
+    report_progress("walk_forward", message="开始板块联合滚动回测", completed_units=0,
+                    total_units=len(folds), unit="折", total_symbols=len(symbols))
     for fold in folds:
+        report_progress(current_fold=fold.index+1, total_folds=len(folds),
+                        message=f"板块联合回测 第 {fold.index+1} / {len(folds)} 折", activity="划分因果训练窗口")
         fit_observations = _select(observations, target_before=fold.tuning_start)
         tune_observations = _select(
             observations,
@@ -232,6 +247,7 @@ def _run_pooled_walk_forward(
         final_model = model_config.build(seed=trainer_config.seed + fold.index * 2 + 1)
         final_trainer = BNHMMTrainer(final_model, final_config, device=device)
         final_result = final_trainer.fit_fixed(pretest_sequences)
+        report_progress(activity="样本外推理", current_epoch=None, total_epochs=None)
         inference_seed = trainer_config.seed + 100_000 + fold.index
         torch.manual_seed(inference_seed)
         if torch.cuda.is_available():
@@ -329,6 +345,7 @@ def _run_pooled_walk_forward(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         fold_summaries.append(summary)
+        report_progress(completed_units=len(fold_summaries), completed_folds=len(fold_summaries))
         del final_trainer, final_model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -361,6 +378,8 @@ def _run_symbol_walk_forward(
     device: str | torch.device,
     output_dir: str | Path,
     mc_samples: int,
+    completed_before: int = 0,
+    total_work: int | None = None,
 ) -> _SymbolWalkForwardResult:
     observations = [observation]
     folds = build_walk_forward_folds(observations, walk_forward_config)
@@ -374,6 +393,10 @@ def _run_symbol_walk_forward(
     fixed_moments: tuple[np.ndarray, np.ndarray] | None = None
 
     for fold in folds:
+        report_progress(current_symbol=observation.symbol, current_fold=fold.index+1,
+                        total_folds=len(folds), completed_units=completed_before+len(fold_summaries),
+                        total_units=total_work or len(folds), unit="折",
+                        activity="划分因果训练窗口", current_epoch=None, total_epochs=None)
         fit_observations = _select(
             observations, target_before=fold.tuning_start
         )
@@ -412,6 +435,7 @@ def _run_symbol_walk_forward(
         final_model = model_config.build(seed=trainer_config.seed + fold.index * 2 + 1)
         final_trainer = BNHMMTrainer(final_model, final_config, device=device)
         final_result = final_trainer.fit_fixed(pretest_sequences)
+        report_progress(activity="样本外推理", current_epoch=None, total_epochs=None)
         inference_seed = trainer_config.seed + 100_000 + fold.index
         torch.manual_seed(inference_seed)
         if torch.cuda.is_available():
@@ -487,6 +511,7 @@ def _run_symbol_walk_forward(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         fold_summaries.append(summary)
+        report_progress(completed_units=completed_before+len(fold_summaries), completed_folds=len(fold_summaries))
         del final_trainer, final_model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

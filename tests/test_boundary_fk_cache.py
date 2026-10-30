@@ -181,6 +181,24 @@ def test_boundary_cache_manifest_contains_one_sector_state_variant(tmp_path: Pat
     assert manifest["anchor_protocol"] == "rolling-60-session-previous-close"
 
 
+def test_explicit_new_version_preserves_old_inputs_without_duplicate_archives(tmp_path):
+    cache = BoundaryDataCache(tmp_path / "cache")
+    key = _key(tmp_path)
+    data = walk_forward_sector_data(180)
+    original = cache.save(key, data).read_bytes()
+    cache.save(key, data)
+    assert cache.status(key.dataset_id)["history"] == []
+    key.source_path.write_bytes(b"new source contents")
+    changed = BoundaryDataCacheKey.from_source(dataset_id=key.dataset_id, source_path=key.source_path,
+        symbols=key.symbols, start=key.start, end=key.end, lookback_sessions=60)
+    cache.save(changed, data)
+    history = cache.status(key.dataset_id)["history"]
+    assert len(history) == 1
+    assert history[0]["source_fingerprint"] == key.source_fingerprint
+    assert (cache.root / key.dataset_id / history[0]["file"]).read_bytes() == original
+    assert cache.inspect(changed)["source_fingerprint"] == changed.source_fingerprint
+
+
 def test_sector_cache_manifest_discards_legacy_window_variants(tmp_path: Path) -> None:
     cache = BoundaryDataCache(tmp_path / "cache")
     dataset_root = cache.root / "semiconductor"

@@ -7,7 +7,7 @@ import time
 from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 import numpy as np
 
@@ -23,6 +23,7 @@ from .cache import (
 from .execution import build_member_execution_constraints
 from .normalization import CausalBoundaryNormalizer
 from .sector_state import SectorDailyStateBuilder
+from ..progress import start_progress
 
 
 class MinuteSource(Protocol):
@@ -38,6 +39,7 @@ def build_sector_boundary_cache(
     symbols: tuple[str, ...],
     start: str | date,
     end: str | date,
+    progress: Callable[[str, dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     started = time.perf_counter()
     start_date = date.fromisoformat(start) if isinstance(start, str) else start
@@ -46,15 +48,31 @@ def build_sector_boundary_cache(
         raise ValueError("cache end must follow start")
 
     warmup_start = start_date - timedelta(days=450)
-    bars = {
-        symbol: source.fetch(symbol, "1m", warmup_start, end_date)
-        for symbol in symbols
-    }
+    telemetry = start_progress(Path(cache.root) / dataset_id) if hasattr(cache, "root") else None
+    def notify(phase: str, **details: object) -> None:
+        if telemetry is not None:
+            names = {"loading_member_bars": "读取已保存的本地分钟数据", "building_minute_panel": "构建成分股分钟矩阵",
+                     "normalizing_minute_panel": "因果标准化", "building_execution_constraints": "生成成交约束",
+                     "building_sector_daily_states": "计算60日滚动状态与标签", "saving_fk_cache": "持久化策略输入"}
+            counts = {"completed_units": details["members_loaded"], "total_units": len(symbols), "unit": "股票"} if "members_loaded" in details else {}
+            telemetry.update(phase, message=names.get(phase, phase), **counts, **details)
+        if progress is not None:
+            progress(phase, details)
+
+    bars = {}
+    for index, symbol in enumerate(symbols):
+        bars[symbol] = source.fetch(symbol, "1m", warmup_start, end_date)
+        if (index + 1) % 10 == 0 or index + 1 == len(symbols):
+            notify("loading_member_bars", members_loaded=index+1, total_members=len(symbols))
+    notify("building_minute_panel")
     panel = SectorMinutePanelBuilder().build(bars)
+    notify("normalizing_minute_panel")
     normalized = CausalBoundaryNormalizer().transform(panel)
     if not len(normalized.timestamps):
         raise ValueError("sector cache requires available minute history")
+    notify("building_execution_constraints")
     execution = build_member_execution_constraints(panel)
+    notify("building_sector_daily_states")
     built = SectorDailyStateBuilder().build(normalized)
     if not np.array_equal(built.states.sessions, execution.sessions):
         raise ValueError("execution constraints do not align with daily states")
@@ -74,7 +92,10 @@ def build_sector_boundary_cache(
         end=end_date.isoformat(),
         lookback_sessions=SECTOR_CACHE_SLOT,
     )
+    notify("saving_fk_cache", session_rows=len(data.states.sessions))
     cache.save(key, data)
+    if telemetry is not None:
+        telemetry.update("completed", message="策略数据集已保存，下次运行直接复用", completed_units=len(symbols), total_units=len(symbols))
     return {
         "dataset_id": dataset_id,
         "symbols": len(symbols),

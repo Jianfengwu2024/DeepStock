@@ -23,6 +23,7 @@ from .config import (
     REGIME_NAMES,
     REGIME_PROTOCOL,
 )
+from .progress import report_progress
 from .data.dataset import ProfileSequence
 from .model import (
     BNHMMNetwork,
@@ -293,6 +294,7 @@ class BNHMMTrainer:
             shuffle=False,
             collate_fn=collate_profile_sequences,
         )
+        report_progress(activity="调参预训练")
         pretraining_history = self._pretrain(pretraining_loader)
         self._reset_training_seed()
         optimizer = torch.optim.AdamW(
@@ -306,6 +308,8 @@ class BNHMMTrainer:
         best_state: dict[str, Tensor] | None = None
 
         for epoch in range(1, self.config.epochs + 1):
+            report_progress(activity="调参训练", current_epoch=epoch, total_epochs=self.config.epochs,
+                            completed_epochs=epoch-1)
             self.model.tokenizer.set_auxiliary_warmup(
                 epoch <= self.config.auxiliary_warmup_epochs
             )
@@ -319,6 +323,7 @@ class BNHMMTrainer:
             )
             row.update(self._auxiliary_gate_metrics())
             history.append(row)
+            report_progress(completed_epochs=epoch)
             if validation_metrics["predictive_loss"] < best_loss:
                 best_loss = validation_metrics["predictive_loss"]
                 best_epoch = epoch
@@ -354,6 +359,7 @@ class BNHMMTrainer:
             collate_fn=collate_profile_sequences,
             generator=torch.Generator().manual_seed(self.config.seed + 10_000),
         )
+        report_progress(activity="最终模型预训练")
         pretraining_history = self._pretrain(pretraining_loader)
         self._reset_training_seed()
         optimizer = torch.optim.AdamW(
@@ -363,6 +369,8 @@ class BNHMMTrainer:
         )
         history: list[dict[str, float]] = []
         for epoch in range(1, self.config.epochs + 1):
+            report_progress(activity="最终模型训练", current_epoch=epoch, total_epochs=self.config.epochs,
+                            completed_epochs=epoch-1)
             self.model.tokenizer.set_auxiliary_warmup(
                 epoch <= self.config.auxiliary_warmup_epochs
             )
@@ -372,6 +380,7 @@ class BNHMMTrainer:
             row.update({f"train_{key}": value for key, value in metrics.items()})
             row.update(self._auxiliary_gate_metrics())
             history.append(row)
+            report_progress(completed_epochs=epoch)
         return TrainingResult(
             tuple(history),
             self.config.epochs,
@@ -405,13 +414,15 @@ class BNHMMTrainer:
         )
         history: list[dict[str, float]] = []
         for epoch in range(1, self.config.pretrain_epochs + 1):
+            report_progress(current_epoch=epoch, total_epochs=self.config.pretrain_epochs, completed_epochs=epoch-1)
             self.model.train()
             masked_total = 0.0
             next_total = 0.0
             masked_profile_total = 0.0
             next_profile_total = 0.0
             batch_count = 0
-            for cpu_batch in loader:
+            for batch_index, cpu_batch in enumerate(loader):
+                report_progress(force=False, batch_index=batch_index+1, total_batches=len(loader), batch_stage="自监督预训练")
                 batch = {key: value.to(self.device) for key, value in cpu_batch.items()}
                 masked_states = (
                     torch.rand_like(batch["valid_mask"], dtype=torch.float32)
@@ -529,7 +540,9 @@ class BNHMMTrainer:
             "accuracy": 0.0,
         }
         token_count = 0
-        for cpu_batch in loader:
+        for batch_index, cpu_batch in enumerate(loader):
+            report_progress(force=False, batch_index=batch_index+1, total_batches=len(loader),
+                            batch_stage="训练批次" if training else "验证批次")
             batch = {key: value.to(self.device) for key, value in cpu_batch.items()}
             original_batch_size = len(batch["profiles"])
             symmetry_active = training and self.config.symmetry_weight > 0.0

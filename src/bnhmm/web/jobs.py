@@ -37,6 +37,7 @@ class WalkForwardJobRequest(BaseModel):
     database_path: str = os.getenv(
         "BNHMM_MARKET_SOURCE", "http://127.0.0.1:9000/api/v1/db"
     )
+    market_dataset_id: str | None = None
     symbols: list[str] = Field(default_factory=lambda: ["000090", "000099", "000488"])
     dataset_id: str | None = None
     training_scope: Literal["per-symbol", "sector-pooled"] = "per-symbol"
@@ -115,8 +116,8 @@ class WalkForwardJobRequest(BaseModel):
         normalized = list(dict.fromkeys(item.strip() for item in value if item.strip()))
         if not normalized:
             raise ValueError("at least one symbol is required")
-        if len(normalized) > 200:
-            raise ValueError("at most 200 symbols are allowed")
+        if len(normalized) > 2_000:
+            raise ValueError("at most 2000 symbols are allowed")
         if any(not re.fullmatch(r"[A-Za-z0-9._-]{1,24}", item) for item in normalized):
             raise ValueError("a symbol contains unsupported characters")
         return normalized
@@ -309,8 +310,8 @@ def build_command(request: WalkForwardJobRequest, output_dir: Path) -> list[str]
         "--seed",
         str(request.seed),
     ]
-    if request.dataset_id:
-        command.extend(("--dataset-id", request.dataset_id))
+    if request.market_dataset_id or request.dataset_id:
+        command.extend(("--dataset-id", request.market_dataset_id or request.dataset_id))
     if request.max_folds is not None:
         command.extend(("--max-folds", str(request.max_folds)))
     if request.deterministic_training:
@@ -331,7 +332,7 @@ def _build_boundary_flow_command(
         "--symbols",
         ",".join(request.symbols),
         "--dataset-id",
-        request.dataset_id or "",
+        request.market_dataset_id or request.dataset_id or "",
         "--start",
         request.start.isoformat(),
         "--end",
@@ -372,13 +373,14 @@ def _build_boundary_flow_command(
 
 
 class JobManager:
-    def __init__(self, root: str | Path, project_root: str | Path) -> None:
+    def __init__(self, root: str | Path, project_root: str | Path, *, resource_lock: Any = None) -> None:
         self.root = Path(root).resolve()
         self.project_root = Path(project_root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self._jobs: dict[str, JobRecord] = {}
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._lock = threading.RLock()
+        self._resource_lock = resource_lock if resource_lock is not None else threading.Lock()
         self._current_id: str | None = None
         self._current_process: subprocess.Popen[str] | None = None
         self._load_existing()
@@ -476,13 +478,25 @@ class JobManager:
         if record is None:
             return None
         path = Path(record.output_dir) / "progress.json"
+        elapsed = self._elapsed_seconds(record)
         if not path.is_file():
-            return None
+            return {"phase": record.status, "message": "等待计算进程上报进度" if record.status == "running" else record.status,
+                    "fraction": 1.0 if record.status == "completed" else None,
+                    "elapsed_seconds": elapsed, "eta_seconds": 0.0 if record.status == "completed" else None,
+                    "completed_units": None, "total_units": None}
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
-        return payload if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            return None
+        payload["elapsed_seconds"] = elapsed
+        if record.status in {"completed", "failed", "cancelled", "interrupted"}:
+            payload.update(phase=record.status, message={"completed": "运行完成", "failed": "运行失败", "cancelled": "已取消", "interrupted": "运行中断"}[record.status])
+            payload["eta_seconds"] = 0.0 if record.status == "completed" else None
+            if record.status == "completed":
+                payload["fraction"] = 1.0
+        return payload
 
     def artifact_path(self, identifier: str, name: str) -> Path | None:
         record = self.get(identifier)
@@ -524,78 +538,108 @@ class JobManager:
             identifier = self._queue.get()
             if identifier is None:
                 return
-            with self._lock:
-                record = self._jobs.get(identifier)
-                if record is None or record.status != "queued":
-                    continue
-                record.status = "running"
-                record.started_at = utcnow()
-                self._current_id = identifier
-                self._persist(record)
-            output_dir = Path(record.output_dir)
+            with self._resource_lock:
+                self._execute_job(identifier)
+
+    def _execute_job(self, identifier: str) -> None:
+        # The caller holds the market-data lock until the subprocess exits.
+        with self._lock:
+            record = self._jobs.get(identifier)
+            if record is None or record.status != "queued":
+                return
+            record.status = "running"
+            record.started_at = utcnow()
+            self._current_id = identifier
+            self._persist(record)
+        output_dir = Path(record.output_dir)
+        log_path = output_dir / "job.log"
+        return_code = -1
+        error: str | None = None
+        monitor_stop: threading.Event | None = None
+        monitor: threading.Thread | None = None
+        try:
             command = build_command(record.request, output_dir)
-            log_path = output_dir / "job.log"
-            return_code = -1
-            error: str | None = None
-            monitor_stop: threading.Event | None = None
-            monitor: threading.Thread | None = None
-            try:
-                environment = os.environ.copy()
-                process = subprocess.Popen(
-                    command,
-                    cwd=self.project_root,
-                    env=environment,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                )
-                with self._lock:
-                    self._current_process = process
-                    current = self._jobs[identifier]
-                    current.process_id = process.pid
-                    current.current_gpu_memory_mib = 0
-                    self._persist(current)
-                monitor_stop = threading.Event()
-                monitor = threading.Thread(
-                    target=self._monitor_gpu,
-                    args=(identifier, process.pid, monitor_stop),
-                    name=f"bnhmm-gpu-{identifier}",
-                    daemon=True,
-                )
-                monitor.start()
-                assert process.stdout is not None
-                with log_path.open("a", encoding="utf-8") as log:
-                    log.write("command: " + " ".join(command) + "\n")
-                    for line in process.stdout:
-                        log.write(line)
-                        log.flush()
-                return_code = process.wait()
-            except Exception as exc:  # pragma: no cover - operating-system failure
-                error = str(exc)
-            finally:
-                if monitor_stop is not None:
-                    monitor_stop.set()
-                if monitor is not None:
-                    monitor.join(timeout=2)
+            environment = os.environ.copy()
+            environment["PYTHONUNBUFFERED"] = "1"
+            self._write_progress(identifier, {"phase": "starting", "message": "正在启动本地计算进程",
+                                             "fraction": None, "completed_units": None, "total_units": None,
+                                             "eta_seconds": None, "elapsed_seconds": 0.0})
+            process = subprocess.Popen(
+                command,
+                cwd=self.project_root,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
             with self._lock:
+                self._current_process = process
                 current = self._jobs[identifier]
-                if current.status != "cancelled":
-                    current.return_code = return_code
-                    current.status = (
-                        "completed"
-                        if return_code == 0 and (output_dir / "run-summary.json").exists()
-                        else "failed"
-                    )
-                    current.error = error or (
-                        None if current.status == "completed" else f"process exited {return_code}"
-                    )
-                    current.finished_at = utcnow()
+                current.process_id = process.pid
                 current.current_gpu_memory_mib = 0
-                self._current_id = None
-                self._current_process = None
                 self._persist(current)
+                if current.status == "cancelled":
+                    process.terminate()
+            monitor_stop = threading.Event()
+            monitor = threading.Thread(
+                target=self._monitor_gpu,
+                args=(identifier, process.pid, monitor_stop),
+                name=f"bnhmm-gpu-{identifier}",
+                daemon=True,
+            )
+            monitor.start()
+            assert process.stdout is not None
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write("command: " + " ".join(command) + "\n")
+                for line in process.stdout:
+                    log.write(line)
+                    log.flush()
+            return_code = process.wait()
+        except Exception as exc:  # pragma: no cover - operating-system failure
+            error = str(exc)
+        finally:
+            if monitor_stop is not None:
+                monitor_stop.set()
+            if monitor is not None:
+                monitor.join(timeout=2)
+        with self._lock:
+            current = self._jobs[identifier]
+            if current.status != "cancelled":
+                current.return_code = return_code
+                current.status = (
+                    "completed"
+                    if return_code == 0 and (output_dir / "run-summary.json").exists()
+                    else "failed"
+                )
+                current.error = error or (
+                    None if current.status == "completed" else f"process exited {return_code}"
+                )
+                current.finished_at = utcnow()
+            current.current_gpu_memory_mib = 0
+            self._current_id = None
+            self._current_process = None
+            self._persist(current)
+
+    @staticmethod
+    def _elapsed_seconds(record: JobRecord) -> float:
+        if record.started_at is None:
+            return 0.0
+        return max(0.0, ((record.finished_at or utcnow()) - record.started_at).total_seconds())
+
+    def _write_progress(self, identifier: str, values: dict[str, Any]) -> None:
+        record = self.get(identifier)
+        if record is None:
+            return
+        path = Path(record.output_dir) / "progress.json"
+        payload = {"job_id": identifier, "updated_at": utcnow().isoformat(), **values}
+        temporary = path.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary.replace(path)
+        except OSError:
+            return
 
     def _monitor_gpu(
         self, identifier: str, process_id: int, stop: threading.Event
