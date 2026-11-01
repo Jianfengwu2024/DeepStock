@@ -14,6 +14,7 @@ const state = {
   deepstockAuthorized: false,
   permissionStatus: "unknown",
   boundaryReady: false,
+  pendingDeleteId: null,
 };
 const pageNames = new Set(["data", "strategy", "training", "pools", "ai", "verification"]);
 let symbolSearchTimer = null;
@@ -165,7 +166,9 @@ function renderLocalMarketDatasets(datasets) {
       dataset.source === "local-materialized" ? '<span class="status-badge">本地已物化</span>' :
       '<button class="secondary-button" type="button" data-refresh-dataset="' + escapeHtml(dataset.dataset_id) + '">立即增量更新</button>';
     const sourceLabel = dataset.purpose === "cloud-strategy" ? "云端策略临时数据 · 保留 7 天" + freshness : dataset.source === "local-materialized" ? "独立本地数据库 · 不自动更新" : "每日收盘自动增量" + freshness;
-    return '<article class="dataset-row"><div class="market-dataset-info"><strong>' + escapeHtml(dataset.name) + '</strong><span>' + dataset.symbols.length + " 只 · " + dataset.intervals.join(", ") + " · " + dataset.start_date + " 至 " + (dataset.last_refresh_date || "等待首次更新") + '</span><small>' + escapeHtml(summary) + " · " + dataset.status + '</small><small>' + escapeHtml(sourceLabel) + '</small>' + error + '</div><div class="button-row">' + actions + '<button class="danger-button" type="button" data-delete-dataset="' + escapeHtml(dataset.dataset_id) + '" ' + (["queued", "updating"].includes(dataset.status) ? "disabled" : "") + '>删除</button></div></article>';
+    const deleteId = "market:" + dataset.dataset_id;
+    const deleteLabel = state.pendingDeleteId === deleteId ? "再次点击确认" : "删除";
+    return '<article class="dataset-row"><div class="market-dataset-info"><strong>' + escapeHtml(dataset.name) + '</strong><span>' + dataset.symbols.length + " 只 · " + dataset.intervals.join(", ") + " · " + dataset.start_date + " 至 " + (dataset.last_refresh_date || "等待首次更新") + '</span><small>' + escapeHtml(summary) + " · " + dataset.status + '</small><small>' + escapeHtml(sourceLabel) + '</small>' + error + '</div><div class="button-row">' + actions + '<button class="danger-button" type="button" data-delete-dataset="' + escapeHtml(dataset.dataset_id) + '" ' + (["queued", "updating"].includes(dataset.status) ? "disabled" : "") + '>' + deleteLabel + '</button></div></article>';
   }).join("") : '<div class="empty-state">先从股票池创建数据集；行情、训练样本和模型文件都会保存在本机</div>';
   $$('[data-refresh-dataset]').forEach((button) => button.addEventListener("click", async () => {
     button.disabled = true;
@@ -177,10 +180,13 @@ function renderLocalMarketDatasets(datasets) {
   }));
   $$('[data-delete-dataset]').forEach((button) => button.addEventListener("click", async () => {
     const dataset = datasets.find((item) => item.dataset_id === button.dataset.deleteDataset);
-    const prompt = dataset?.source === "local-materialized"
-      ? "从 DeepStock 目录移除这项数据集？独立本地数据库文件会保留。"
-      : "删除本地行情文件和数据集记录？此操作不能撤销。";
-    if (!confirm(prompt)) return;
+    const deleteId = "market:" + button.dataset.deleteDataset;
+    if (state.pendingDeleteId !== deleteId) {
+      state.pendingDeleteId = deleteId;
+      renderLocalMarketDatasets(datasets);
+      return;
+    }
+    state.pendingDeleteId = null;
     try {
       await api("/api/market-datasets/" + encodeURIComponent(button.dataset.deleteDataset), {method: "DELETE"});
       await refreshMarketDatasets();
@@ -386,9 +392,11 @@ async function loadStrategyDatasets() {
       const p = item.progress || {};
       const progressText = item.status === "running" ? '<small class="strategy-build-progress">' + escapeHtml(p.message || "等待计算资源") +
         (typeof p.fraction === "number" ? " · " + (p.fraction*100).toFixed(1) + "%" : "") + " · 已用 " + window.DeepStockProgress.duration(p.elapsed_seconds) + " · 本阶段预计剩余 " + window.DeepStockProgress.duration(p.eta_seconds) + '</small>' : "";
+      const deleteId = "strategy:" + item.dataset_id;
+      const deleteLabel = state.pendingDeleteId === deleteId ? "再次点击确认" : "删除";
       return '<article class="dataset-row"><div class="market-dataset-info"><strong>' + escapeHtml(item.name) + '</strong><span>' +
         item.symbols + " 只 · 滚动 " + item.lookback_sessions + " 日 · " + (item.rows || 0).toLocaleString() + " 个交易日状态" + '</span><small>' +
-        (item.start || "待构建") + " 至 " + (item.end || "待构建") + "（结束为读取上界） · " + (ready ? "已保存，可直接运行" : escapeHtml(item.reason || "未就绪")) + '</small><small>版本 ' + escapeHtml(item.construction_version || "—") + " · " + escapeHtml(item.available_at || "—") + " · 历史版本 " + (item.history?.length || 0) + '</small>' + progressText + '</div><div class="button-row"><span class="status-badge">' + (ready ? "ready" : item.status) + '</span><button type="button" class="secondary-button" data-prepare-strategy="' + escapeHtml(item.dataset_id) + '"' + (item.status === "running" ? " disabled" : "") + '>' + (ready ? "验证并复用" : "准备并保存") + '</button></div></article>';
+        (item.start || "待构建") + " 至 " + (item.end || "待构建") + "（结束为读取上界） · " + (ready ? "已保存，可直接运行" : escapeHtml(item.reason || "未就绪")) + '</small><small>版本 ' + escapeHtml(item.construction_version || "—") + " · " + escapeHtml(item.available_at || "—") + " · 历史版本 " + (item.history?.length || 0) + '</small>' + progressText + '</div><div class="button-row"><span class="status-badge">' + (ready ? "ready" : item.status) + '</span><button type="button" class="secondary-button" data-prepare-strategy="' + escapeHtml(item.dataset_id) + '"' + (item.status === "running" ? " disabled" : "") + '>' + (ready ? "验证并复用" : "准备并保存") + '</button><button type="button" class="danger-button" data-delete-strategy="' + escapeHtml(item.dataset_id) + '"' + (item.status === "running" ? " disabled" : "") + '>' + deleteLabel + '</button></div></article>';
     }).join("") : '<div class="empty-state">还没有策略预计算数据集；从策略页构建并保存后，运行任务只会复用它。</div>';
     $$('[data-prepare-strategy]').forEach(button => button.addEventListener('click', async () => {
       const item = datasets.find(row => row.dataset_id === button.dataset.prepareStrategy);
@@ -400,6 +408,20 @@ async function loadStrategyDatasets() {
       const end = item.end || addDays(dataEnd,1);
       button.disabled = true;
       try { await api('/api/boundary-data/build',{method:'POST',body:JSON.stringify({dataset_id:item.dataset_id,start,end})}); await loadStrategyDatasets(); }
+      catch(error) { button.disabled=false; button.textContent=error.message; }
+    }));
+    $$('[data-delete-strategy]').forEach(button => button.addEventListener('click', async () => {
+      const item = datasets.find(row => row.dataset_id === button.dataset.deleteStrategy);
+      if (!item || item.status === "running") return;
+      const deleteId = "strategy:" + item.dataset_id;
+      if (state.pendingDeleteId !== deleteId) {
+        state.pendingDeleteId = deleteId;
+        void loadStrategyDatasets();
+        return;
+      }
+      state.pendingDeleteId = null;
+      button.disabled = true;
+      try { await api('/api/strategy-datasets/' + encodeURIComponent(item.dataset_id), {method:'DELETE'}); await refreshMarketDatasets(); }
       catch(error) { button.disabled=false; button.textContent=error.message; }
     }));
   } catch (error) {

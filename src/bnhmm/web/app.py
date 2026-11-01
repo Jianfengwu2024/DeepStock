@@ -740,6 +740,17 @@ def describe_strategy_dataset(
         }
 
 
+@app.delete("/api/strategy-datasets/{dataset_id}")
+def delete_strategy_dataset(dataset_id: str, request: Request) -> dict[str, bool]:
+    try:
+        request.app.state.boundary_data.delete(dataset_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"deleted": True}
+
+
 @app.post("/api/market-datasets", status_code=202)
 def create_market_dataset(payload: CreateMarketDatasetRequest, request: Request) -> dict[str, Any]:
     pool = next(
