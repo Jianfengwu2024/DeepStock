@@ -164,6 +164,13 @@ class LocalMarketDatasetStore:
                 db.execute("UPDATE market_datasets SET coverage_json=? WHERE dataset_id=?",
                            [json.dumps(coverage, sort_keys=True), dataset_id])
 
+    def update_end_date(self, dataset_id: str, end_date: date) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE market_datasets SET end_date=?, updated_at=? WHERE dataset_id=?",
+                [end_date.isoformat(), datetime.now(timezone.utc).isoformat(), dataset_id],
+            )
+
     def register_materialized(
         self,
         *,
@@ -282,6 +289,10 @@ class LocalMarketDatasetManager:
                 raise RuntimeError("该数据集已有构建或更新任务")
             if dataset["source"] == "local-materialized":
                 raise RuntimeError("已导入的本地研究数据集不支持 broker 增量更新")
+            if dataset.get("purpose") == "cloud-strategy":
+                target = self.completed_day(datetime.now(_LOCAL_TZ))
+                if not dataset.get("end_date") or dataset["end_date"] < target.isoformat():
+                    self.store.update_end_date(dataset_id, target)
             self.store.update_status(dataset_id, status="queued")
             self._queue.put((dataset_id, False))
         return {"dataset_id": dataset_id, "status": "queued"}
@@ -350,7 +361,9 @@ class LocalMarketDatasetManager:
     def _schedule_due(self, now: datetime) -> None:
         target = self.completed_day(now)
         for dataset in self.store.list():
-            if dataset["source"] == "local-materialized" or dataset.get("purpose") == "cloud-strategy":
+            if dataset["source"] == "local-materialized":
+                continue
+            if dataset.get("purpose") == "cloud-strategy" and not dataset.get("end_date"):
                 continue
             attempted = dataset["last_attempt_at"]
             # One automatic attempt per completed day. Manual refresh remains
