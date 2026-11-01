@@ -272,6 +272,8 @@ class LocalMarketDatasetManager:
         self._thread.start()
         self._scheduler.start()
         for dataset in self.store.list():
+            if dataset.get("purpose") == "cloud-strategy" and not dataset.get("end_date"):
+                self.store.update_end_date(dataset["dataset_id"], self.completed_day(datetime.now(_LOCAL_TZ)))
             if dataset["status"] in {"queued", "updating"}:
                 self._queue.put((dataset["dataset_id"], False))
 
