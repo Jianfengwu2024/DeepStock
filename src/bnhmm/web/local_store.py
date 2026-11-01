@@ -133,10 +133,11 @@ class StockPoolStore:
             raise ValueError("云端股票池名称无效")
         if not symbols or len(symbols) > 20_000 or any(not re.fullmatch(r"\d{6}", item) for item in symbols):
             raise ValueError("云端股票池证券代码无效")
-        pool_source = "quant-watchlist" if payload.get("source") == "quant-watchlist" else "quant-ai"
-        if pool_source not in {"quant-ai", "quant-watchlist"}:
+        pool_source = str(payload.get("source") or "quant-ai")
+        if pool_source not in {"quant-ai", "quant-watchlist", "market-sector"}:
             raise ValueError("云端股票池来源无效")
-        local_name = f"{'Quant 自选股' if pool_source == 'quant-watchlist' else 'Quant AI'} · {name}"[:80]
+        source_label = {"quant-watchlist": "Quant 自选股", "market-sector": "行业板块", "quant-ai": "Quant AI"}[pool_source]
+        local_name = f"{source_label} · {name}"[:80]
         synced_at = datetime.now(timezone.utc).isoformat()
         local_id = "quant-ai-" + uuid.uuid5(uuid.NAMESPACE_URL, cloud_id).hex[:24]
         description = str(payload.get("description") or payload.get("query") or "")[:1000]

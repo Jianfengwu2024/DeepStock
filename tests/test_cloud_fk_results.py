@@ -90,6 +90,7 @@ def test_cloud_worker_builds_a_week_retained_minute_dataset_for_the_synced_pool(
     assert calls[0]["intervals"] == ["1m"]
     assert calls[0]["start_date"] == date(2026, 10, 1) - timedelta(days=450)
     assert calls[0]["purpose"] == "cloud-strategy"
+    assert calls[0]["end_date"] == end
 
 
 def test_cloud_worker_reuses_existing_dataset_when_a_job_retries():
@@ -136,3 +137,52 @@ def test_cloud_worker_builds_fk_cache_before_running_and_uses_inclusive_end(tmp_
     assert calls[0]["dataset_id"] == dataset["dataset_id"]
     assert calls[0]["start"] == "2026-10-01"
     assert calls[0]["end"] == "2026-10-24"
+
+
+def test_cloud_worker_uses_custom_pool_and_clamps_to_common_real_data_end(tmp_path):
+    start = date(2026, 10, 1)
+    dataset = {
+        "dataset_id": "cloud-dataset-1",
+        "status": "ready",
+        "symbols": ["000001", "000002", "000003", "000004"],
+        "start_date": "2025-06-08",
+        "intervals": ["1m"],
+        "coverage": {"1m": {symbol: {"rows": 1000, "end": "2026-10-23 15:00:00"} for symbol in ["000001", "000002", "000003", "000004"]}},
+        "database_path": str(tmp_path / "local-only.duckdb"),
+    }
+    jobs = SimpleNamespace(
+        submit=lambda request: SimpleNamespace(id="local-job"),
+        get=lambda _: SimpleNamespace(status="completed"),
+        progress=lambda _: None,
+    )
+    (tmp_path / "local-only.duckdb").write_bytes(b"local-only")
+    worker = CloudStrategyWorker(
+        server="https://quant.example",
+        jobs=jobs,
+        boundary_data=None,
+        market_datasets=SimpleNamespace(store=SimpleNamespace(list=lambda: [], get=lambda _: dataset)),
+        stock_pools=SimpleNamespace(list=lambda: [{"cloud_pool_id": "market-sector-industry-1", "symbols": dataset["symbols"]}]),
+    )
+    heartbeats = []
+    worker._heartbeat = lambda _job, _token, phase, progress=None: heartbeats.append((phase, progress)) or {"cancelled": False}
+    worker._build_cloud_dataset = lambda *_args, **_kwargs: dataset
+    worker._build_cloud_fk_cache = lambda *_args, **_kwargs: None
+    worker._read_result = lambda _job, _dataset, _start, end, sector: {"evaluation_end": end.isoformat(), "sector_name": sector["name"]}
+
+    result = worker._execute({
+        "job_id": "cloud-job",
+        "sector": "custom",
+        "start": start.isoformat(),
+        "end": "2026-10-29",
+        "pool_id": "market-sector-industry-1",
+        "pool_name": "行业 · 半导体",
+        "pool_symbols": dataset["symbols"],
+    }, "token", Event())
+
+    assert result["evaluation_end"] == "2026-10-23"
+    assert result["sector_name"] == "行业 · 半导体"
+    assert any(
+        phase == "adjusting_evaluation_window"
+        and "样本外结束日" in (progress or {}).get("message", "")
+        for phase, progress in heartbeats
+    )

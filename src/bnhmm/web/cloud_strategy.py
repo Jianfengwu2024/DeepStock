@@ -20,6 +20,7 @@ SECTORS = {
     "semiconductor": {"name": "半导体", "dataset_name": "FK-Bayesian-半导体"},
     "artificial_intelligence": {"name": "人工智能", "dataset_name": "FK-Bayesian-人工智能"},
     "new_energy": {"name": "新能源", "dataset_name": "FK-Bayesian-新能源"},
+    "custom": {"name": "所选股票池", "dataset_name": ""},
 }
 _WARMUP_DAYS = 450
 _POLL_SECONDS = 8
@@ -254,6 +255,8 @@ class CloudStrategyWorker:
         warmup_start = start - timedelta(days=_WARMUP_DAYS)
         pool_id = str(job.get("pool_id") or "")
         pool_name = str(job.get("pool_name") or "")
+        if pool_id and pool_name:
+            sector = {**sector, "name": pool_name}
         pool_symbols = job.get("pool_symbols")
         if pool_id:
             if not isinstance(pool_symbols, list) or not 4 <= len(pool_symbols) <= 2000:
@@ -282,8 +285,16 @@ class CloudStrategyWorker:
         if date.fromisoformat(dataset["start_date"]) > warmup_start:
             raise ValueError("local_dataset_does_not_cover_fk_warmup")
         latest = min(date.fromisoformat(str(dataset["coverage"]["1m"][symbol]["end"])[:10]) for symbol in symbols)
+        if latest < start:
+            raise ValueError("local_dataset_does_not_cover_evaluation_start")
         if latest < end:
-            raise ValueError("local_dataset_does_not_cover_evaluation_end")
+            requested_end = end
+            end = latest
+            self._heartbeat(identifier, token, "adjusting_evaluation_window", {
+                "phase": "adjusting_evaluation_window",
+                "message": f"所选股票的共同分钟行情截至 {latest.isoformat()}；样本外结束日已从 {requested_end.isoformat()} 调整到该日",
+                "activity": "按所有股票共同覆盖的真实行情范围运行",
+            })
 
         self._heartbeat(identifier, token, "validating saved FK strategy dataset")
         cache_key = BoundaryDataCacheKey.from_source(
@@ -360,6 +371,7 @@ class CloudStrategyWorker:
                     intervals=["1m"],
                     start_date=warmup,
                     purpose="cloud-strategy",
+                    end_date=end,
                 )
             except (RuntimeError, ValueError, OSError) as exc:
                 raise RuntimeError("local_cloud_dataset_create_failed") from exc

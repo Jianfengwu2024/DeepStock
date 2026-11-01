@@ -164,7 +164,7 @@ function renderLocalMarketDatasets(datasets) {
     const actions = dataset.status === "queued" || dataset.status === "updating" ? '<span class="status-badge">更新中</span>' :
       dataset.source === "local-materialized" ? '<span class="status-badge">本地已物化</span>' :
       '<button class="secondary-button" type="button" data-refresh-dataset="' + escapeHtml(dataset.dataset_id) + '">立即增量更新</button>';
-    const sourceLabel = dataset.source === "local-materialized" ? "独立本地数据库 · 不自动更新" : "每日收盘自动增量" + freshness;
+    const sourceLabel = dataset.purpose === "cloud-strategy" ? "云端策略临时数据 · 保留 7 天" + freshness : dataset.source === "local-materialized" ? "独立本地数据库 · 不自动更新" : "每日收盘自动增量" + freshness;
     return '<article class="dataset-row"><div class="market-dataset-info"><strong>' + escapeHtml(dataset.name) + '</strong><span>' + dataset.symbols.length + " 只 · " + dataset.intervals.join(", ") + " · " + dataset.start_date + " 至 " + (dataset.last_refresh_date || "等待首次更新") + '</span><small>' + escapeHtml(summary) + " · " + dataset.status + '</small><small>' + escapeHtml(sourceLabel) + '</small>' + error + '</div><div class="button-row">' + actions + '<button class="danger-button" type="button" data-delete-dataset="' + escapeHtml(dataset.dataset_id) + '" ' + (["queued", "updating"].includes(dataset.status) ? "disabled" : "") + '>删除</button></div></article>';
   }).join("") : '<div class="empty-state">先从股票池创建数据集；行情、训练样本和模型文件都会保存在本机</div>';
   $$('[data-refresh-dataset]').forEach((button) => button.addEventListener("click", async () => {

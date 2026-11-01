@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from .source import BrokerError, create_bar_source
+from .source import BrokerBarSource, BrokerError, create_bar_source
 
 
 _INTERVAL_ORDER = ("1m", "5m", "15m", "30m", "60m", "2h", "1d")
@@ -50,7 +50,7 @@ class LocalMarketDatasetStore:
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(market_datasets)")}
-            for column in ("last_attempt_at", "coverage_json", "database_path_override", "retention_expires_at", "progress_json"):
+            for column in ("last_attempt_at", "coverage_json", "database_path_override", "retention_expires_at", "progress_json", "end_date"):
                 if column not in columns:
                     db.execute(f"ALTER TABLE market_datasets ADD COLUMN {column} TEXT")
             if "purpose" not in columns:
@@ -75,6 +75,7 @@ class LocalMarketDatasetStore:
             "member_count": len(symbols),
             "intervals": intervals,
             "start_date": row["start_date"],
+            "end_date": row["end_date"],
             "status": row["status"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -111,6 +112,7 @@ class LocalMarketDatasetStore:
         intervals: list[str],
         start_date: date,
         purpose: str = "market",
+        end_date: date | None = None,
     ) -> dict[str, Any]:
         clean_name = name.strip()
         clean_symbols = list(dict.fromkeys(item.strip() for item in symbols if item.strip()))
@@ -127,13 +129,15 @@ class LocalMarketDatasetStore:
             raise ValueError("数据集开始日期不能晚于今天")
         if purpose not in {"market", "cloud-strategy"}:
             raise ValueError("数据集用途无效")
+        if end_date is not None and (end_date < start_date or end_date > datetime.now(_LOCAL_TZ).date()):
+            raise ValueError("数据集结束日期无效")
         now = datetime.now(timezone.utc).isoformat()
         dataset_id = uuid.uuid4().hex
         try:
             with self._connect() as db:
                 db.execute(
-                    "INSERT INTO market_datasets(dataset_id,name,symbols_json,intervals_json,start_date,status,created_at,updated_at,purpose) VALUES(?,?,?,?,?,'queued',?,?,?)",
-                    [dataset_id, clean_name, json.dumps(clean_symbols), json.dumps(clean_intervals), start_date.isoformat(), now, now, purpose],
+                    "INSERT INTO market_datasets(dataset_id,name,symbols_json,intervals_json,start_date,status,created_at,updated_at,purpose,end_date) VALUES(?,?,?,?,?,'queued',?,?,?,?)",
+                    [dataset_id, clean_name, json.dumps(clean_symbols), json.dumps(clean_intervals), start_date.isoformat(), now, now, purpose, end_date.isoformat() if end_date else None],
                 )
         except sqlite3.IntegrityError as exc:
             raise ValueError("本地数据集名称已存在") from exc
@@ -386,7 +390,10 @@ class LocalMarketDatasetManager:
             except Exception as exc:
                 current = self.store.get(dataset_id)
                 if current:
-                    self.store.update_status(dataset_id, status="failed" if initial else "partial", error=str(exc)[:1000])
+                    failed_progress = dict(current.get("progress") or {})
+                    failed_progress.update(phase="failed", message=str(exc)[:240], eta_seconds=None,
+                        updated_at=datetime.now(timezone.utc).isoformat())
+                    self.store.update_status(dataset_id, status="failed" if initial else "partial", error=str(exc)[:1000], progress=failed_progress)
             finally:
                 self._queue.task_done()
 
@@ -410,6 +417,9 @@ class LocalMarketDatasetManager:
             broker_token=self.broker_token,
             busy_retries=3,
         )
+        if isinstance(source, BrokerBarSource) and len(dataset["symbols"]) > _MONTHLY_FETCH_THRESHOLD:
+            self._update_from_local_exports(dataset, source, started)
+            return
         import duckdb
 
         database_path = dataset["database_path"]
@@ -532,3 +542,96 @@ class LocalMarketDatasetManager:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+
+    def _update_from_local_exports(self, dataset: dict, source: BrokerBarSource, started: float) -> None:
+        """Scan once per interval in the broker; import the local Parquet artifact."""
+        import duckdb
+
+        dataset_id = dataset["dataset_id"]
+        target_end = date.fromisoformat(dataset["end_date"]) if dataset.get("end_date") else self.completed_day(datetime.now(_LOCAL_TZ))
+        upper = target_end + timedelta(days=1)
+        counts, coverage, errors = {}, {}, []
+        total = len(dataset["intervals"]) * 2
+        completed = 0
+
+        def progress(message: str, *, phase: str = "materializing_market_data", finished: bool = False):
+            self.store.update_status(dataset_id, status="updating", row_counts=counts, coverage=coverage, progress={
+                "phase": phase, "message": message, "completed_units": completed, "total_units": total,
+                "unit": "物化阶段", "fraction": completed/total if finished else None,
+                "elapsed_seconds": time.monotonic()-started, "eta_seconds": None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+        with duckdb.connect(dataset["database_path"]) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS stock_universe(symbol VARCHAR PRIMARY KEY)")
+            db.executemany("INSERT OR IGNORE INTO stock_universe VALUES(?)", [(symbol,) for symbol in dataset["symbols"]])
+            for interval in dataset["intervals"]:
+                if self._closed.is_set():
+                    raise RuntimeError("数据集更新已停止，重启后可继续")
+                table = "kline_"+interval
+                column_type = "DATE" if interval == "1d" else "TIMESTAMP"
+                exists = db.execute("SELECT count(*) FROM information_schema.tables WHERE table_name=?", [table]).fetchone()[0]
+                lower = date.fromisoformat(dataset["start_date"])
+                if exists:
+                    lasts = db.execute(f"SELECT symbol,max(timestamp) FROM {table} GROUP BY symbol").fetchall()
+                    # Resume from the oldest watermark only if every requested member is present.
+                    if {str(row[0]) for row in lasts} == set(dataset["symbols"]):
+                        oldest = min(row[1].date() if isinstance(row[1], datetime) else row[1] for row in lasts)
+                        lower = max(lower, oldest-timedelta(days=5))
+                progress(f"本机 broker 单次扫描 {len(dataset['symbols'])} 只 · {interval} · {lower} 至 {target_end}；等待扫描完成，尚无可信百分比")
+                job = source.local_export_request("POST", payload={"symbols": dataset["symbols"], "interval": interval, "start": lower.isoformat(), "end": upper.isoformat()})
+                identifier = job["export_id"]
+                try:
+                    while job["status"] in {"queued", "running"}:
+                        if self._closed.wait(2):
+                            raise RuntimeError("数据集更新已停止，重启后可继续")
+                        job = source.local_export_request("GET", identifier)
+                        progress(f"本机 broker {'等待读取资源' if job['status']=='queued' else '扫描并导出'} · {interval} · {job.get('elapsed_seconds', 0):.0f} 秒；完成后直接导入本机")
+                    if job["status"] != "completed":
+                        raise BrokerError(job.get("error") or "本机行情导出失败")
+                    artifact = Path(job["path"]).resolve(strict=True)
+                    if artifact.suffix != ".parquet" or artifact.name != identifier+".parquet":
+                        raise BrokerError("本机 broker 返回无效的导出文件")
+                    completed += 1
+                    progress(f"扫描完成：{int(job['row_count']):,} 行，正在导入本机 {interval} 数据集", finished=True)
+                    insert_done = threading.Event()
+                    def pulse():
+                        while not insert_done.wait(2):
+                            progress(f"正在导入和校验 {int(job['row_count']):,} 行 · {interval}；不再扫描主库")
+                    pulse_thread = threading.Thread(target=pulse, daemon=True)
+                    pulse_thread.start()
+                    try:
+                        if not exists:
+                            db.execute(f"CREATE TABLE {table} AS SELECT symbol,CAST(timestamp AS {column_type}) AS timestamp,open,high,low,close,CAST(volume AS BIGINT) AS volume,false AS paused,false AS suspicious FROM read_parquet(?)", [str(artifact)])
+                        else:
+                            # Atomic range replacement also resumes earlier partially imported batches.
+                            db.execute("BEGIN TRANSACTION")
+                            try:
+                                marks = ",".join("?" for _ in dataset["symbols"])
+                                db.execute(f"DELETE FROM {table} WHERE symbol IN ({marks}) AND timestamp>=? AND timestamp<?", [*dataset["symbols"],lower.isoformat(),upper.isoformat()])
+                                db.execute(f"INSERT INTO {table} SELECT symbol,CAST(timestamp AS {column_type}),open,high,low,close,CAST(volume AS BIGINT),false,false FROM read_parquet(?)", [str(artifact)])
+                                db.execute("COMMIT")
+                            except Exception:
+                                db.execute("ROLLBACK")
+                                raise
+                        rows = db.execute(f"SELECT symbol,count(*),min(timestamp),max(timestamp) FROM {table} GROUP BY symbol").fetchall()
+                        coverage[interval] = {str(symbol): {"rows": int(count), "start": str(first), "end": str(last)} for symbol,count,first,last in rows}
+                        counts[interval] = sum(int(row[1]) for row in rows)
+                        missing = set(dataset["symbols"])-coverage[interval].keys()
+                        if missing:
+                            errors.append(f"{interval}: {len(missing)} 个标的尚无行情")
+                    finally:
+                        insert_done.set()
+                        pulse_thread.join(timeout=5)
+                    completed += 1
+                    progress(f"{interval} 已导入 {counts[interval]:,} 行", finished=True)
+                finally:
+                    if job.get("status") not in {"queued", "running"}:
+                        source.local_export_request("DELETE", identifier)
+        ends = [item["end"][:10] for values in coverage.values() for item in values.values()]
+        status = "partial" if errors else "ready"
+        self.store.update_status(dataset_id, status=status, row_counts=counts, coverage=coverage,
+            error="\n".join(errors) if errors else None, refreshed_date=date.fromisoformat(min(ends)) if ends else None,
+            progress={"phase": "completed" if status=="ready" else "failed", "message": "本机行情物化完成" if not errors else "部分标的没有本机行情",
+                "completed_units": completed, "total_units": total, "unit": "物化阶段", "fraction": 1.0,
+                "elapsed_seconds": time.monotonic()-started, "eta_seconds": 0, "updated_at": datetime.now(timezone.utc).isoformat()})

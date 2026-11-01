@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -312,6 +313,20 @@ class BrokerBarSource:
         if "detail" in payload:
             raise BrokerError(str(payload["detail"]))
         return payload
+
+    def local_export_request(self, method: str, identifier: str | None = None, payload: dict | None = None) -> dict:
+        if urlsplit(self.broker_url).hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise BrokerError("local exports require a loopback market broker")
+        url = self.broker_url + "/local-kline-exports" + ("/" + identifier if identifier else "")
+        body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["X-Database-Broker-Token"] = self.token
+        try:
+            with urlopen(Request(url, data=body, headers=headers, method=method), timeout=20) as response:
+                return json.load(response)
+        except (HTTPError, URLError, TimeoutError) as exc:
+            raise BrokerError(f"Local broker export request failed: {exc}") from exc
 
     @staticmethod
     def _decode(value: Any) -> Any:
